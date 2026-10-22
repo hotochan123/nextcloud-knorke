@@ -377,6 +377,11 @@ All notable changes to Knorke are documented here. The format follows
   new snapshot field `board.linkOpenSince` for accounts, and the initial
   state of every page has 12 keys; the protocol stays at 2. No migration,
   no `occ upgrade`.
+- Screenshots for the entry in the App Store and the Apps page of Nextcloud
+  (`<screenshot>` in `appinfo/info.xml`): a retrospective board with
+  frames, sticky notes and the cursor of a second participant, a running
+  vote, and the context bar with "Align items". The images live in
+  `docs/screenshots/` and are not part of the app archive.
 
 ### Changed
 - Context bar: while the canvas has the focus (or nothing has, after a
@@ -523,6 +528,15 @@ All notable changes to Knorke are documented here. The format follows
   the same for everyone. Guests keep their own pages, for example for a
   revoked or expired link. A board that is already open behaves as
   before: it stays visible, frozen, below the banner.
+
+### Security
+- DOMPurify 3.4.17 instead of 3.4.16 in the bundle (it comes in through
+  `@nextcloud/l10n` and `@nextcloud/vue`; only `package-lock.json`
+  changed). It fixes GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr and
+  GHSA-c6gr-qvv4-5v3f, published on 22.10.2026, which made the CI step
+  `npm audit --omit=dev --audit-level=low` fail. All three need DOMPurify
+  options (`SAFE_FOR_TEMPLATES`, `IN_PLACE` with hooks, `PARSER_MEDIA_TYPE`
+  `application/xhtml+xml`) that neither of the two packages uses.
 
 ## [0.2.0] – 2026-10-15
 

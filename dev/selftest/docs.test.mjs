@@ -131,6 +131,13 @@
  *   l10n/de.json German; ED-36 and §8.4 (R14) name 56; the head line has a
  *   revision ≥ 40 and §51; the README's "Privacy notice for guests."
  *   paragraph and the CHANGELOG's [Unreleased] entry name what they must.
+ * - Revision 52 (SPEC-M1 §63, factory job 133): R-B is no step before the
+ *   App Store release any more (user, 2026-10-22: no iPad); the SPEC-M1
+ *   places with the current plan carry (R52), some in the words "keine
+ *   Voraussetzung für das App-Store-Release", and the R-B places of
+ *   ENTWICKLUNG say it too, without M2 and without "vor dem/das
+ *   App-Store-Release"; §8.8 (7) records the device check of 2026-10-22
+ *   (board, devices, paths, no fps values, Safari on iPadOS unmeasured).
  *
  * Run: node --test 'dev/selftest/*.test.mjs'
  */
@@ -1182,4 +1189,76 @@ test('local values: the same three keys in dev/local.env.example, dev/lib.sh and
 	for (const k of ['KD_LAN_HOST', 'KD_PROD_STACK_DIR', 'KD_LOCAL_ENV']) {
 		assert.equal(p32.split('\n').filter((l) => l.startsWith(`| \`${k}\` |`)).length, 1, `§3.2 has a row for ${k}`)
 	}
+})
+
+// ── Revision 52: R-B is no step before the App Store release (SPEC-M1 §63) ──
+
+test('R-B is no step before the App Store release; SPEC-M1 §8.8 (7) records the device check of 2026-10-22 (SPEC-M1 R52, factory job 133)', () => {
+	const MUST = 'keine Voraussetzung für das App-Store-Release'
+	const SPEC = 'docs/SPEC-M1.md'
+	const DEV = 'docs/ENTWICKLUNG.md'
+	const spec = read(SPEC)
+	const dev = read(DEV)
+	// about 40 places in two files: every red one is listed at once
+	const red = []
+	const check = (ok, what) => { if (!ok) red.push(what) }
+	/** `text` up to the line that starts with `end`. */
+	const upTo = (text, end) => {
+		const j = text.indexOf(`\n${end}`)
+		check(j >= 0, `"${end}" follows "${text.split('\n', 2).join('').slice(0, 30)}"`)
+		return j < 0 ? text : text.slice(0, j)
+	}
+	/** The one line of `text` that starts with `start`; '' (and red) unless there is exactly one. */
+	const only = (text, start, where) => {
+		const hits = text.split('\n').filter((l) => l.startsWith(start))
+		check(hits.length === 1, `${where}: exactly one line starts with ${start} (found ${hits.length})`)
+		return hits.length === 1 ? hits[0] : ''
+	}
+
+	// 1. head line and §63
+	const head = spec.split('\n').find((l) => l.startsWith('Stand ')) || ''
+	const rev = Number(head.match(/\*\*Revision (\d+)\*\*/)?.[1])
+	check(rev >= 52, `SPEC-M1 head line: Revision ≥ 52 (${rev})`)
+	check(head.includes('§63: R-B nicht vor dem App-Store-Release'), 'SPEC-M1 head line names §63')
+	only(spec, '## 63. Revision 52 – ', 'SPEC-M1')
+
+	// 2. §8.8 states it, point 7 records the device check (by eye, no numbers)
+	const s88 = upTo(section(SPEC, '\n### 8.8 '), '### 8.9 ')
+	check(s88.includes(MUST), `SPEC-M1 §8.8: ${MUST}`)
+	const p7 = only(s88, '7. **(R52) Sichtprobe vom 22.10.2026 (keine Messung R-B):**', 'SPEC-M1 §8.8')
+	for (const x of ['3000 Notizen', '20 Frames', '`dev/ipad/relay.mjs`', 'Samsung Galaxy Tab S11 Ultra', 'S Pen', 'Mac mini M5 Pro', '„Alle zu mir“', 'keine fps-Werte', 'Safari auf iPadOS']) {
+		check(p7.includes(x), `SPEC-M1 §8.8 (7) names ${x}`)
+	}
+
+	// 3. the places with the current plan carry (R52); 4. three of them in the words of MUST
+	const s10 = section(SPEC, '\n## 10. ')
+	const s121 = upTo(section(SPEC, '\n### 12.1 '), '### 12.2 ')
+	const s343 = upTo(section(SPEC, '\n### 34.3 '), '### 34.4 ')
+	const places = [
+		...['| Pflicht vor Prod |', '| **(R23)** iPad-Endmessung R-B', '| iPad |', '- **Direkter Pfad**', '**(R2) Tablet-Feinheiten', '- **(R19)** Bis zur R-B-Runde', '| W4 |',
+			'| USER-01:', '| USER-07:', '| USER-18:', '| D1 |', '- **§16, Zeile „Nutzer hat kein iPad'].map((s) => [spec, s, 'SPEC-M1']),
+		...['- **(R9) WebKit beim Verlassen:**', '- **iPad/WebKit ungemessen:**', '- **(R2) Schmal-Layout:**'].map((s) => [s121, s, 'SPEC-M1 §12.1']),
+		...['| P4 |', '| E4 |'].map((s) => [s10, s, 'SPEC-M1 §10']),
+		...['| P4 |', '| E4 |', '| USER-01, USER-18 |', '| USER-07 |'].map((s) => [s343, s, 'SPEC-M1 §34.3']),
+	]
+	for (const [text, start, where] of places) check(only(text, start, where).includes('**(R52)**'), `${where} ${start} carries (R52)`)
+	for (const [text, start, where] of [[spec, '| **(R23)** iPad-Endmessung R-B', 'SPEC-M1'], [s10, '| P4 |', 'SPEC-M1 §10'], [s10, '| E4 |', 'SPEC-M1 §10']]) {
+		check(only(text, start, where).includes(MUST), `${where} ${start}: ${MUST}`)
+	}
+
+	// 5. ENTWICKLUNG describes today: R-B is no step before the App Store release
+	for (const x of ['vor dem App-Store-Release', 'vor das App-Store-Release']) check(!dev.includes(x), `ENTWICKLUNG no longer says ${x}`)
+	// 6. its R-B places no longer say M2; 7. some of them state it in the words of MUST
+	const s57 = upTo(section(DEV, '\n### 5.7 '), '### 5.8 ')
+	const p4 = only(dev, '| P4 |', 'ENTWICKLUNG')
+	const e4 = dev.match(/E4 iPad R-B \(([^)]*)\)/)?.[1] ?? ''
+	check(e4 !== '', 'ENTWICKLUNG §10 has the part "E4 iPad R-B (…)"')
+	const noM2 = [[only(dev, '| `ipad` |', 'ENTWICKLUNG'), 'row `ipad`'], [only(dev, '| iPad R-B |', 'ENTWICKLUNG'), 'row iPad R-B'], [s57, '§5.7'], [p4, 'row P4'],
+		[only(dev, '9. Wake-Lock-Sichtprüfung', 'ENTWICKLUNG'), 'P9 step 9'], [e4, 'E4']]
+	for (const [text, where] of noM2) check(!/\bM2\b/.test(text), `ENTWICKLUNG ${where}: no M2`)
+	for (const [text, where] of [[s57, '§5.7'], [p4, 'row P4'], [e4, 'E4']]) check(text.includes(MUST), `ENTWICKLUNG ${where}: ${MUST}`)
+	check(s57.includes('geliehen'), 'ENTWICKLUNG §5.7: a borrowed iPad')
+	check(s57.includes('SPEC-M1 §8.8 (7)'), 'ENTWICKLUNG §5.7 points to SPEC-M1 §8.8 (7)')
+
+	assert.deepEqual(red, [], `${red.length} red checks`)
 })
