@@ -1,0 +1,32 @@
+{
+  "ns": "try",
+  "ncIp": "10.255.0.2",
+  "gatewayIp": "10.255.0.1",
+  "port": 18590,
+  "host": "localhost",
+  "baseHost": "http://127.0.0.1:18590",
+  "baseNet": "http://knorke-dev-try-nc",
+  "appDir": "/srv/docker/stacks/claude_projects/knorke",
+  "containers": {
+    "nc": "knorke-dev-try-nc",
+    "db": "knorke-dev-try-db",
+    "redis": "knorke-dev-try-redis"
+  },
+  "network": "knorke-dev-try-net",
+  "admin": {
+    "user": "admin",
+    "pass": "PLACEHOLDER-not-a-password"
+  },
+  "userPass": "PLACEHOLDER-not-a-password",
+  "users": {
+    "alice": "Alice Adler",
+    "bob": "Bob Berg"
+  },
+  "versions": {
+    "nextcloud": "34.0.1",
+    "php": "8.5.8",
+    "postgres": "17.10",
+    "redis": "7.4.9",
+    "image": "nextcloud:34-apache"
+  }
+}

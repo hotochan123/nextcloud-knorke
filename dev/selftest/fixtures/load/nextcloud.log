@@ -1,0 +1,7 @@
+{"reqId":"a1","level":1,"time":"2026-10-13T16:00:00+00:00","app":"knorke","message":"debug noise"}
+{"reqId":"a2","level":2,"time":"2026-10-13T16:00:01+00:00","app":"core","message":"Login failed: x"}
+{"reqId":"a3","level":3,"time":"2026-10-13T16:00:02+00:00","app":"knorke","message":"Sync failed","exception":{"Message":"boom"}}
+{"reqId":"a4","level":3,"time":"2026-10-13T16:00:03+00:00","app":"PHP","message":"SQLSTATE[08006] connection failed","exception":{"Message":"FATAL:  sorry, too many clients already"}}
+{"reqId":"a5","level":2,"time":"2026-10-13T16:00:04+00:00","app":"knorke","message":"Budget"}
+not json at all
+{"reqId":"a6","level":2,"time":"2026-10-13T16:00:05+00:00","app":"core","message":"Login failed: x"}

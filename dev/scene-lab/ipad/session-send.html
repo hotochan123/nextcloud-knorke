@@ -1,0 +1,166 @@
+<!doctype html>
+<!--
+  SPDX-FileCopyrightText: 2026 hotochan123
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  Send page of the tablet session, served at "/send" by session.mjs.
+  Pasted text or a picked file goes to POST /result?label=…. The inline
+  script and style are allowed by hash (session.mjs pageCsp); no inline
+  event handlers. The fetch keeps referrerPolicy same-origin so the browser
+  sends a real Origin header despite the page's Referrer-Policy no-referrer
+  (session.mjs refuses a POST from another origin, and "null").
+
+  The page is loaded anew for every send (link on the start page,
+  Cache-Control no-store), so the labels sent so far and the next one live
+  in this tab's sessionStorage (every access in try/catch; without storage
+  the page still works and starts at the first label). Before sending it
+  refuses text above session.mjs's MAX_BODY (4 MiB, so the browser never
+  meets a 413 in the middle of its upload) and a copied JSON without any
+  measurement (lab panel: auto null and no hand run; bench: no results).
+  Checked in the lab container by ipad/check.mjs, labels by
+  test/pages.test.mjs.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ergebnis senden</title>
+<link rel="icon" href="data:,">
+<style>
+	body { margin: 0; padding: 24px; font: 18px/1.45 system-ui, sans-serif; background: #f4f4f2; color: #1d1d1b; }
+	main { max-width: 720px; margin: 0 auto; }
+	label { display: block; margin-top: 12px; font-weight: 600; }
+	textarea, select, button, input { font: inherit; width: 100%; box-sizing: border-box; margin: 6px 0; }
+	textarea { height: 38vh; padding: 10px; }
+	button { padding: 14px; border-radius: 10px; border: 1px solid #0b57d0; background: #0b57d0; color: #fff; }
+	button:disabled { opacity: 0.5; }
+	small { display: block; color: #4a4a46; }
+	#status { min-height: 1.5em; font-weight: 600; }
+	#sent { color: #4a4a46; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Ergebnis senden</h1>
+	<label for="label">Bezeichnung</label>
+	<select id="label">
+		<option value="bench-lauf-1">Bench Durchgang 1 (alle Szenarien)</option>
+		<option value="bench-lauf-2">Bench Durchgang 2 (alle Szenarien)</option>
+		<option value="bench-lauf-3">Bench Durchgang 3 (alle Szenarien)</option>
+		<option value="labor-lauf-1">Labor Durchgang 1</option>
+		<option value="labor-lauf-2">Labor Durchgang 2</option>
+		<option value="labor-lauf-3">Labor Durchgang 3</option>
+		<option value="waerme-labor-schwenk">Wärmeprobe Labor Hand-Schwenk</option>
+		<option value="waerme-bench-schwenken">Wärmeprobe Bench 2 Schwenken</option>
+		<option value="geraet-notiz">Gerät und Notizen (Freitext)</option>
+	</select>
+	<small>Vor jedem Senden prüfen. Nach dem Senden steht hier schon die nächste Bezeichnung.</small>
+	<label for="text">JSON oder Text</label>
+	<textarea id="text" placeholder="Hier einfügen (lange drücken → Einfügen)"></textarea>
+	<label for="file">… oder gespeicherte Datei wählen</label>
+	<input id="file" type="file" accept=".json,.txt,application/json,text/plain">
+	<button id="send" type="button">Senden</button>
+	<p id="status" role="status" aria-live="polite"></p>
+	<p id="sent"></p>
+	<p><a href="/">Zurück zur Startseite</a></p>
+</main>
+<script>
+	const $ = (id) => document.getElementById(id)
+	const status = $('status')
+	const sel = $('label')
+	const labels = Array.prototype.map.call(sel.options, (o) => o.value)
+	// same limit as session.mjs MAX_BODY
+	const MAX_BYTES = 4 * 1024 * 1024
+	const TOO_LARGE = 'Zu groß (höchstens 4 MiB) – nichts gesendet'
+	const NO_MEASUREMENT = 'Darin ist noch keine Messung – erst messen, dann „JSON kopieren“. Nichts gesendet.'
+	const KEY = 'knorke-ra-send'
+
+	const load = () => {
+		try {
+			const s = JSON.parse(sessionStorage.getItem(KEY) || 'null') || {}
+			const sent = Array.isArray(s.sent) ? s.sent.filter((l) => labels.indexOf(l) >= 0) : []
+			return { sent, next: labels.indexOf(s.next) >= 0 ? s.next : null }
+		} catch (e) {
+			return { sent: [], next: null }
+		}
+	}
+	const store = (s) => {
+		try {
+			sessionStorage.setItem(KEY, JSON.stringify(s))
+		} catch (e) {}
+	}
+	const state = load()
+	const showSent = () => {
+		$('sent').textContent = state.sent.length ? 'Gesendet: ' + state.sent.join(', ') : ''
+	}
+	if (state.next) sel.value = state.next
+	showSent()
+
+	/** A JSON copied before measuring: lab panel without any run, bench without results. */
+	const noMeasurement = (text) => {
+		let j
+		try {
+			j = JSON.parse(text)
+		} catch (e) {
+			return false
+		}
+		if (!j || typeof j !== 'object') return false
+		const lab = 'auto' in j && j.auto === null && Array.isArray(j.hand) && j.hand.length === 0
+		const bench = Array.isArray(j.results) && j.results.length === 0
+		return lab || bench
+	}
+
+	$('file').addEventListener('change', async () => {
+		const f = $('file').files[0]
+		if (!f) return
+		if (f.size > MAX_BYTES) {
+			$('file').value = ''
+			status.textContent = TOO_LARGE
+			return
+		}
+		$('text').value = await f.text()
+		status.textContent = `Datei „${f.name}“ geladen, jetzt „Senden“.`
+	})
+	$('send').addEventListener('click', async () => {
+		const text = $('text').value
+		const label = sel.value
+		if (!text.trim()) {
+			status.textContent = 'Das Feld ist leer.'
+			return
+		}
+		if (new Blob([text]).size > MAX_BYTES) {
+			status.textContent = TOO_LARGE
+			return
+		}
+		if (noMeasurement(text)) {
+			status.textContent = NO_MEASUREMENT
+			return
+		}
+		$('send').disabled = true
+		status.textContent = 'Sende …'
+		try {
+			const r = await fetch('/result?label=' + encodeURIComponent(label), {
+				method: 'POST',
+				headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+				body: text,
+				referrerPolicy: 'same-origin',
+			})
+			status.textContent = (await r.text()).trim()
+			if (r.ok) {
+				$('text').value = ''
+				$('file').value = ''
+				// next label in the order of the session; it survives the next load of this page
+				state.sent.push(label)
+				state.next = labels[Math.min(labels.indexOf(label) + 1, labels.length - 1)]
+				sel.value = state.next
+				store(state)
+				showSent()
+			}
+		} catch (e) {
+			status.textContent = 'Fehler: ' + (e && e.message ? e.message : e) + ' – nochmal versuchen.'
+		}
+		$('send').disabled = false
+	})
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 hotochan123
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# rsync --exclude-from patterns for the M1 working copy (SPEC-M1 §0, §8.1, §9.0):
+# creating $WORK from $ROOT and the phase snapshots
+# claude_projects/.knorke-m1-phase/<stage>.<phase>/, e.g.
+#   rsync -a --exclude-from=$WORK/dev/m1-copy-exclude.txt $ROOT/ $WORK/
+# Lines starting with "#" are comments for rsync. node_modules matches at any
+# depth (root, dev/e2e, dev/scene-lab: each copy installs its own, §0).
+node_modules
+dev/.state
+dev/*/out
+dev/scene-lab/dist

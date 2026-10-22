@@ -1,0 +1,154 @@
+# SPDX-FileCopyrightText: 2026 hotochan123
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# CI of Knorke (SPEC-M1 §8.9). The workflow lives in the private repository
+# hotochan123/knorke (pushed since 12.10.2026; whether GitHub ran it there is
+# unchecked); after the App Store release it runs in the new public
+# repository hotochan123/nextcloud-knorke. Independently of that,
+# dev/selftest/ci.test.mjs checks this file statically: SPDX header, every
+# action pinned to a 40-character commit SHA, the PHPUnit PHAR checksum equal
+# to tests/php/run.sh, the matrix with stable34 and stable35, the npm commands
+# equal to the package.json scripts (and npm audit right after npm ci),
+# read-only permissions and only push/pull_request as triggers.
+#
+# Not in CI (SPEC-M1 §8.9): the production app set, load runs, GPU lab
+# measurements, the tablet sessions (Android R-A, iPad R-B), the full
+# database matrix (local waves), anything with the user's try stack.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The repository becomes public: the token of a run can only read, and no
+# pull_request_target (it would hand secrets and a writable token to code
+# from forks).
+permissions:
+  contents: read
+
+# Third-party actions are pinned to a commit, not to a tag that can be moved;
+# the comment names the release the commit belongs to (same pins as Pulse).
+
+jobs:
+  frontend:
+    name: Bundle, translations, JS and harness tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.18.0
+          cache: npm
+
+      - run: npm ci
+
+      # Known vulnerabilities in what ships (SPEC-M1 §8.9, §12.1, R16): the
+      # runtime dependencies only. The 12 findings of the devDependency chain
+      # of @nextcloud/vite-config (elliptic, sprintf-js; not in the bundle, no
+      # upstream fix) were accepted on 13.10.2026; stage 4 checks them again.
+      - name: npm audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=low
+
+      - name: Translations complete
+        run: npm run l10n:check
+
+      # vite build plus build/check-bundle.mjs (bundle budget, markers).
+      - name: Build the bundle
+        run: npm run build
+
+      - name: JS unit tests
+        run: npm test
+
+      # The harness self-tests need no dev stack and no Docker daemon: the dev
+      # scripts and the host bridge run in a sandbox with a fake docker;
+      # Playwright is not needed for them. They do need jq and flock (both on
+      # ubuntu-latest); without them six tests would fail with obscure errors,
+      # so a missing tool stops here with its name.
+      - name: Tools of the harness self-tests
+        run: jq --version && flock --version
+
+      # The scene lab's self-tests (dev/scene-lab/test/) need neither
+      # Playwright nor Docker nor the lab's own node_modules: pure helpers
+      # and the tablet session server on 127.0.0.1 with a kernel-chosen port.
+      # The bench check is skipped here, the spike bench build lives outside
+      # the repository.
+      - name: Harness self-tests
+        run: node --test 'dev/sim/*.test.mjs' 'dev/e2e/*.test.mjs' 'dev/selftest/*.test.mjs' 'dev/scene-lab/test/*.test.mjs'
+
+      - name: Syntax of every script
+        run: |
+          find dev build tests \( -name node_modules -o -name dist -o -name out -o -name .state \) -prune \
+            -o \( -name '*.mjs' -o -name '*.js' \) -print0 | xargs -0 -n1 node --check
+          find . \( -name node_modules -o -name .git \) -prune -o -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      # ubuntu-latest (24.04) does not ship xmllint.
+      - name: Validate info.xml against the App Store schema
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libxml2-utils
+          curl -fsSL -o /tmp/info.xsd https://apps.nextcloud.com/schema/apps/info.xsd
+          xmllint --noout --schema /tmp/info.xsd appinfo/info.xml
+
+  php:
+    name: PHPUnit (${{ matrix.server }}, PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every server version info.xml declares, with the oldest PHP it
+        # supports and the newest: Nextcloud 34 with PHP 8.2 and 8.5,
+        # Nextcloud 35 (PHP 8.3 to 8.5) with 8.3 and 8.5.
+        include:
+          - server: stable34
+            php: '8.2'
+          - server: stable34
+            php: '8.5'
+          - server: stable35
+            php: '8.3'
+          - server: stable35
+            php: '8.5'
+    env:
+      # The PHAR tests/php/run.sh uses: same version, same SHA-256.
+      PHPUNIT_VERSION: 11.5.57
+      PHPUNIT_SHA256: c704fdd37c6c6ab7adb386f31b4e186cd51156801fa9028b5ea8099a2cd7f106
+      NEXTCLOUD_ROOT: ${{ github.workspace }}/server
+    steps:
+      # The unit tests need no database, but the server's OCP classes and its
+      # Composer autoloader (tests/php/bootstrap.php) – hence the server
+      # checkout, in which the app lives under apps/ just like in real life.
+      - name: Check out the Nextcloud server
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.server }}
+          submodules: true
+          path: server
+
+      - name: Check out the app
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: server/apps/knorke
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, zip, gd, xmlwriter, tokenizer, pdo_sqlite
+          ini-values: zend.exception_ignore_args=Off
+          coverage: none
+
+      - name: Syntax check
+        working-directory: server/apps/knorke
+        run: find lib tests appinfo templates -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+
+      - name: PHPUnit PHAR (pinned)
+        run: |
+          curl -fsSL -m 120 -o /tmp/phpunit.phar "https://phar.phpunit.de/phpunit-${PHPUNIT_VERSION}.phar"
+          echo "${PHPUNIT_SHA256}  /tmp/phpunit.phar" | sha256sum -c -
+
+      # A skip hides a test: here it fails the job (tests/php/run.sh keeps
+      # PHPUnit's default).
+      - name: Unit tests
+        working-directory: server/apps/knorke
+        run: php /tmp/phpunit.phar -c phpunit.xml --fail-on-skipped

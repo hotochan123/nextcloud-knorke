@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  SPDX-FileCopyrightText: 2026 hotochan123
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  Start page of the tablet session R-A, served at "/" by session.mjs
+  (SPEC-M1 §8.8, §16, §17). German: the user reads it on the tablet. Every
+  label and every control named here exists in the package (bench option
+  labels, lab panel buttons): dev/scene-lab/test/pages.test.mjs checks that,
+  ipad/check.mjs compares the bench options at runtime.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knorke Tablet-Messung R-A</title>
+<link rel="icon" href="data:,">
+<style>
+	body { margin: 0; padding: 24px; font: 18px/1.45 system-ui, sans-serif; background: #f4f4f2; color: #1d1d1b; }
+	main { max-width: 720px; margin: 0 auto; }
+	a.big { display: block; margin: 14px 0; padding: 16px 18px; border: 1px solid #8a8a84; border-radius: 10px; background: #fff; color: #0b57d0; text-decoration: none; }
+	small { display: block; color: #4a4a46; margin-top: 4px; }
+	li { margin: 6px 0; }
+	code { font-size: 16px; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Knorke – Tablet-Messung R-A</h1>
+	<p><b>Vorher:</b> Energiesparmodus aus, Ladegerät an, Bildschirm-Zeitlimit auf 30 Minuten, Querformat, alle anderen Tabs in Chrome schließen.
+		Modell, Android- und Chrome-Version und Bildwiederholrate notieren (Chrome: ⋮ → Einstellungen → Über Google Chrome).</p>
+	<p><b>Immer erst messen, dann „JSON kopieren“</b> – und vor jedem Senden die Bezeichnung prüfen.</p>
+	<a class="big" href="bench/bench-standalone.html">1 · Spike-Bench
+		<small>Engine „Konva 10.7.1“, Szenario „Alle Szenarien“, Szene „100 % (voll)“, Wiederholungen „1“, Schatten an. Drei Durchgänge, vor jedem die Seite neu laden: „Messung starten“, ≈ 1 Minute nicht berühren, bis „8 Messungen fertig.“ dasteht, dann „JSON kopieren“ und unter 3 senden.</small></a>
+	<a class="big" href="lab/?panel=1">2 · Szenen-Labor mit Messfeld
+		<small>Drei Durchgänge, jeweils neu laden: „Automatik-Messung“ (≈ 30 s nicht berühren) → „Hand: 5 s Schwenk“ (ein Finger) → „Hand: 5 s Pinch“ (zwei Finger) → „JSON kopieren“ und unter 3 senden.</small></a>
+	<a class="big" href="/send">3 · Ergebnis senden
+		<small>Kopiertes JSON einfügen (oder gespeicherte Datei wählen), Bezeichnung prüfen, „Senden“.</small></a>
+	<a class="big" href="ANLEITUNG-R-A.md">Anleitung als Text</a>
+	<h2>Ablauf und Bezeichnungen</h2>
+	<ol>
+		<li>Bench Durchgang 1, 2, 3 (je „Alle Szenarien“, alle acht Szenarien in einem Durchgang) → <code>bench-lauf-1</code>, <code>bench-lauf-2</code>, <code>bench-lauf-3</code>.</li>
+		<li>Labor Durchgang 1, 2, 3 → <code>labor-lauf-1</code>, <code>labor-lauf-2</code>, <code>labor-lauf-3</code>.</li>
+		<li>Wärmeprobe: ≈ 10 Minuten im Labor schwenken und zoomen, dann Labor neu laden, nur „Hand: 5 s Schwenk“ → <code>waerme-labor-schwenk</code>, danach Bench mit Szenario „2 Schwenken 5 s (100 %)“ → <code>waerme-bench-schwenken</code>.</li>
+		<li>Zum Schluss Gerät und Auffälligkeiten als Text → <code>geraet-notiz</code>.</li>
+	</ol>
+	<p>Während automatischer Läufe das Tablet nicht berühren. Klappt „JSON kopieren“ nicht: im Bench „JSON speichern“ und auf der Sendeseite die Datei wählen; im Labor ist der Text im Feld markiert (lange drücken → Kopieren).</p>
+</main>
+</body>
+</html>

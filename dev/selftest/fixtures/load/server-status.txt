@@ -1,0 +1,14 @@
+localhost
+ServerVersion: Apache/2.4.65 (Debian) PHP/8.3.26
+ServerMPM: prefork
+Server Built: 2025-07-29T00:00:00
+CurrentTime: Tuesday, 13-Oct-2026 16:00:00 UTC
+Total Accesses: 4512
+Total kBytes: 9120
+Uptime: 600
+ReqPerSec: 7.52
+BusyWorkers: 7
+IdleWorkers: 3
+Processes: 10
+Stopping: 0
+Scoreboard: WWWKKR_W_W_...........................................

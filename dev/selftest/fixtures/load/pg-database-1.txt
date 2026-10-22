@@ -1,0 +1,1 @@
+{"xact_commit":1900,"xact_rollback":2,"tup_returned":8000,"tup_fetched":700,"tup_inserted":90,"tup_updated":80,"tup_deleted":5,"blks_hit":15000,"blks_read":12,"sessions":70,"numbackends":11,"deadlocks":0}

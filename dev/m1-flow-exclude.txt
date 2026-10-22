@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 hotochan123
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# rsync --exclude-from patterns for the flow back from $WORK to $ROOT and for
+# the root-base snapshot (SPEC-M1 §9.0, wording there): the patterns of
+# m1-copy-exclude.txt plus the build output /js/, /css/ and the downloaded
+# /tools/ – the user builds in $ROOT, and these paths are never
+# touched by the flow back. Lines starting with "#" are comments for rsync.
+node_modules
+dev/.state
+dev/*/out
+dev/scene-lab/dist
+/js/
+/css/
+/tools/
+# $ROOT is a git repository since 12.10.2026 (round 1a); never flow into it or snapshot it
+/.git/

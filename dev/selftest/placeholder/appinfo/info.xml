@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 hotochan123
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<!--
+  Placeholder app with the id knorke (SPEC-M0 §8.1): lets dev/up.sh and
+  dev/down.sh be tested on their own, without the real app
+  (KD_APP_DIR=dev/selftest/placeholder). It has exactly one route,
+  GET /api/v1/boards, which the 401 probe of up.sh/restart.sh asks for.
+  Never shipped, never installed outside a throwaway dev stack.
+-->
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>knorke</id>
+    <name>Knorke (dev placeholder)</name>
+    <summary>Placeholder for the self-test of the Knorke dev stack</summary>
+    <description>Placeholder app with one route. It only exists to test dev/up.sh and dev/down.sh without the real app.</description>
+    <version>0.0.1</version>
+    <licence>AGPL-3.0-or-later</licence>
+    <author>hotochan123</author>
+    <namespace>Knorke</namespace>
+    <category>tools</category>
+    <bugs>https://github.com/hotochan123/nextcloud-knorke/issues</bugs>
+    <dependencies>
+        <nextcloud min-version="34" max-version="35"/>
+    </dependencies>
+</info>

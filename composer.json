@@ -1,0 +1,19 @@
+{
+    "name": "hotochan123/knorke",
+    "description": "Knorke – Workshop-Board: a collaborative whiteboard for Nextcloud",
+    "license": "AGPL-3.0-or-later",
+    "type": "project",
+    "autoload": {
+        "psr-4": {
+            "OCA\\Knorke\\": "lib/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "OCA\\Knorke\\Tests\\": "tests/php/"
+        }
+    },
+    "require-dev": {
+        "nextcloud/ocp": "dev-stable34"
+    }
+}

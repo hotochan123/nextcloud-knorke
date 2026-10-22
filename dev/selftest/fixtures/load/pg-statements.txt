@@ -1,0 +1,1 @@
+[{"calls":900,"total_ms":120.5,"mean_ms":0.134,"rows":900,"query":"SELECT rev FROM oc_knorke_boards WHERE id = $1"}]

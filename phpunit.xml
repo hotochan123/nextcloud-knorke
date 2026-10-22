@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 hotochan123
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+  -
+  - Unit suite (SPEC-M0 §9.1): no database, no base.php. Run with
+  - tests/php/run.sh unit (throwaway nextcloud:* container).
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="tests/php/bootstrap.php"
+         cacheResult="false"
+         colors="true"
+         failOnWarning="true"
+         failOnNotice="true"
+         beStrictAboutOutputDuringTests="true">
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/php/unit</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory suffix=".php">lib</directory>
+        </include>
+    </source>
+</phpunit>

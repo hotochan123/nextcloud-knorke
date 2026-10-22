@@ -1,0 +1,20 @@
+# w:/wo: counters of one board (11) as SCAN + GET reads them (SPEC-M1 §8.7 R19, T4-09): "<key> <value>".
+# Seeding of the owner a71c1f2cf4e27670 in the 10-s windows 179043990–179043992 (4320 ops in batches of 200:
+# 2000 + 2200 (one busy batch, WriteBudget counts before the check) + 320), then the workload from 179043994 on;
+# the owner's own workload window 179043995 counts as workload. Board 12 and a broken key are ignored.
+d38b/knorke/k3x9a0b2/w:11:a71c1f2cf4e27670:179043990 10
+d38b/knorke/k3x9a0b2/wo:11:a71c1f2cf4e27670:179043990 2000
+d38b/knorke/k3x9a0b2/w:11:a71c1f2cf4e27670:179043991 11
+d38b/knorke/k3x9a0b2/wo:11:a71c1f2cf4e27670:179043991 2200
+d38b/knorke/k3x9a0b2/w:11:a71c1f2cf4e27670:179043992 2
+d38b/knorke/k3x9a0b2/wo:11:a71c1f2cf4e27670:179043992 320
+d38b/knorke/k3x9a0b2/w:11:a71c1f2cf4e27670:179043995 3
+d38b/knorke/k3x9a0b2/wo:11:a71c1f2cf4e27670:179043995 3
+d38b/knorke/k3x9a0b2/w:11:0b00d1f3e3cccc3f:179043994 4
+d38b/knorke/k3x9a0b2/wo:11:0b00d1f3e3cccc3f:179043994 4
+d38b/knorke/k3x9a0b2/w:11:355824a98fb47a0d:179043995 6
+d38b/knorke/k3x9a0b2/wo:11:355824a98fb47a0d:179043995 7
+d38b/knorke/k3x9a0b2/w:11:c63a4e9713fedcdb:179043992 5
+d38b/knorke/k3x9a0b2/wo:11:c63a4e9713fedcdb:179043992 5
+d38b/knorke/k3x9a0b2/w:12:a71c1f2cf4e27670:179043995 59
+d38b/knorke/k3x9a0b2/w:11:a71c1f2cf4e27670:x 99

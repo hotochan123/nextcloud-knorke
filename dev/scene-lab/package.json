@@ -1,0 +1,10 @@
+{
+  "name": "knorke-scene-lab",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "description": "Knorke scene lab: deterministic gates and measurements of the Konva scene in Chromium (SPEC-M0 §9.4)",
+  "devDependencies": {
+    "playwright": "1.49.1"
+  }
+}

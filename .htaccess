@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 hotochan123
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# For installs that run from a git checkout inside the web root: Apache serves
+# static files below apps/knorke/ (or custom_apps/knorke/) directly, so without
+# this the development tree would be public — dev stack state, node_modules,
+# sources, tests, docs and local tools. The runtime folders (appinfo, lib,
+# templates, img, js, css, l10n) stay reachable.
+#
+# mod_alias on purpose: a RewriteEngine here would replace Nextcloud's own
+# rewrite rules for every request below the app folder.
+<IfModule mod_alias.c>
+	RedirectMatch 404 "^/(?:[^/]+/)*?knorke/(?:\.git|node_modules|dev|build|tests|src|tools|docs)(?:/|$)"
+	RedirectMatch 404 "^/(?:[^/]+/)*?knorke/_[^/]*\.php(?:/|$)"
+	RedirectMatch 404 "^/(?:[^/]+/)*?knorke/(?:package(?:-lock)?\.json|composer\.(?:json|lock)|phpunit(?:\.integration)?\.xml|vite\.config\.js|\.[^/]+)$"
+</IfModule>

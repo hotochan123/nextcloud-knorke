@@ -1,0 +1,20 @@
+# Server
+redis_version:7.4.1
+uptime_in_seconds:600
+
+# Clients
+connected_clients:12
+
+# Memory
+used_memory:2097152
+
+# Stats
+total_connections_received:340
+total_commands_processed:15000
+keyspace_hits:9000
+keyspace_misses:1000
+
+# Commandstats
+cmdstat_get:calls=8000,usec=16000,usec_per_call=2.00,rejected_calls=0,failed_calls=0
+cmdstat_set:calls=2000,usec=8000,usec_per_call=4.00,rejected_calls=0,failed_calls=0
+cmdstat_client|setname:calls=5,usec=5,usec_per_call=1.00,rejected_calls=0,failed_calls=0

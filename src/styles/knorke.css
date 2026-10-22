@@ -1,0 +1,2233 @@
+/**
+ * SPDX-FileCopyrightText: 2026 hotochan123
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+ * Knorke styles (ends up as css/knorke-style.css, SPEC-M0 §6.6). Unscoped on
+ * purpose: the scene builds its overlay DOM (cursors, chips, text editor)
+ * outside Vue, so every class starts with knorke-.
+ *
+ * The canvas stays light in Nextcloud's dark mode; the controls follow the
+ * Nextcloud theme through the role tokens below. Native <button>/<input>
+ * get !important resets where Nextcloud's global rules (higher specificity)
+ * would win otherwise.
+ */
+
+/* Role tokens, each bound to a Nextcloud variable with one fallback. */
+:root {
+	--knorke-surface: var(--color-main-background, #ffffff);
+	--knorke-surface-blur: var(--color-main-background-blur, rgba(255, 255, 255, 0.9));
+	--knorke-text: var(--color-main-text, #222222);
+	--knorke-text-muted: var(--color-text-maxcontrast, #6b6b6b);
+	--knorke-border: var(--color-border, #ededed);
+	--knorke-border-strong: var(--color-border-maxcontrast, #7f7f7f);
+	--knorke-primary: var(--color-primary-element, #00679e);
+	--knorke-primary-text: var(--color-primary-element-text, #ffffff);
+	--knorke-hover: var(--color-background-hover, #f5f5f5);
+	/* Status colours: Nextcloud's --color-error/-warning/-success are pastel
+	   BACKGROUNDS (NC 34/35: #ffe7e7, #ffeec5, #d8f3da), paired with a dark
+	   --color-*-text. Always use them as such a pair, never with white text. */
+	--knorke-error: var(--color-error, #ffe7e7);
+	--knorke-error-text: var(--color-error-text, #8a0000);
+	--knorke-warning: var(--color-warning, #ffeec5);
+	--knorke-warning-text: var(--color-warning-text, #664700);
+	--knorke-success: var(--color-success, #d8f3da);
+	--knorke-success-text: var(--color-success-text, #005416);
+	--knorke-radius: var(--border-radius-large, 10px);
+	--knorke-radius-small: var(--border-radius, 6px);
+	--knorke-shadow: 0 2px 8px var(--color-box-shadow, rgba(0, 0, 0, 0.18));
+	--knorke-clickable: var(--default-clickable-area, 34px);
+	--knorke-gap: 8px;
+	/* SPEC-M1 §6.6 (stage 3): height of the vote bar docked at the bottom */
+	--knorke-votebar-h: 52px;
+	/* touch targets (§6.12: steppers, vote list, chip) */
+	--knorke-touch: 44px;
+	/* The canvas stays light even in Nextcloud dark mode. */
+	--knorke-board-bg: #f1f1ec;
+}
+
+/* ---- root and Nextcloud layout ---------------------------------------- */
+
+/* Nextcloud's #content is a row flexbox. */
+#knorke-root {
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	display: flex;
+}
+
+/* NcContent mounted inside #knorke-root instead of replacing #content. */
+#knorke-root > #content-vue {
+	display: flex;
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	height: 100%;
+	margin: 0;
+	position: relative;
+}
+
+.knorke-app__board,
+.knorke-app__join {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* ---- board ------------------------------------------------------------- */
+
+/*
+ * SPEC-M0 §6.6 started from calc(100svh - header - 2 * margin). Measured on
+ * NC 34 that is 8 px short (#content has no top margin besides the header
+ * height), and the guest page in RENDER_AS_BASE has no header at all. So the
+ * board fills its container: #content has a definite height
+ * (var(--body-height)) in every layout, and everything between it and the
+ * board is a stretched flex item or 100 % high.
+ */
+.knorke-board {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+	color: var(--knorke-text);
+}
+
+.knorke-canvas {
+	position: absolute;
+	inset: 0;
+	touch-action: none;
+	overscroll-behavior: none;
+	background: var(--knorke-board-bg);
+	outline: none;
+	/* SPEC-M1 §6.6 tablet details: no magnifier or copy menu on a long tap */
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* SPEC-M1 §6.3: single keys work only while the canvas has the focus; a
+   keyboard user sees where it is. */
+.knorke-canvas:focus-visible {
+	outline: 2px solid var(--knorke-primary);
+	outline-offset: -2px;
+}
+
+/* SPEC-M1 §6.5.3: the paste catcher is focusable and editable (WebKit fires
+   paste only there), but never visible and never in the way. */
+textarea.knorke-paste-catcher {
+	position: fixed !important;
+	left: -10000px !important;
+	top: 0 !important;
+	width: 1px !important;
+	height: 1px !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	border: 0 !important;
+	opacity: 0 !important;
+	resize: none !important;
+	overflow: hidden !important;
+	pointer-events: none !important;
+}
+
+.knorke-board__loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	z-index: 20;
+}
+
+.knorke-board__error {
+	position: absolute;
+	inset: 0;
+	z-index: 25;
+	background: var(--knorke-surface);
+}
+
+/* Floating panels above the canvas. */
+.knorke-topbar,
+.knorke-toolbar,
+.knorke-contextbar,
+.knorke-zoom {
+	position: absolute;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px;
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+}
+
+.knorke-topbar {
+	top: var(--knorke-gap);
+	inset-inline: var(--knorke-gap);
+	min-height: calc(var(--knorke-clickable) + 8px);
+	padding-inline: 6px;
+}
+
+.knorke-topbar__title {
+	margin: 0;
+	padding: 4px 8px;
+	font-size: 16px;
+	font-weight: bold;
+	line-height: 1.3;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 40vw;
+	border-radius: var(--knorke-radius-small);
+}
+
+/* (U14) the owner's title is a button inside the heading; Nextcloud styles
+   native buttons globally, hence the resets */
+.knorke-topbar__title--editable {
+	padding: 0;
+}
+
+.knorke-topbar__title > button.knorke-topbar__rename-trigger {
+	display: block;
+	max-width: 100%;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	height: auto !important;
+	margin: 0 !important;
+	padding: 4px 8px !important;
+	border: 0 !important;
+	border-radius: var(--knorke-radius-small) !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	color: inherit !important;
+	font: inherit !important;
+	line-height: inherit !important;
+	text-align: start;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: text !important;
+}
+
+.knorke-topbar__title > button.knorke-topbar__rename-trigger:hover,
+.knorke-topbar__title > button.knorke-topbar__rename-trigger:focus-visible {
+	background: var(--knorke-hover) !important;
+}
+
+.knorke-topbar__title > button.knorke-topbar__rename-trigger:focus-visible {
+	outline: 2px solid var(--color-primary-element, #00679e) !important;
+	outline-offset: -2px;
+}
+
+.knorke-topbar__rename {
+	display: flex;
+	margin: 0;
+}
+
+.knorke-topbar__input {
+	width: min(40vw, 360px) !important;
+	min-height: 0 !important;
+	height: var(--knorke-clickable) !important;
+	margin: 0 !important;
+	font-size: 16px !important;
+	font-weight: bold;
+}
+
+.knorke-topbar__badge {
+	padding: 2px 8px;
+	font-size: 12px;
+	color: var(--knorke-text-muted);
+	border: 1px solid var(--knorke-border-strong);
+	border-radius: 999px;
+}
+
+/* M2 privacy notice: "Open by link" behind the title (accounts); a native
+   button, hence the resets (trap 14). Hit area >= the clickable area, 44 px
+   with a coarse pointer; narrow: the icon only. */
+button.knorke-topbar__linkbadge {
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	flex: 0 0 auto;
+	min-width: var(--knorke-clickable) !important;
+	min-height: var(--knorke-clickable) !important;
+	height: auto !important;
+	margin: 0 !important;
+	padding: 0 10px !important;
+	color: var(--knorke-text) !important;
+	font-size: 12px !important;
+	font-weight: normal !important;
+	line-height: 1.2 !important;
+	white-space: nowrap;
+	background: transparent !important;
+	border: 1px solid var(--knorke-border-strong) !important;
+	border-radius: 999px !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-topbar__linkbadge:hover,
+button.knorke-topbar__linkbadge[aria-expanded='true'] {
+	background: var(--knorke-hover) !important;
+}
+
+button.knorke-topbar__linkbadge:focus-visible {
+	outline: 2px solid var(--knorke-primary) !important;
+	outline-offset: 1px;
+}
+
+button.knorke-topbar__linkbadge--icon {
+	padding: 0 !important;
+}
+
+/* coarse pointer: a 44 px hit area without making the top bar taller (the
+   banner stack below keeps its place) */
+@media (pointer: coarse) {
+	button.knorke-topbar__linkbadge {
+		position: relative;
+		min-width: var(--knorke-touch) !important;
+	}
+
+	/* the pseudo element sits in the padding box: the 1 px border counts too */
+	button.knorke-topbar__linkbadge::before {
+		content: '';
+		position: absolute;
+		inset: calc((var(--knorke-clickable) - var(--knorke-touch)) / 2 - 1px) -1px;
+	}
+}
+
+.knorke-topbar__spacer {
+	flex: 1 1 auto;
+}
+
+.knorke-toolbar {
+	top: 50%;
+	inset-inline-start: var(--knorke-gap);
+	transform: translateY(-50%);
+	flex-direction: column;
+}
+
+.knorke-toolbar__sep,
+.knorke-contextbar__sep {
+	align-self: stretch;
+	background: var(--knorke-border);
+}
+
+.knorke-toolbar__sep {
+	height: 1px;
+	margin: 2px 4px;
+}
+
+.knorke-contextbar__sep {
+	width: 1px;
+	margin: 4px 2px;
+}
+
+.knorke-toolbar__tool {
+	display: flex;
+	align-items: center;
+	align-self: stretch;
+}
+
+/* the shape kind menu sits right next to its tool button */
+.knorke-tooloptions .button-vue {
+	min-width: 20px !important;
+	width: 20px !important;
+	padding: 0 !important;
+}
+
+.knorke-toolbar__button--active {
+	background: var(--color-primary-element-light, rgba(0, 103, 158, 0.12)) !important;
+}
+
+.knorke-contextbar {
+	top: calc(var(--knorke-gap) * 2 + var(--knorke-clickable) + 8px);
+	left: 50%;
+	transform: translateX(-50%);
+	max-width: calc(100% - 2 * var(--knorke-gap));
+	flex-wrap: wrap;
+	justify-content: center;
+}
+
+.knorke-contextbar__colors {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	padding: 2px 4px;
+}
+
+/* SPEC-M1 §6.6: style panel of the context bar (one at a time, below it) */
+.knorke-contextbar__panel {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: max-content;
+	min-width: 220px;
+	max-width: min(92vw, 560px);
+	padding: 8px;
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+}
+
+.knorke-contextbar__colors--grid {
+	display: grid;
+	grid-template-columns: repeat(8, 24px);
+	gap: 6px;
+}
+
+.knorke-contextbar__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.knorke-contextbar__label {
+	margin-inline-end: 4px;
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+button.knorke-chip {
+	min-width: 34px !important;
+	height: 30px !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	padding: 0 8px !important;
+	font-size: 13px !important;
+	color: var(--knorke-text) !important;
+	background: var(--knorke-surface) !important;
+	border: 1px solid var(--knorke-border) !important;
+	border-radius: var(--knorke-radius-small) !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+	font-variant-numeric: tabular-nums;
+}
+
+button.knorke-chip:hover,
+button.knorke-chip:focus-visible {
+	border-color: var(--knorke-text) !important;
+	outline: none !important;
+}
+
+button.knorke-chip--active {
+	color: var(--knorke-primary-text) !important;
+	background: var(--knorke-primary) !important;
+	border-color: var(--knorke-primary) !important;
+}
+
+/* SPEC-M1 §6.6 (round 1b): the start tip row shows the tip icons mirrored (the tip at the left end) */
+.knorke-cap--start svg {
+	transform: scaleX(-1);
+}
+
+/* SPEC-M1 §6.6: the "Arrange" field (X, Y, W, H, angle) */
+.knorke-arrange {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(72px, 1fr)) auto;
+	gap: 6px;
+	align-items: end;
+}
+
+.knorke-contextbar__count {
+	padding-inline: 8px;
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+	white-space: nowrap;
+}
+
+/* M2 (SPEC-M1 §1.2 "(R20) Sperren"): the lock badge of the context bar names
+   the locker on one line, cut with an ellipsis (the full text is its title);
+   at most 40 % of the viewport, 30 % in the narrow layout (below). */
+.knorke-contextbar__lock {
+	display: inline-block;
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 40vw;
+	padding-inline: 8px;
+	overflow: hidden;
+	font-size: 13px;
+	color: var(--knorke-text);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Lock and Unlock are finger-sized on phones and coarse pointers */
+@media (max-width: 600px), (pointer: coarse) {
+	.button-vue.knorke-contextbar__lockbtn {
+		min-width: var(--knorke-touch) !important;
+		min-height: var(--knorke-touch) !important;
+	}
+
+	/* M2 (R20 Gruppieren): Group items and Ungroup too (the bar is the way on touch) */
+	.button-vue.knorke-contextbar__groupbtn {
+		min-width: var(--knorke-touch) !important;
+		min-height: var(--knorke-touch) !important;
+	}
+}
+
+/* M2 (SPEC-M1 §1.2 "(R20) Gruppieren"): a blocked Group items / Ungroup looks
+   disabled but stays focusable (aria-disabled, the reason in its title). */
+.button-vue.knorke-contextbar__groupbtn[aria-disabled='true'] {
+	opacity: var(--opacity-disabled, 0.5);
+}
+
+/* Native buttons: Nextcloud's global button rule has a higher specificity. */
+button.knorke-swatch {
+	width: 24px !important;
+	height: 24px !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	border: 1px solid rgba(0, 0, 0, 0.2) !important;
+	border-radius: 50% !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+	flex: 0 0 auto;
+}
+
+button.knorke-swatch:hover,
+button.knorke-swatch:focus-visible {
+	border-color: var(--knorke-text) !important;
+	outline: none !important;
+}
+
+button.knorke-swatch--active {
+	box-shadow: 0 0 0 2px var(--knorke-surface), 0 0 0 4px var(--knorke-primary) !important;
+}
+
+.knorke-zoom {
+	bottom: var(--knorke-gap);
+	inset-inline-end: var(--knorke-gap);
+}
+
+.knorke-zoom__percent {
+	min-width: 64px !important;
+	font-variant-numeric: tabular-nums;
+}
+
+/* ---- banners ----------------------------------------------------------- */
+
+/*
+ * SPEC-M1 §6.6 (R16 narrow layout (3)): banner strips stand at the top under
+ * the TopBar, in one column with the context bar (no overlap); the vote bar
+ * owns the bottom. The board decides which strips show (bars.js).
+ */
+.knorke-topstack {
+	position: absolute;
+	top: calc(var(--knorke-gap) * 2 + var(--knorke-clickable) + 8px);
+	inset-inline: var(--knorke-gap);
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	pointer-events: none;
+}
+
+.knorke-topstack > .knorke-contextbar {
+	position: relative;
+	top: auto;
+	left: auto;
+	transform: none;
+	max-width: 100%;
+	pointer-events: auto;
+}
+
+.knorke-banners {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	pointer-events: none;
+}
+
+.knorke-banners:empty {
+	display: none;
+}
+
+.knorke-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 14px;
+	color: #ffffff;
+	background: var(--knorke-text-muted);
+	border-radius: 999px;
+	box-shadow: var(--knorke-shadow);
+	font-size: 14px;
+	pointer-events: auto;
+}
+
+.knorke-banner--offline,
+.knorke-banner--reload,
+.knorke-banner--rate_limited,
+.knorke-banner--password_required {
+	color: var(--knorke-warning-text);
+	background: var(--knorke-warning);
+}
+
+.knorke-banner--gone,
+.knorke-banner--revoked,
+.knorke-banner--logged_out,
+.knorke-banner--links_disabled,
+.knorke-banner--link_expired {
+	color: var(--knorke-error-text);
+	background: var(--knorke-error);
+}
+
+/* SPEC-M1 §6.5.4: the one role/device banner (view_role, vote_ready,
+   device_vote, viewonly): neutral, white on #4a5560 (7.6:1) */
+.knorke-banner--viewonly,
+.knorke-banner--view_role,
+.knorke-banner--vote_ready,
+.knorke-banner--device_vote {
+	background: #4a5560;
+}
+
+.knorke-banner .button-vue {
+	color: inherit !important;
+}
+
+/* stage 3: following (neutral), the chip back to the presenter (primary), "Time's up" (warning) */
+.knorke-banner--following {
+	background: #4a5560;
+}
+
+.knorke-banner--chip {
+	padding: 0;
+	color: var(--knorke-primary-text);
+	background: var(--knorke-primary);
+}
+
+.knorke-banner--time_up {
+	padding: 0;
+	color: var(--knorke-warning-text);
+	background: var(--knorke-warning);
+}
+
+button.knorke-followchip,
+button.knorke-banner__dismiss {
+	min-height: var(--knorke-touch) !important;
+	margin: 0 !important;
+	padding: 6px 16px !important;
+	color: inherit !important;
+	font-size: 14px !important;
+	font-weight: bold;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: 999px !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-followchip:focus-visible,
+button.knorke-banner__dismiss:focus-visible {
+	outline: 2px solid currentColor !important;
+	outline-offset: -4px;
+}
+
+/* ---- privacy info card (M2, PrivacyInfo.vue) ---------------------------- */
+
+/* The last child of .knorke-banners (the polite live region), no strip: at
+   most 420 px wide (narrow: the whole width), 40vh high; the text part
+   scrolls on its own. Main background and main text in both themes. */
+.knorke-privacy-info {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 420px;
+	max-width: 100%;
+	max-height: 40vh;
+	padding: 8px 12px 12px;
+	color: var(--knorke-text);
+	text-align: start;
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+	pointer-events: auto;
+}
+
+.knorke-board--narrow .knorke-banners {
+	align-self: stretch;
+}
+
+.knorke-board--narrow .knorke-privacy-info {
+	width: 100%;
+}
+
+.knorke-privacy-info__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.knorke-privacy-info__title {
+	margin: 0;
+	font-size: 15px;
+	font-weight: bold;
+	line-height: 1.3;
+}
+
+.knorke-privacy-info__body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.knorke-privacy-info__body:focus-visible {
+	outline: 2px solid var(--knorke-primary);
+	outline-offset: 2px;
+}
+
+.knorke-privacy-info__explain,
+.knorke-privacy-info__text {
+	margin: 0 0 6px;
+	font-size: 14px;
+	line-height: 1.4;
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+.knorke-privacy-info__text:last-child {
+	margin-bottom: 0;
+}
+
+.knorke-privacy-info__link {
+	align-self: flex-start;
+	font-size: 14px;
+	color: var(--knorke-text);
+	text-decoration: underline;
+}
+
+.knorke-privacy-info__link:focus-visible {
+	outline: 2px solid var(--knorke-primary);
+	outline-offset: 2px;
+}
+
+/* Native button: Nextcloud's global button rule wins without the resets (trap 14). */
+button.knorke-privacy-info__close {
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: var(--knorke-clickable) !important;
+	height: var(--knorke-clickable) !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	margin-inline-end: -6px !important;
+	padding: 0 !important;
+	color: var(--knorke-text) !important;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: 50% !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-privacy-info__close:hover {
+	background: var(--knorke-hover) !important;
+}
+
+button.knorke-privacy-info__close:focus-visible {
+	outline: 2px solid var(--knorke-primary) !important;
+	outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+	button.knorke-privacy-info__close {
+		width: var(--knorke-touch) !important;
+		height: var(--knorke-touch) !important;
+	}
+}
+
+/* ---- presence bar ------------------------------------------------------ */
+
+.knorke-presence {
+	position: relative;
+	display: flex;
+	align-items: center;
+	margin: 0 4px;
+	padding: 0;
+	list-style: none;
+}
+
+.knorke-presence__item,
+button.knorke-presence__item {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 30px !important;
+	height: 30px !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	margin-inline-start: -6px !important;
+	padding: 0 !important;
+	color: #ffffff !important;
+	font-size: 12px !important;
+	font-weight: bold;
+	border: 2px solid var(--knorke-surface) !important;
+	border-radius: 50% !important;
+	box-shadow: none !important;
+	user-select: none;
+}
+
+button.knorke-presence__item {
+	cursor: pointer !important;
+}
+
+button.knorke-presence__item:focus-visible {
+	outline: 2px solid var(--knorke-primary) !important;
+	outline-offset: 1px;
+	z-index: 1;
+}
+
+.knorke-presence__item--followed {
+	box-shadow: 0 0 0 2px var(--knorke-surface), 0 0 0 4px var(--knorke-primary) !important;
+	z-index: 1;
+}
+
+/* the first item follows the hidden hint */
+.knorke-presence > .hidden-visually + .knorke-presence__item {
+	margin-inline-start: 0 !important;
+}
+
+.knorke-presence__item--guest {
+	outline: 2px dashed var(--knorke-text-muted);
+	outline-offset: -5px;
+}
+
+.knorke-presence__item--more,
+button.knorke-presence__item--more {
+	width: auto !important;
+	min-width: 30px !important;
+	padding: 0 6px !important;
+	color: var(--knorke-text) !important;
+	background: var(--knorke-hover) !important;
+	border-radius: 15px !important;
+}
+
+.knorke-presence__list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+button.knorke-presence__row {
+	display: flex !important;
+	align-items: center;
+	gap: 8px;
+	width: 100% !important;
+	min-height: var(--knorke-touch) !important;
+	margin: 0 !important;
+	padding: 4px 8px !important;
+	color: var(--knorke-text) !important;
+	text-align: start;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: var(--knorke-radius-small) !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-presence__row:hover,
+button.knorke-presence__row:focus-visible,
+button.knorke-presence__row[aria-pressed='true'] {
+	background: var(--knorke-hover) !important;
+}
+
+button.knorke-presence__row:disabled {
+	cursor: default !important;
+	opacity: 1 !important;
+}
+
+.knorke-presence__item--small {
+	margin: 0 !important;
+}
+
+.knorke-presence__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* a small popover below its button (participants, frames) */
+.knorke-popover {
+	position: absolute;
+	z-index: 60;
+	min-width: 220px;
+	max-width: min(320px, calc(100vw - 2 * var(--knorke-gap)));
+	max-height: min(60vh, 420px);
+	overflow: auto;
+	padding: 6px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+}
+
+.knorke-popover__hint {
+	margin: 2px 6px 6px;
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-presence__popover {
+	top: calc(100% + 8px);
+	inset-inline-end: 0;
+}
+
+/* ---- stage 3: timer, vote bar, vote panel, stepper ----------------------- */
+
+.knorke-timerchip,
+button.knorke-timerchip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	min-height: 30px !important;
+	margin: 0 4px !important;
+	padding: 2px 10px !important;
+	color: var(--knorke-text) !important;
+	font-size: 14px !important;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	background: var(--knorke-hover) !important;
+	border: 1px solid var(--knorke-border) !important;
+	border-radius: 999px !important;
+	box-shadow: none !important;
+}
+
+button.knorke-timerchip {
+	cursor: pointer !important;
+}
+
+button.knorke-timerchip:focus-visible {
+	outline: 2px solid var(--knorke-primary) !important;
+}
+
+.knorke-timerchip--done,
+button.knorke-timerchip--done {
+	color: var(--knorke-warning-text) !important;
+	background: var(--knorke-warning) !important;
+}
+
+.knorke-timerchip__paused {
+	font-size: 12px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-timerdialog__rest {
+	margin: 0 0 8px;
+	font-size: 28px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.knorke-timerdialog__row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.knorke-timerdialog__field,
+.knorke-votesetup__field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 10px;
+}
+
+.knorke-timerdialog__field input,
+.knorke-votesetup__field input {
+	max-width: 160px;
+}
+
+.knorke-timerdialog__mute,
+.knorke-votesetup__switch,
+.knorke-votesetup__option {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 32px;
+	cursor: pointer;
+}
+
+.knorke-votesetup__switch {
+	margin-bottom: 10px;
+	font-weight: bold;
+}
+
+.knorke-votesetup__group {
+	margin: 0 0 10px;
+	padding: 0;
+	border: 0;
+}
+
+.knorke-votesetup__group legend {
+	margin-bottom: 4px;
+	font-weight: bold;
+}
+
+.knorke-votesetup__hint {
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-votesetup__count {
+	margin: 8px 0 0;
+	font-weight: bold;
+}
+
+/*
+ * The vote bar docks at the bottom in every layout (R16 (2), R17 K7): flush on
+ * the board's bottom edge, centred, only its top corners round and no border
+ * on the docked edge. In Nextcloud's layout up to 1024 px the board reaches
+ * the viewport's bottom edge (§6.6 (5): bottom ≥ viewport height − 1 px at
+ * 390 × 844 and 820 × 1180); wider, Nextcloud's own content frame margin
+ * stays below the board.
+ */
+.knorke-votebar {
+	position: absolute;
+	bottom: 0;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 35;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	height: var(--knorke-votebar-h);
+	max-width: calc(100% - 2 * var(--knorke-gap));
+	padding: 4px 6px 4px 14px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-width: 1px 1px 0;
+	border-radius: var(--knorke-radius) var(--knorke-radius) 0 0;
+	box-shadow: var(--knorke-shadow);
+	white-space: nowrap;
+}
+
+.knorke-votebar__text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-variant-numeric: tabular-nums;
+}
+
+.knorke-votebar--closed {
+	padding-inline-start: 4px;
+}
+
+/* narrow (R16 (5)): the bar's bottom edge is the viewport's, whatever lies below the board */
+.knorke-votebar--narrow {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	transform: none;
+	max-width: none;
+	justify-content: space-between;
+	border-width: 1px 0 0;
+	border-radius: var(--knorke-radius) var(--knorke-radius) 0 0;
+}
+
+.knorke-votebar--narrow .button-vue {
+	min-height: var(--knorke-touch) !important;
+}
+
+/* toolbar and zoom controls stand above the docked vote bar (one gap), never over it */
+.knorke-board--votebar .knorke-zoom {
+	bottom: calc(var(--knorke-gap) + var(--knorke-votebar-h));
+}
+
+/* narrow: the vote bar sits on the viewport's bottom edge, the zoom controls above it */
+.knorke-board--narrow.knorke-board--votebar .knorke-zoom {
+	position: fixed;
+	bottom: calc(var(--knorke-gap) + var(--knorke-votebar-h));
+}
+
+/*
+ * The toolbar is centred vertically, so it reaches equally far up and down:
+ * both ends keep the larger of the two reserves free (top bar + gap, vote
+ * bar + gap).
+ */
+.knorke-board--votebar .knorke-toolbar {
+	max-height: calc(100% - 2 * var(--knorke-gap) - 2 * max(var(--knorke-votebar-h), var(--knorke-gap) + var(--knorke-clickable) + 8px));
+	overflow-y: auto;
+}
+
+.knorke-votepanel {
+	position: absolute;
+	top: calc(var(--knorke-gap) * 2 + var(--knorke-clickable) + 8px);
+	bottom: calc(var(--knorke-gap) + var(--knorke-votebar-h));
+	inset-inline-end: var(--knorke-gap);
+	z-index: 45;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: min(360px, calc(100% - 2 * var(--knorke-gap)));
+	padding: 8px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+}
+
+/* narrow: a bottom sheet over the vote bar */
+.knorke-votepanel--sheet {
+	position: fixed;
+	top: auto;
+	bottom: 0;
+	inset-inline: 0;
+	width: auto;
+	max-height: 75vh;
+	border-radius: var(--knorke-radius) var(--knorke-radius) 0 0;
+}
+
+.knorke-votepanel__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--knorke-border);
+}
+
+.knorke-votepanel__title {
+	flex: 1 1 auto;
+	margin: 0;
+	font-size: 16px;
+}
+
+.knorke-votepanel__left {
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+	white-space: nowrap;
+}
+
+.knorke-votepanel__list,
+.knorke-votepanel__results {
+	flex: 1 1 auto;
+	margin: 0;
+	padding: 4px 0;
+	overflow: auto;
+	list-style: none;
+}
+
+.knorke-votepanel__item,
+.knorke-votepanel__result {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: var(--knorke-touch);
+	border-bottom: 1px solid var(--knorke-border);
+}
+
+.knorke-votepanel__result--top {
+	font-weight: bold;
+}
+
+button.knorke-votepanel__text {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: var(--knorke-touch) !important;
+	margin: 0 !important;
+	padding: 4px 6px !important;
+	overflow: hidden;
+	color: var(--knorke-text) !important;
+	font-weight: inherit;
+	text-align: start;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: var(--knorke-radius-small) !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-votepanel__text:hover,
+button.knorke-votepanel__text:focus-visible {
+	background: var(--knorke-hover) !important;
+}
+
+.knorke-votepanel__rank {
+	display: inline-block;
+	min-width: 1.6em;
+}
+
+.knorke-votepanel__count {
+	min-width: 2em;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+button.knorke-votepanel__step,
+button.knorke-votestepper__step {
+	flex: 0 0 auto;
+	width: var(--knorke-touch) !important;
+	height: var(--knorke-touch) !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	color: var(--knorke-text) !important;
+	font-size: 22px !important;
+	line-height: 1;
+	background: var(--knorke-hover) !important;
+	border: 1px solid var(--knorke-border) !important;
+	border-radius: 50% !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-votepanel__step:disabled,
+button.knorke-votestepper__step:disabled {
+	opacity: 0.4 !important;
+	cursor: default !important;
+}
+
+.knorke-votepanel__empty {
+	margin: 12px 4px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-votepanel__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-top: 8px;
+	border-top: 1px solid var(--knorke-border);
+}
+
+/* R22 (P7-08): the centre comes clamped from voteLayout.js stepperCentre;
+   max-content keeps the measured width independent of where it stands */
+.knorke-votestepper {
+	position: absolute;
+	z-index: 50;
+	display: flex;
+	width: max-content;
+	align-items: center;
+	gap: 8px;
+	padding: 6px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: 999px;
+	box-shadow: var(--knorke-shadow);
+	transform: translate(-50%, -50%);
+}
+
+.knorke-votestepper__count {
+	min-width: 3em;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+/* R22 (P7-08): every stepper button ≥ 44 × 44 px (§6.12 2.5.8) */
+button.knorke-votestepper__close {
+	flex: 0 0 auto;
+	width: var(--knorke-touch) !important;
+	height: var(--knorke-touch) !important;
+	min-width: 0 !important;
+	min-height: 0 !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	color: var(--knorke-text-muted) !important;
+	font-size: 18px !important;
+	background: transparent !important;
+	border: 0 !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+/* frame list above the zoom controls */
+.knorke-framelist {
+	bottom: calc(100% + 8px);
+	inset-inline-end: 0;
+}
+
+.knorke-framelist__list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+button.knorke-framelist__item {
+	display: block !important;
+	width: 100% !important;
+	min-height: 36px !important;
+	margin: 0 !important;
+	padding: 4px 10px !important;
+	overflow: hidden;
+	color: var(--knorke-text) !important;
+	text-align: start;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: var(--knorke-radius-small) !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-framelist__item:hover,
+button.knorke-framelist__item:focus-visible {
+	background: var(--knorke-hover) !important;
+}
+
+/* ---- stage 4: context menu (SPEC-M1 §6.6 ContextMenu.vue, §6.12) ---------
+   A sibling of the canvas inside the board, positioned by ContextMenu.vue
+   (left/top relative to the board, always wholly in the viewport). Entries
+   are buttons with role=menuitem, at least 24 × 24 px (§6.12 2.5.8); the
+   focused entry is the active one (roving tabindex). NC styles native
+   buttons globally: the look needs !important. border-box (!important,
+   whatever box-sizing the page sets or inherits): the limits below and the
+   max-height that ContextMenu.vue sets inline from the board ∩ viewport
+   (less 8 px above and below) bound the outer box, padding and border
+   included, so even in a very low window the whole menu fits and scrolls;
+   max-height here is the fallback until then. NC already makes the menu
+   border-box (#content[class*=app-] *, NcContent's .content *), so the
+   200/320 px widths stay the outer size they always were there; only a page
+   without NC's CSS (content-box) now sees the menu 10 px narrower. */
+.knorke-contextmenu {
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: 70;
+	box-sizing: border-box !important;
+	display: flex;
+	flex-direction: column;
+	min-width: 200px;
+	max-width: min(320px, calc(100vw - 16px));
+	max-height: calc(100vh - 16px);
+	overflow: auto;
+	padding: 4px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius);
+	box-shadow: var(--knorke-shadow);
+}
+
+button.knorke-contextmenu__item {
+	display: flex !important;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	width: 100% !important;
+	min-width: 24px !important;
+	min-height: 32px !important;
+	margin: 0 !important;
+	padding: 4px 10px !important;
+	color: var(--knorke-text) !important;
+	font-weight: normal !important;
+	text-align: start;
+	white-space: nowrap;
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: var(--knorke-radius-small) !important;
+	box-shadow: none !important;
+	cursor: pointer !important;
+}
+
+button.knorke-contextmenu__item:hover,
+button.knorke-contextmenu__item:focus {
+	background: var(--knorke-hover) !important;
+}
+
+button.knorke-contextmenu__item:focus-visible {
+	outline: 2px solid var(--knorke-primary) !important;
+	outline-offset: -2px !important;
+}
+
+/* M2 (R20 Gruppieren): a blocked Group items / Ungroup stays, looks disabled (label and
+   shortcut hint alike, as NcActionButton dims the whole entry), keeps its focus ring */
+button.knorke-contextmenu__item[aria-disabled='true'] .knorke-contextmenu__label,
+button.knorke-contextmenu__item[aria-disabled='true'] .knorke-contextmenu__key {
+	opacity: var(--opacity-disabled, 0.5);
+}
+
+.knorke-contextmenu__label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* M2 (SPEC-M1 §1.2 (R12)): the check column of the board menu ("Show grid").
+   Every entry of a menu with a check box entry starts with it, so the labels
+   line up; a fixed 16 × 16 px that never shrinks, 8 px to the label (the
+   row gap is 16 px), the check mark in the entry's colour (currentColor,
+   also in a forced-colours mode). The label behind it takes the free space:
+   it starts right after the column and the key hint stays at the end. */
+.knorke-contextmenu__check {
+	display: flex;
+	flex: 0 0 16px;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin-inline-end: -8px;
+	color: currentColor;
+}
+
+.knorke-contextmenu__check + .knorke-contextmenu__label {
+	flex: 1 1 auto;
+}
+
+.knorke-contextmenu__key {
+	flex: 0 0 auto;
+	color: var(--knorke-text-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.knorke-contextmenu__count {
+	margin-top: 4px;
+	padding: 6px 10px 2px;
+	border-top: 1px solid var(--knorke-border);
+	color: var(--knorke-text-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	cursor: default;
+	user-select: none;
+}
+
+.knorke-modmenu {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+}
+
+/* ---- board list -------------------------------------------------------- */
+
+.knorke-list {
+	padding: 20px 24px 40px;
+	max-width: 900px;
+}
+
+.knorke-list__heading {
+	margin: 0 0 16px;
+	padding-inline-start: calc(var(--knorke-clickable) + 8px);
+	font-size: 20px;
+	font-weight: bold;
+	line-height: var(--knorke-clickable);
+}
+
+.knorke-list__loading {
+	display: flex;
+	justify-content: center;
+	padding: 40px;
+}
+
+.knorke-list__items {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* (U14) the row is a list item; the link inside fills it up to the actions */
+.knorke-list__item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding-inline-end: 8px;
+	border-radius: var(--knorke-radius);
+}
+
+.knorke-list__item:hover,
+.knorke-list__item:focus-within {
+	background: var(--knorke-hover);
+}
+
+.knorke-list__link {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	padding: 8px 12px;
+	color: inherit;
+	text-decoration: none;
+	border-radius: var(--knorke-radius);
+	cursor: pointer;
+}
+
+.knorke-list__link:focus-visible {
+	outline: 2px solid var(--color-primary-element, #00679e);
+	outline-offset: -2px;
+}
+
+.knorke-list__icon {
+	display: flex;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-list__main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.knorke-list__title {
+	font-weight: bold;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.knorke-list__meta {
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-list__actions {
+	display: flex;
+	flex: 0 0 auto;
+}
+
+/* ---- dialogs ----------------------------------------------------------- */
+
+.knorke-dialog__error {
+	margin: 8px 0 0;
+	color: var(--knorke-error-text);
+}
+
+.knorke-share__intro,
+.knorke-share__off {
+	margin: 0 0 12px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-share__row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.knorke-share__row--actions {
+	flex-wrap: wrap;
+	justify-content: space-between;
+}
+
+input.knorke-share__url {
+	flex: 1 1 auto;
+	width: auto !important;
+	min-width: 0 !important;
+	margin: 0 !important;
+	font-family: var(--font-face-monospace, monospace) !important;
+	font-size: 13px !important;
+}
+
+/* ---- share dialog v2 (SPEC-M1 §6.6, stage 2) ---------------------------- */
+
+.knorke-share__tabs {
+	display: flex;
+	gap: 4px;
+	margin: 0 0 12px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--knorke-border);
+}
+
+.knorke-share__panel {
+	min-height: 120px;
+}
+
+.knorke-link + .knorke-link {
+	margin-top: 16px;
+	padding-top: 16px;
+	border-top: 1px solid var(--knorke-border);
+}
+
+.knorke-link__heading {
+	margin: 0 0 4px;
+	font-size: 16px;
+	font-weight: bold;
+}
+
+.knorke-link__explain {
+	margin: 0 0 12px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-link__qr {
+	display: flex;
+	justify-content: center;
+	margin: 0 0 12px;
+}
+
+.knorke-linksettings {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.knorke-linksettings__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 8px;
+}
+
+/* PasswordInput: the field and its show/hide toggle on one line */
+.knorke-password {
+	display: flex;
+	flex: 1 1 220px;
+	align-items: flex-end;
+	gap: 4px;
+	min-width: 0;
+}
+
+.knorke-password__field {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.knorke-linksettings__password {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.knorke-linksettings__actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.knorke-people__loading {
+	display: flex;
+	justify-content: center;
+	padding: 16px;
+}
+
+.knorke-people__search {
+	width: 100%;
+}
+
+.knorke-people__note,
+.knorke-people__empty {
+	margin: 8px 0;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-people__list {
+	margin: 12px 0;
+	padding: 0;
+	list-style: none;
+}
+
+.knorke-people__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 0;
+}
+
+.knorke-people__row--off .knorke-people__who {
+	color: var(--knorke-text-muted);
+}
+
+.knorke-people__icon {
+	display: flex;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-people__who {
+	display: flex;
+	flex: 1 1 160px;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.knorke-people__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.knorke-people__kind {
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+/* "Cannot open Knorke" (job 079): the text is the signal, the colour only a
+   help; wraps normally, also inside a search option (vue-select sets nowrap) */
+.knorke-people__noapp {
+	font-size: 13px;
+	color: var(--knorke-warning-text);
+	white-space: normal;
+}
+
+.knorke-people__role {
+	flex: 0 0 190px;
+	min-width: 160px !important;
+}
+
+.knorke-people__error {
+	flex: 1 0 100%;
+}
+
+.knorke-people__actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.knorke-dialog__password {
+	margin-top: 8px;
+}
+
+/* QR code: always dark modules on white (scannable in the dark theme too) */
+svg.knorke-qr {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	aspect-ratio: 1 / 1;
+}
+
+.knorke-qr__bg {
+	fill: #ffffff;
+}
+
+.knorke-qr__modules {
+	fill: #141414;
+}
+
+/* "Show to the room": large code, URL in large type, main text on main
+   background (≥ 4.5:1 light and dark) */
+.knorke-present__body {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
+	padding: 8px 16px 24px;
+	color: var(--knorke-text);
+	text-align: center;
+}
+
+.knorke-present__call {
+	margin: 0;
+	font-size: clamp(20px, 3.2vmin, 40px);
+	font-weight: bold;
+}
+
+.knorke-present__code {
+	padding: 12px;
+	background: #ffffff;
+	border-radius: var(--knorke-radius);
+}
+
+.knorke-present__url {
+	margin: 0;
+	max-width: 100%;
+	font-family: var(--font-face-monospace, monospace);
+	font-size: clamp(16px, 2.6vmin, 32px);
+	overflow-wrap: anywhere;
+}
+
+textarea.knorke-rescue {
+	display: block;
+	width: 100% !important;
+	min-height: 8em !important;
+	margin: 8px 0 0 !important;
+	resize: vertical;
+	cursor: text !important;
+	white-space: pre-wrap;
+}
+
+/* ---- guest page -------------------------------------------------------- */
+
+.knorke-public {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	width: 100%;
+	min-width: 0;
+	min-height: 0;
+}
+
+.knorke-public > .knorke-board {
+	flex: 1 1 auto;
+	height: auto;
+}
+
+/* The guest page carries no Nextcloud footer box (it would cover the canvas,
+   F7). (U9) Its legal links appear in the app instead (LegalLinks, TopBar). */
+body#body-public .guest-box {
+	display: none;
+}
+
+.knorke-legal {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 4px 8px;
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-legal__link {
+	color: inherit;
+	text-decoration: underline;
+}
+
+.knorke-legal__link:hover,
+.knorke-legal__link:focus-visible {
+	color: var(--knorke-text);
+}
+
+.knorke-dialog__legal {
+	margin-top: 12px;
+	justify-content: flex-start;
+}
+
+.knorke-dialog__message {
+	margin: 0 0 12px;
+}
+
+/* M2 privacy notice in the guest name dialog: between the intro and the name
+   field. Only the text scrolls (then it is focusable), so the legal links
+   under it stay in sight with a long admin text. */
+.knorke-dialog__privacy {
+	margin: 0 0 12px;
+	padding: 8px 10px;
+	color: var(--knorke-text);
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius-small);
+}
+
+.knorke-dialog__privacy-text {
+	max-height: 30vh;
+	margin: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	font-size: 14px;
+	line-height: 1.4;
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+/* inside the block's padding: the ring is never clipped by the dialog */
+.knorke-dialog__privacy-text:focus-visible {
+	outline: 2px solid var(--knorke-primary);
+	outline-offset: 2px;
+}
+
+.knorke-dialog__privacy .knorke-dialog__legal {
+	margin-top: 8px;
+}
+
+/* under the empty states: on the theming background, like Nextcloud's own
+   guest box (readable on any background image) */
+.knorke-public__legal {
+	align-self: center;
+	margin: 0 16px 24px;
+	padding: 4px 12px;
+	color: var(--knorke-text);
+	background: var(--color-main-background-blur, rgba(255, 255, 255, 0.85));
+	border-radius: var(--knorke-radius);
+}
+
+/* SPEC-M0 §16.2, SPEC-M1 §1.4: the empty states of the guest page (revoked,
+   invalid, disabled, expired) sit in an opaque card in Nextcloud's guest-box
+   look instead of directly on the theming background. Name (main text) and
+   description (max-contrast text) on the main background stay >= 4.5:1 in
+   the light theme (#222222 / #6b6b6b on #ffffff) and in the dark theme
+   (#ebebeb / #999999 on #171717), whatever image or colour lies behind. */
+.knorke-public__card {
+	align-self: center;
+	box-sizing: border-box;
+	width: min(560px, calc(100% - 32px));
+	margin: 12vh 16px 16px;
+	padding: 24px 16px;
+	color: var(--knorke-text);
+	background: var(--knorke-surface);
+	border-radius: var(--border-radius-container-large, 16px);
+	box-shadow: 0 0 10px var(--color-box-shadow, rgba(0, 0, 0, 0.5));
+}
+
+.knorke-public__card .empty-content__description {
+	color: var(--knorke-text-muted);
+}
+
+body#body-public #content.app-knorke,
+body#body-public #content.app-public {
+	padding-block-end: 0;
+}
+
+/* ---- scene overlays (DOM built by the scene, SPEC-M0 §6.3/§6.8) --------- */
+
+.knorke-cursor-name {
+	display: inline-block;
+	padding: 1px 6px;
+	color: #ffffff;
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: nowrap;
+	border-radius: 4px;
+}
+
+.knorke-cursor--guest .knorke-cursor-name {
+	font-style: italic;
+}
+
+/*
+ * (R38, SPEC-M1 §6.3) Hold signal of the touch marquee: a ring under a
+ * finger held still on empty canvas, the start mark of the marquee. The
+ * scene sets only place and size inline (HOLD_RING_PX, centred on the
+ * pointerdown point). The canvas stays light in Nextcloud's dark theme too,
+ * so the ring keeps fixed colours in both themes: the marquee blue
+ * (MARQUEE_STROKE, ≈ 3.7:1 on the board background, ≈ 4.2:1 on white, WCAG
+ * 1.4.11) and a white edge that keeps it visible on darker item colours.
+ * It fades in over 150 ms and goes at once (the scene removes it).
+ */
+.knorke-hold-ring {
+	position: absolute;
+	box-sizing: border-box;
+	border: 3px solid #0082c9;
+	border-radius: 50%;
+	background: rgba(0, 130, 201, 0.12);
+	box-shadow: 0 0 0 2px #ffffff;
+	pointer-events: none;
+	animation: knorke-hold-ring-in 150ms ease-out;
+}
+
+@keyframes knorke-hold-ring-in {
+	from { opacity: 0; transform: scale(0.5); }
+	to { opacity: 1; transform: none; }
+}
+
+/*
+ * Contrast themes: the empty canvas turns Canvas there, and the Highlight
+ * border stands out from it. Items keep their colours; the Canvas outline
+ * separates the ring from light ones.
+ */
+@media (forced-colors: active) {
+	.knorke-hold-ring {
+		border-color: Highlight;
+		background: transparent;
+		box-shadow: none;
+		outline: 2px solid Canvas;
+	}
+}
+
+/* Reduced motion: no fade-in, the ring shows at once in full size (it is still shown). */
+@media (prefers-reduced-motion: reduce) {
+	.knorke-hold-ring {
+		animation: none;
+	}
+}
+
+[data-knorke-editing] {
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+button[data-knorke-action='take-over'] {
+	min-height: 0 !important;
+	width: auto !important;
+	margin: 0 0 0 6px !important;
+	padding: 1px 8px !important;
+	font-size: 12px !important;
+	cursor: pointer !important;
+	border-radius: 999px !important;
+}
+
+textarea[data-knorke-editor] {
+	min-height: 0;
+	margin: 0;
+	box-shadow: none;
+	resize: none;
+	cursor: text;
+}
+
+/*
+ * Editor kinds (SPEC-M1 §6.3, §6.8): the scene sets place, size, font size
+ * and alignment inline; the look per kind lives here. The scene's look
+ * defaults are inline as well, so these rules need !important.
+ *
+ * Note, shape and text: no frame around the text field, only the caret.
+ * Outside forced colors no other outline* for these kinds: an outline-style
+ * after outline: none would bring a frame back. The one exception is the
+ * forced-colors block right below.
+ */
+textarea[data-knorke-editor][data-knorke-editor-kind='note'],
+textarea[data-knorke-editor][data-knorke-editor-kind='shape'],
+textarea[data-knorke-editor][data-knorke-editor-kind='text'] {
+	background: transparent !important;
+	border: 0 !important;
+	box-shadow: none !important;
+	outline: none !important;
+}
+
+/*
+ * Windows contrast themes (forced-colors: active): without a frame the focus
+ * would not show (WCAG 2.4.7), so the focused editor gets a 2 px outline in
+ * the user's Highlight colour; the browser leaves a system colour as it is.
+ * :focus lifts the specificity above the frameless rule.
+ */
+@media (forced-colors: active) {
+	textarea[data-knorke-editor][data-knorke-editor-kind='note']:focus,
+	textarea[data-knorke-editor][data-knorke-editor-kind='shape']:focus,
+	textarea[data-knorke-editor][data-knorke-editor-kind='text']:focus {
+		outline: 2px solid Highlight !important;
+	}
+}
+
+textarea[data-knorke-editor][data-knorke-editor-kind='title'] {
+	background: rgba(255, 255, 255, 0.92) !important;
+	border: 0 !important;
+	border-radius: 4px !important;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18) !important;
+}
+
+textarea[data-knorke-editor][data-knorke-editor-kind='label'] {
+	background: #f1f1ec !important;
+	border: 0 !important;
+	border-radius: 4px !important;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) !important;
+}
+
+/* ---- toasts (util/toast.js) -------------------------------------------- */
+
+.knorke-toasts {
+	position: fixed;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 100000;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	max-width: 92vw;
+	pointer-events: none;
+}
+
+.knorke-toast {
+	max-width: 480px;
+	padding: 12px 18px;
+	color: var(--knorke-error-text);
+	font-size: 15px;
+	font-weight: 500;
+	line-height: 1.35;
+	background: var(--knorke-error);
+	border-radius: var(--knorke-radius);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+	cursor: pointer;
+	pointer-events: auto;
+	animation: knorke-toast-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.knorke-toast--success {
+	color: var(--knorke-success-text);
+	background: var(--knorke-success);
+}
+
+.knorke-toast--info {
+	color: #ffffff;
+	background: #4a5560;
+}
+
+.knorke-toast--out {
+	animation: knorke-toast-out 0.18s ease forwards;
+}
+
+@keyframes knorke-toast-in {
+	from { opacity: 0; transform: translateY(-8px); }
+	to { opacity: 1; transform: none; }
+}
+
+@keyframes knorke-toast-out {
+	to { opacity: 0; transform: translateY(-8px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.knorke-toast,
+	.knorke-toast--out {
+		animation: none;
+	}
+}
+
+/* ---- narrow screens ---------------------------------------------------- */
+
+@media only screen and (max-width: 600px) {
+	.knorke-topbar__title {
+		max-width: 30vw;
+	}
+
+	.knorke-contextbar__lock {
+		max-width: 30vw;
+	}
+
+	.knorke-arrange {
+		grid-template-columns: repeat(2, minmax(72px, 1fr));
+	}
+}
+
+/* SPEC-M1 §6.6 (R16 (1)): the narrow layout, one line in the top bar */
+.knorke-topbar--narrow {
+	gap: 2px;
+	flex-wrap: nowrap;
+}
+
+.knorke-topbar--narrow .knorke-topbar__title {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.knorke-topbar--narrow .knorke-topbar__spacer {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.knorke-topbar--narrow .knorke-timerchip {
+	padding: 2px 8px !important;
+	margin: 0 2px !important;
+}
+
+.knorke-board--narrow .knorke-banner {
+	max-width: 100%;
+	box-sizing: border-box;
+}
+
+.knorke-board--narrow .knorke-banner__text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ---- admin section "Knorke" (M2 privacy notice, AdminSettings.vue) ------- */
+
+.knorke-admin {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: 760px;
+}
+
+/* Nextcloud's settings CSS has `.section p` (colour, margins); the
+   paragraphs of the form need one more class to keep their own look. */
+.knorke-admin p.knorke-admin__intro {
+	margin: 0 0 12px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-admin__heading {
+	margin: 16px 0 8px;
+	font-size: 16px;
+	font-weight: bold;
+}
+
+.knorke-admin__block {
+	margin: 0 0 12px;
+}
+
+fieldset.knorke-admin__lang {
+	padding: 8px 12px 12px;
+	border: 1px solid var(--knorke-border);
+	border-radius: var(--knorke-radius-small);
+}
+
+fieldset.knorke-admin__lang > legend {
+	padding: 0 4px;
+	font-weight: bold;
+}
+
+.knorke-admin__field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0 0 10px;
+}
+
+.knorke-admin__field textarea,
+.knorke-admin__field input[type='url'] {
+	box-sizing: border-box;
+	width: 100%;
+	margin: 0;
+}
+
+.knorke-admin__field textarea {
+	min-height: 6em;
+	resize: vertical;
+}
+
+.knorke-admin__field [aria-invalid='true'] {
+	border-color: var(--knorke-error-text) !important;
+}
+
+.knorke-admin p.knorke-admin__hint {
+	margin: 0;
+	font-size: 13px;
+	color: var(--knorke-text-muted);
+}
+
+.knorke-admin p.knorke-admin__error {
+	margin: 0 0 10px;
+	padding: 4px 8px;
+	color: var(--knorke-error-text);
+	background: var(--knorke-error);
+	border-radius: var(--knorke-radius-small);
+}
+
+.knorke-admin__add {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 8px;
+	margin: 0 0 16px;
+}
+
+.knorke-admin__add .knorke-admin__field {
+	margin: 0;
+}
+
+.knorke-admin__add p.knorke-admin__error {
+	flex: 1 0 100%;
+	margin: 0;
+}
+
+.knorke-admin__actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.knorke-admin p.knorke-admin__status {
+	margin: 0;
+	color: var(--knorke-text);
+}
