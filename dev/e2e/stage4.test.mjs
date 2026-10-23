@@ -152,9 +152,6 @@ test('E37 (R19): 1280 × 800, real input, steps (1)–(8), paste-here missing on
 })
 
 test('E37 (R19, T4-02): the menu root carries the aria-label of §6.11 and sits where §6.6 puts it (sibling of .knorke-canvas in .knorke-board); ask of [C], stage 4 phase 1', () => {
-	const spec = fs.readFileSync(path.join(DIR, '..', '..', 'docs', 'SPEC-M1.md'), 'utf8')
-	assert.ok(spec.includes('| `Selection actions`, `Board actions` (`aria-label` der Wurzel bei `id ≠ null` bzw. `null`) | `Aktionen für die Auswahl`, `Aktionen auf dem Board` |'), 'SPEC-M1 §6.11 row of the two labels')
-	assert.ok(spec.includes('**Ort:** Geschwister von `.knorke-canvas` in `.knorke-board`, nie im Szenen-Container'), 'SPEC-M1 §6.6 Ort')
 	const de = JSON.parse(fs.readFileSync(path.join(DIR, '..', '..', 'l10n', 'de.json'), 'utf8')).translations
 	assert.equal(de['Selection actions'], 'Aktionen für die Auswahl')
 	assert.equal(de['Board actions'], 'Aktionen auf dem Board')

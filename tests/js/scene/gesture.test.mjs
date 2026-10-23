@@ -20,6 +20,9 @@
  * true claims the finger, false keeps it pending; a move beyond
  * TAP_SLOP_PX, its release, pointercancel, a second finger, cancel() and
  * destroy() clear the timer first.
+ * (Job 134) The pen goes first: during a pen or mouse press (button 0 or 1)
+ * every finger is inert until it lifts; a running touch gesture ends with a
+ * commit at its pointerdown.
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
@@ -417,19 +420,32 @@ describe('one camera path at a time (U17)', () => {
 		assert.equal(g.isClaimed(3), true)
 	})
 
-	test('a mouse/pen pan does not start during a touch gesture, nor while a finger may still become one', () => {
+	test('a mouse/pen pan starts while a finger waits (the finger is dropped) and during a touch gesture (it ends first with a commit)', () => {
 		const { el, g, log } = setup({ wantsPan: () => true })
 		el.fire('pointerdown', touch(1, 0, 0))
 		el.fire('pointerdown', mouse(2, 100, 100, 1))
-		assert.equal(g.panning, false, 'pending finger')
+		assert.equal(g.panning, true, 'pending finger: the pan starts')
+		assert.equal(g.pending, false)
 		el.fire('pointermove', mouse(2, 50, 100))
-		assert.deepEqual(log, [])
+		assert.deepEqual(log, [['directStart'], ['direct', { x: 50, y: 0, scale: 1 }]])
 		el.fire('pointerup', mouse(2, 50, 100))
 		el.fire('pointermove', touch(1, -20, 0))
+		el.fire('pointerup', touch(1, -20, 0))
+		assert.deepEqual(kinds(log), ['directStart', 'direct', 'directEnd'], 'the dropped finger pans nothing, no tap')
+		el.fire('pointerdown', touch(4, 0, 0))
+		el.fire('pointermove', touch(4, -20, 0))
+		assert.equal(g.active, true)
 		el.fire('pointerdown', mouse(3, 100, 100, 1))
-		assert.equal(g.panning, false, 'touch gesture')
+		assert.equal(g.active, false, 'touch gesture: ended')
+		assert.equal(g.panning, true)
 		el.fire('pointermove', mouse(3, 50, 100))
-		assert.deepEqual(kinds(log), ['start', 'frame'])
+		assert.deepEqual(log.slice(3), [
+			['start', { x: 50, y: 0, scale: 1 }],
+			['frame', { x: 70, y: 0, scale: 1 }],
+			['end', { x: 70, y: 0, scale: 1 }],
+			['directStart'],
+			['direct', { x: 120, y: 0, scale: 1 }],
+		], 'the pan continues from the committed touch camera')
 	})
 
 	test('a camera change during the pan (zoom key, fit, setCamera) is kept by the next move', () => {
@@ -757,7 +773,7 @@ describe('hold, then drag: the hold timer of a pending first finger (R38, SPEC-M
 		}
 	})
 
-	test('a mouse or pen pointerdown while the finger waits clears the timer (a resting palm gets no signal); the finger stays pending as before', () => {
+	test('a mouse or pen pointerdown while the finger waits clears the timer (a resting palm gets no signal); the finger no longer waits (the pen goes first)', () => {
 		for (const pointerType of ['mouse', 'pen']) {
 			const s = holdSetup(true)
 			s.el.fire('pointerdown', touch(1, 100, 100))
@@ -767,7 +783,7 @@ describe('hold, then drag: the hold timer of a pending first finger (R38, SPEC-M
 			s.el.fire('pointerup', { ...mouse(2, 300, 300), pointerType })
 			expire(s)
 			assert.deepEqual(s.asked, [], pointerType + ': longPress never asked')
-			assert.equal(s.g.pending, true, pointerType + ': the finger still waits')
+			assert.equal(s.g.pending, false, pointerType + ': the finger no longer waits')
 			assert.equal(s.g.isClaimed(1), false)
 		}
 	})
@@ -802,6 +818,173 @@ describe('hold, then drag: the hold timer of a pending first finger (R38, SPEC-M
 		assert.deepEqual(s.asked, [])
 		assert.equal(s.g.pending, true)
 	})
+})
+
+/*
+ * Job 134: the pen goes first. A pen press (pen or mouse, button 0 or 1, not
+ * ignoreTarget) makes every finger that is down inert until it lifts and
+ * keeps every finger that lands out, whatever the press does.
+ */
+describe('the pen goes first: fingers during a pen press (job 134)', () => {
+	const pen = (id, x, y, button = 0) => ({ ...mouse(id, x, y, button), pointerType: 'pen' })
+	const device = (pointerType) => (pointerType === 'pen' ? (x, y) => pen(9, x, y) : (x, y) => mouse(1, x, y))
+
+	for (const pointerType of ['pen', 'mouse']) {
+		test(`(a) ${pointerType}: a finger during the press (no wantsPan) is not asked, not owned, not claimed, no gesture, no tap; after the pointerup a new finger is asked again`, () => {
+			const claims = []
+			const { el, g, log, timers } = setup({ claimTouch: (e) => { claims.push(e.pointerId); return false }, longPress: () => true })
+			const dev = device(pointerType)
+			el.fire('pointerdown', dev(200, 200))
+			assert.deepEqual(el.captured, [dev(0, 0).pointerId], 'the pointer is captured at the pointerdown')
+			el.fire('pointerdown', touch(5, 50, 600))
+			assert.deepEqual(claims, [], 'claimTouch is not asked')
+			assert.equal(g.owns(5), false)
+			assert.equal(g.isClaimed(5), false)
+			assert.equal(g.pending, false)
+			assert.deepEqual(timers.pending, [], 'no hold timer')
+			el.fire('pointerdown', touch(6, 300, 600))
+			el.fire('pointermove', touch(6, 400, 700))
+			el.fire('pointermove', touch(5, 50, 700))
+			assert.equal(g.active, false, 'no pan, no pinch')
+			el.fire('pointerdown', touch(7, 500, 500))
+			el.fire('pointerup', touch(7, 500, 500))
+			el.fire('pointerup', touch(6, 400, 700))
+			assert.deepEqual(log, [], 'no gesture, no tap')
+			el.fire('pointerup', dev(200, 200))
+			el.fire('pointerdown', touch(8, 10, 10))
+			assert.deepEqual(claims, [8], 'a new finger is asked again')
+			assert.equal(g.pending, true)
+			el.fire('pointermove', touch(5, 50, 800))
+			assert.equal(g.active, false, 'the finger from the press stays inert until it lifts')
+		})
+	}
+
+	for (const wantsPan of [false, true]) {
+		for (const still of [true, false]) {
+			test(`(b) a waiting finger, then the pen (wantsPan ${wantsPan}): pending false, no hold timer, the finger ${still ? 'lifts: no tap' : 'moves: no pan'}${wantsPan ? '; the pan starts at once' : ''}`, () => {
+				const asked = []
+				const s = setup({ wantsPan: () => wantsPan, longPress: (id) => { asked.push(id); return true } })
+				const { el, g, log, timers, clock } = s
+				el.fire('pointerdown', touch(5, 50, 600))
+				assert.equal(g.pending, true)
+				el.fire('pointerdown', pen(9, 200, 200))
+				assert.equal(g.pending, false)
+				assert.equal(g.owns(5), false)
+				assert.deepEqual(timers.pending.filter((t) => t.ms === LONG_PRESS_MS), [], 'the hold timer is gone')
+				assert.deepEqual(log, wantsPan ? [['directStart']] : [], wantsPan ? 'directStart at once' : 'nothing')
+				clock.t += 100
+				if (still) {
+					el.fire('pointerup', touch(5, 50, 600))
+				} else {
+					el.fire('pointermove', touch(5, 50, 700))
+				}
+				clock.t += LONG_PRESS_MS
+				timers.runAll()
+				assert.deepEqual(asked, [], 'no hold signal')
+				assert.equal(g.active, false)
+				el.fire('pointerup', pen(9, 200, 200))
+				if (!still) el.fire('pointerup', touch(5, 50, 700))
+				assert.deepEqual(kinds(log), wantsPan ? ['directStart', 'directEnd'] : [], 'no tap, no gesture')
+			})
+		}
+	}
+
+	for (const kind of ['pan', 'pinch']) {
+		for (const wantsPan of [false, true]) {
+			test(`(c) a running ${kind}, then the pen (wantsPan ${wantsPan}): next comes end with the live camera${wantsPan ? ', then directStart' : ''}; no frame after it`, () => {
+				const { el, g, log } = setup({ wantsPan: () => wantsPan })
+				el.fire('pointerdown', touch(1, 100, 100))
+				if (kind === 'pinch') el.fire('pointerdown', touch(2, 300, 100))
+				el.fire('pointermove', touch(1, 60, 100))
+				assert.equal(g.active, true)
+				const live = g.live
+				const n = log.length
+				el.fire('pointerdown', pen(9, 500, 500))
+				assert.deepEqual(log.slice(n), [['end', live], ...(wantsPan ? [['directStart']] : [])])
+				assert.equal(g.active, false)
+				el.fire('pointermove', touch(1, 0, 100))
+				if (kind === 'pinch') el.fire('pointermove', touch(2, 500, 100))
+				el.fire('pointermove', pen(9, 490, 500))
+				el.fire('pointerup', touch(1, 0, 100))
+				if (kind === 'pinch') el.fire('pointerup', touch(2, 500, 100))
+				el.fire('pointerup', pen(9, 490, 500))
+				assert.ok(!kinds(log.slice(n)).includes('frame'), 'no frame after the end')
+				assert.equal(kinds(log).filter((k) => k === 'end').length, 1)
+				assert.deepEqual(kinds(log.slice(n)), wantsPan ? ['end', 'directStart', 'direct', 'directEnd'] : ['end'])
+			})
+		}
+	}
+
+	test('(d) a claimed finger, then the pen: isClaimed false; another finger neither cancels a claim nor starts a gesture', () => {
+		let cancelled = 0
+		const claims = []
+		const { el, g, log } = setup({ claimTouch: (e) => { claims.push(e.pointerId); return true }, cancelClaim: () => { cancelled++ } })
+		el.fire('pointerdown', touch(5, 700, 200))
+		assert.equal(g.isClaimed(5), true)
+		el.fire('pointerdown', pen(9, 200, 200))
+		assert.equal(g.isClaimed(5), false)
+		assert.equal(g.owns(5), false)
+		el.fire('pointerdown', touch(6, 300, 600))
+		el.fire('pointermove', touch(6, 400, 700))
+		el.fire('pointermove', touch(5, 750, 250))
+		assert.equal(cancelled, 0, 'no cancelClaim')
+		assert.equal(g.active, false)
+		assert.deepEqual(log, [])
+		assert.deepEqual(claims, [5])
+		el.fire('pointerup', pen(9, 200, 200))
+		el.fire('pointerdown', touch(7, 500, 500))
+		assert.equal(cancelled, 0, 'after the pen only new fingers count: no claim left to cancel')
+		assert.deepEqual(claims, [5, 7], 'the new finger is a first finger')
+		assert.equal(g.isClaimed(7), true)
+	})
+
+	test('(e) pointerup, pointercancel and a pointermove with buttons 0 end the pen press; cancel() does not; destroy() forgets it', () => {
+		const ends = {
+			pointerup: (el) => el.fire('pointerup', pen(9, 210, 200)),
+			pointercancel: (el) => el.fire('pointercancel', pen(9, 210, 200)),
+			'pointermove with buttons 0': (el) => el.fire('pointermove', { ...pen(9, 210, 200), buttons: 0 }),
+		}
+		for (const [name, end] of Object.entries(ends)) {
+			const { el, g } = setup()
+			el.fire('pointerdown', pen(9, 200, 200))
+			el.fire('pointermove', { ...pen(9, 205, 200), buttons: 1 })
+			el.fire('pointerdown', touch(5, 50, 600))
+			assert.equal(g.pending, false, name + ': still pressed, the finger is inert')
+			el.fire('pointerup', touch(5, 50, 600))
+			end(el)
+			el.fire('pointerdown', touch(6, 50, 600))
+			assert.equal(g.pending, true, name + ': a new finger works again')
+		}
+		const c = setup()
+		c.el.fire('pointerdown', pen(9, 200, 200))
+		c.g.cancel()
+		c.el.fire('pointerdown', touch(5, 50, 600))
+		assert.equal(c.g.pending, false, 'cancel() does not end the pen press')
+		const d = setup()
+		const down = [...d.el.listeners.get('pointerdown')]
+		d.el.fire('pointerdown', pen(9, 200, 200))
+		d.g.destroy()
+		// the listeners are gone; the old pointerdown listener shows the state destroy() left behind
+		for (const fn of down) fn({ type: 'pointerdown', button: 0, ...touch(5, 50, 600), preventDefault() {} })
+		assert.equal(d.g.pending, true, 'destroy() forgot the pen press')
+	})
+
+	for (const [name, opts, ev] of [
+		['button 2', {}, (pointerType) => ({ ...mouse(9, 200, 200, 2), pointerType })],
+		['ignoreTarget true', { ignoreTarget: (e) => e.pointerId === 9 }, (pointerType) => ({ ...mouse(9, 200, 200), pointerType })],
+	]) {
+		test(`(f) ${name}: no pen press, a waiting finger stays pending`, () => {
+			for (const pointerType of ['pen', 'mouse']) {
+				const { el, g } = setup(opts)
+				el.fire('pointerdown', touch(5, 50, 600))
+				el.fire('pointerdown', ev(pointerType))
+				assert.equal(g.pending, true, pointerType)
+				assert.equal(g.owns(5), true, pointerType)
+				el.fire('pointerdown', touch(6, 300, 600))
+				assert.equal(g.active, true, pointerType + ': a second finger still pinches')
+			}
+		})
+	}
 })
 
 describe('lifecycle', () => {

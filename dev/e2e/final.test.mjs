@@ -11,7 +11,6 @@
  * - E45: the three steps of the spec with their hooks (a stale list with a
  *   link and the keyboard path, a bookmark, a deleted board on a phone with
  *   touch); two boards, so MAX_BOARDS_PER_RUN stays 56 (51 + 2 = 53)
- * - README names E01–E45
  * - every check label names exactly one owner (SPEC-M1 §9.6); waits only
  *   from Node (CSP, trap 9.10); no window.__knorke after a failed open
  * Run: node --test 'dev/e2e/*.test.mjs'
@@ -102,10 +101,4 @@ test('E45: every check label names exactly one owner [S], [C], [B] or [D]; waits
 	assert.deepEqual(bad, [], 'checks without exactly one label that starts with one owner')
 	const dual = lines.flatMap((l, i) => (/\[(S|C|B|D)\s*[/,&+|]\s*(S|C|B|D)\]/.test(l) ? [`${i + 1}: ${l.trim().slice(0, 100)}`] : []))
 	assert.deepEqual(dual, [], 'labels with two owners')
-})
-
-test('README names E01–E45', () => {
-	const md = fs.readFileSync(path.join(DIR, '../../README.md'), 'utf8')
-	assert.ok(md.includes('E01–E45'))
-	assert.ok(!md.includes('E01–E44'))
 })

@@ -524,12 +524,13 @@ needs a database migration, new state lives in Redis counters and app config.
   replaces the selection. A finger that moves at once still pans, two
   fingers still zoom, and a finger on an item selects and drags it as
   before. Holding without dragging changes nothing; a second finger or Esc
-  ends the frame. A pen or a mouse takes precedence over a finger held on
-  empty canvas (for example a palm resting on the screen): the finger gets
-  no ring or loses it, and the pen or mouse works as usual. Another contact
-  that lands during a pen or mouse drag does not cancel the drag, but
-  together with the resting palm it can still pan or zoom the board. There
-  is no button for it.
+  ends the frame. A pen or a mouse takes precedence over every finger (for
+  example a palm resting on the screen): while the pen touches the board or
+  the left mouse button is held down, fingers neither pan, zoom nor select,
+  and a finger that was already down gets no ring or loses it and stays
+  without effect until it lifts. The pen or mouse works as usual; a new note or
+  connector appears at the pen, not under the palm. There is no button for
+  it.
 
 ## How it works
 

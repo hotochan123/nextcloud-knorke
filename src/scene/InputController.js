@@ -24,12 +24,15 @@
  * until then. The scene shows the hold signal (host.holdSignal: ring and
  * vibration) at once; every end of that press (release, Esc, pointercancel,
  * a second finger, settle, destroy) hides the ring again (holdSignal(null)).
- * A mouse or pen pointerdown goes before such a held finger (a palm resting
- * on a pen tablet): the hold press ends like Esc (the selection shown
- * stays, no intent) and the mouse or pen works as usual; the finger stays
- * without effect until it lifts. A second finger (cancelTouch) aborts only a
- * press a finger started, like Esc; a mouse or pen press goes on, so another
- * contact landing during the pen's drag does not lose its move.
+ * A mouse or pen pointerdown goes before every press a finger started (a
+ * palm resting on a pen tablet: held on empty canvas, on an item, with a
+ * create tool or the connector; job 134): that press ends like Esc (no
+ * create, no connector, a drag springs back, a marquee goes, no intent; the
+ * selection the finger set at its pointerdown stays) and the mouse or pen
+ * works as usual; the finger stays without effect until it lifts, and the
+ * GestureController keeps every finger out while the pen press runs. A
+ * second finger (cancelTouch) aborts only a press a finger started, like
+ * Esc; a mouse or pen press goes on.
  * In modes vote and view
  * nothing is selected, dragged or created here; (stage 3) a click or tap in
  * mode vote reaches the scene as GestureController.onTap, which asks hitAt()
@@ -410,8 +413,8 @@ export class InputController {
 	/**
 	 * A second finger arrived (the GestureController's cancelClaim): aborts the
 	 * current press like cancel() only when a finger started it (claimTouch,
-	 * claimLongPress); a mouse or pen press goes on (a palm held, then a pen
-	 * drag, then a third contact: the pen's move still goes through).
+	 * claimLongPress); a mouse or pen press goes on (the GestureController does
+	 * not even ask while one runs: a third contact during a pen drag is inert).
 	 */
 	cancelTouch() {
 		if (this.#press?.touch === true) this.cancel()
@@ -466,8 +469,8 @@ export class InputController {
 		this.#touchCreated = false
 		// context menu rule 3: a contextmenu after this pointerdown is this pointer's
 		this.#menuDown = typeof e.pointerType === 'string' ? e.pointerType : ''
-		// (R38) a mouse or pen goes before a finger held on empty canvas (a resting palm): that press ends like Esc
-		if (e.pointerType !== 'touch' && this.#press?.hold === true) this.cancel()
+		// (R38, job 134) a mouse or pen goes before every press a finger started (a resting palm): it ends like Esc
+		if (e.pointerType !== 'touch' && this.#press?.touch === true) this.cancel()
 		if (h.isInteractiveTarget(e)) return
 		// a click on the canvas focuses it (single keys need the canvas focus);
 		// (R9) in mode edit a finger too (focus({preventScroll}) on the tabindex

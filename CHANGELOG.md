@@ -10,533 +10,71 @@ All notable changes to Knorke are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] – 2026-10-23
+
+**Needs one `occ upgrade`:** new database columns for grouping and locking.
+Existing boards keep every item.
+
 ### Added
-- Data foundation for grouping and locking (M2), on which "Lock items" and
-  "Group items" below build. The app version goes from 0.2.0 to 0.3.0 and
-  **needs one `occ upgrade`**: a new migration adds the nullable columns
-  `group_id`, `locked_by` and `locked_name` to `knorke_items` (plus the
-  index `knorke_items_group`); existing boards keep every item. Snapshot,
-  guest join and the slow sync path now give every item for every role the
-  two keys `group` and `lock`, each `null` while the item is not grouped or
-  not locked (`lock` is `{"by": <pid>, "name": <display name>}`; `by` is
-  the per-board pid, never a user id). The protocol stays at 2. A `put`
-  that sets `lock` to anything but `null` is answered with `bad`: an item
-  is locked with a `patch` (see "Lock items"), and a `put` may carry
-  `group` (see "Group items"). The client keeps both fields in its replica
-  and scene model.
-- Right-click menu on the empty canvas ("Board actions"): a line under the
-  entries shows how many items are on the board, for example "12 items on
-  this board" (German: "12 Objekte auf diesem Board"). The number is what
-  this browser knows when the menu opens; it does not change while the menu
-  is open. The line is not a menu entry: the arrow keys skip it, screen
-  readers read it as the menu's description, and a press on it keeps the
-  focus in the menu. The keyboard path shows the line too: with the canvas
-  focus and nothing selected, the context-menu key or Shift+F10 opens this
-  menu in the middle of the canvas. Test hook `data-knorke-menu-count` with
-  the number.
-- Align the selection: when at least two items are selected (connectors,
-  items inside a selected frame, locked items and the members of a group
-  with a locked member do not count; a group selected as a whole counts as
-  one item), the context bar shows "Align items" (German: "Objekte
-  ausrichten"). Its panel has six commands: align left edges, horizontal
-  centers, right edges, top edges, vertical centers and bottom edges. The
-  items move to that edge or center line of the box around all of them (a
-  rotated item counts with its outer box); only one direction changes.
-  Connectors stay where they are (bound ends follow their items), items
-  inside a selected frame move with their frame, and an item joins or
-  leaves a frame as when dragging. Each click that moves something is one
-  undo step; the selection and the panel stay, so another edge can be
-  tried right away. When every item is already in place (within 0.01 world
-  units; one world unit is one pixel at 100 % zoom), a click changes
-  nothing and adds no undo step. Test hooks `data-knorke-action="align"`
-  and `data-knorke-align` (`left`, `center`, `right`, `top`, `middle`,
-  `bottom`).
-- Distribute the selection: when at least three items are selected
-  (counted as for "Align items"), the "Align items" panel shows a third
-  row with "Distribute horizontally" and "Distribute vertically" (German:
-  "Horizontal verteilen", "Vertikal verteilen"). The two outermost items
-  stay where they are; the items between them move so that the gaps
-  between neighbouring items are equal (a rotated item counts with its
-  outer box). When the items overlap too much for that, their centers get
-  equal distances instead. Only one direction changes. Distributing
-  handles every item on its own and does not tidy up a grid: a grid of
-  notes distributed horizontally loses its columns, its rows end up offset
-  from each other, and notes of a row can overlap; distributed vertically,
-  it loses its rows the same way (undo brings the grid back). Connectors
-  stay where they are (bound ends follow their items), items inside a
-  selected frame move with their frame, and an item joins or leaves a
-  frame as when dragging. Each click that moves something is one undo
-  step; the selection and the panel stay. When the items are already
-  distributed (each within 0.01 world units of its place), a click changes
-  nothing and adds no undo step. Test hook `data-knorke-distribute`
-  (`horizontal`, `vertical`).
-- Tidy up the selection: the "Align items" panel ends with a row holding
-  "Tidy up" (German: "Aufräumen"), shown from two selected items (counted
-  as for "Align items"). It puts the items on an exact grid.
-  Two items share a row when the center of one lies within
-  the height of the other, the same goes for columns, and
-  every cell holds at most one item. Rows and columns keep
-  their order, empty cells stay empty, each item is centered in its cell
-  (a rotated item counts with its outer box), and the top-left corner of
-  the selection stays (rounded to whole world units). All columns get the
-  same gap, and so do all rows: about the mean of the current gaps, in
-  whole world units, so a loose grid stays loose and a dense one dense.
-  Anything else becomes a grid too: a dense pile of notes turns into one
-  long row, and a heading above a grid widens one column (undo brings
-  everything back). Connectors stay where they are (bound ends follow
-  their items), items inside a selected frame move with their frame, and
-  an item joins or leaves a frame as when dragging. Each click that moves
-  something is one undo step; the selection and the panel stay. A second
-  click on the tidied items changes nothing and adds no undo step. Test
-  hook `data-knorke-action="tidy"`.
-- Snapping to other items: while you drag items, the left, center and
-  right lines and the top, middle and bottom lines of their outer box snap
-  to the same lines of the items in view, within 8 screen pixels at any
-  zoom (a rotated item counts with its outer box, a frame without its
-  title band); a dashed magenta guide shows the line. A gap to a
-  neighbour in the same row or column snaps to the gap between two other
-  items there, and solid magenta markers show every gap of that size.
-  Dragging a resize handle snaps the moving edges to the same lines,
-  without gap markers: corners that keep the aspect ratio keep it exactly,
-  and snapping never makes an item smaller than its minimum, larger than
-  its maximum or flipped. A frame resized on its own snaps to its own
-  content; text items snap only horizontally; a rotated item and several
-  items that include a frame or a placeholder do not snap while resizing,
-  and rotating does not snap to other items. Hold Ctrl (⌘ on a Mac) to drag
-  or resize freely; pressing or releasing it acts at once. Without a
-  keyboard, touch and pen cannot switch snapping off ("Arrange" sets exact
-  values for a single item, not a group). A small move of the last item of
-  an evenly spaced row snaps back to where it was (nothing changes), and a
-  small resize in a row of items of the same size snaps back to the item's
-  size. Only the person dragging sees the guides and markers; a drag or a
-  resize stays one undo step. Debug counters
-  `window.__knorke.scene().snapGuides` and `.gapMarkers`.
-- Background grid: "Show grid" (German: "Raster anzeigen") in the
-  right-click menu on the empty canvas (only in "Edit", right after "Show
-  everything"), or the key G while the canvas has the focus (in every mode;
-  not with Shift, Alt or Ctrl/⌘, not on key repeat) shows a grid behind all
-  items: lines every 20 world units, every fifth line darker; zoomed out,
-  the drawn grid gets five times coarser before its lines come closer than
-  10 screen pixels. The menu entry has a check mark while the grid is on
-  (every entry of that menu leaves room for it). The setting is stored in
-  this browser for every board and stays after a reload; nobody else sees
-  it. While the grid is shown, dragging puts the top-left corner of the
-  dragged items' outer box on the 20-unit grid, and dragging a resize
-  handle puts the moving edge nearest to a grid line on it, at every zoom
-  (zoomed out also between the drawn lines). Snapping to other items wins
-  on its axis; the grid draws no guides. A rotated item and several items
-  that include a frame or a placeholder do not snap to the grid while
-  resizing, and text items snap only horizontally; rotating does not snap to
-  the grid, and dragging a rotated item snaps its outer box. Creating items,
-  arrow keys, "Arrange", paste, align and connector ends do not snap to the
-  grid. Hold Ctrl (⌘ on a Mac) to drag or resize freely. "Snap to grid"
-  (German: "Am Raster ausrichten"), right after "Show grid" and listed
-  only while the grid is shown, is on by default; switched off, the grid
-  stays visible without snapping, and only switching it off is stored.
-  Debug values `window.__knorke.scene().grid`, `.gridSnap` and
-  `.draws.grid`.
-- Share notifications: when the owner shares a board with an account, a
-  group or a team, the recipients get the Nextcloud notification "{owner}
-  shared the board {title} with you" (German: "{owner} hat das Board
-  {title} mit dir geteilt"), for example "Alice Adler shared the board
-  Retro Q3 with you". It shows in the bell, as a push message and in the
-  e-mail digest of the Notifications app. Accounts get it at once; members
-  of a group or team get it on the next run of Nextcloud's background jobs
-  (cron). Groups and teams with more than 500 members get none; Knorke
-  logs "Knorke: share notification skipped, too many members" (level
-  `info`) instead. A click on the entry opens the board in the same tab.
-  Changing a role, removing a share and links (creating, renewing,
-  joining) send no notification, and the person who shares gets none.
-  There is one notification per recipient and board: sharing again
-  replaces the earlier one. Only IDs are stored; the board title and the
-  owner's name are added when the notification is shown. At that moment
-  Knorke checks that the recipient may still use the app, the board still
-  exists and the recipient still has a share on it (directly, through a
-  group or through a team); otherwise Nextcloud deletes the notification
-  (share removed, group or team left, board deleted). In background jobs
-  (cron, also a long-running `occ background-job:worker`) Knorke reads the
-  recipient's groups straight from the group backends each time, not from
-  Nextcloud's cache that such a worker never clears: a group left counts at
-  once, and a member who just joined keeps the notification (as fresh as
-  the group backend; LDAP keeps its own cache). A push message already on a
-  phone stays. If a group backend (for example LDAP) fails with an error
-  while the background job reads the members of a group, the members get
-  no notification at all, not even in the bell, and the job is not
-  retried; Knorke logs "Knorke: share notification fan-out failed". If a
-  group backend fails with an error while Knorke checks a notification
-  before showing it, Knorke logs
-  "Knorke: preparing a share notification failed" and keeps the
-  notification; it shows in the bell once the backend answers again. A
-  push message missed this way is not sent later, and the e-mail digest
-  may leave it out. No new route, no migration; it needs the Notifications
-  app that comes with Nextcloud.
-- Share dialog, "Cannot open Knorke": in "Share" → "People", the owner
-  sees this hint (German: "Kann Knorke nicht öffnen") below the name of
-  each account that cannot open Knorke, in the search results and in the
-  list, also after saving and when the dialog is opened again. These are
-  accounts outside Knorke's "Limit to groups" on Nextcloud's Apps page
-  and accounts of the Guests app while that app's whitelist keeps Knorke
-  out; when Knorke cannot ask the Guests app, its accounts count as kept
-  out. Until now, neither the owner nor the person learned that the share
-  does not work for them yet, because such accounts get no share
-  notification. Saving stays allowed with every role, and the share works
-  once an administrator lets the account open Knorke. Groups and teams are
-  never marked, even when some of their members cannot open Knorke. The
-  answers of GET and PUT `/api/v1/boards/{id}/shares` and of the
-  recipient search `GET /api/v1/boards/{id}/sharees` carry
-  `"appAccess": false` for such accounts only; the PUT body stays as it
-  was. No new route, no migration; the protocol stays at 2.
-- Boards in Nextcloud's unified search: the new section "Knorke boards"
-  (German: "Knorke-Boards") lists the boards whose title contains the
-  search term, upper and lower case alike, among the boards of the
-  account's board list: its own, those shared with it (directly, through a
-  group or through a team) and those it joined through an edit or voting
-  link. Board content (items, frame titles) is never searched. A hit shows
-  the title and the owner ("by {owner}", German: "von {owner}") and opens
-  the board; the most recently created boards come first, at most 25 per
-  request (further pages through the cursor of Nextcloud's search API).
-  Each hit is checked as when the board is opened, so a board the account
-  can no longer open (share removed, link revoked, renewed or expired,
-  board deleted) is gone from the next search. Accounts outside Knorke's
-  "Limit to groups" on Nextcloud's Apps page get no hits and do not see
-  "Knorke boards" under "Places" in the search dialog. For accounts of the
-  Guests app, see the entry "Accounts of the Guests app" under Fixed. No
-  new route, no migration; the protocol stays at 2.
-- Lock items: in "Edit", everyone who may edit (the owner, "Can facilitate",
-  "Can edit" and guests of the edit link; not "Can vote" or "Can view") can
-  lock one or more items (frames, notes, shapes, text items, connectors)
-  with "Lock" (German: "Sperren") in the context bar or the right-click menu
-  and unlock them with "Unlock" (German: "Entsperren"). Ctrl+Shift+L (⌘⇧L on
-  a Mac) toggles: it locks while something in the selection can be locked,
-  else it unlocks what you may unlock; when only other people's locks are
-  left and you are not a facilitator, it shows "Only the person who locked
-  it or a facilitator can unlock it." Locking and unlocking are one undo
-  step each, and the selection stays. A locked item can still be selected,
-  copied, connected and voted on, but nobody moves, resizes, edits or
-  deletes it until it is unlocked, not even facilitators, and a finger
-  cannot move it either. A locked frame stays where it is, while its content
-  stays free; a locked item inside an unlocked frame moves along when
-  someone moves the frame. Every locked item shows a lock symbol, in every
-  mode and at every zoom (zoomed far out, connectors are not drawn at all).
-  The context bar shows who locked the selection: "Locked by you", "Locked
-  by {name}", "Locked, locker unknown", or the number of locked items when
-  several people locked them. A lock belongs to the person who set it, and
-  only they unlock it; facilitators (the owner and everyone with "Can
-  facilitate") unlock any lock, and the entry names whose it is: "Unlock
-  (locked by {name})", "Unlock (locker unknown)" when no locker has a name,
-  or "Unlock (locked by several people)". The marquee and Ctrl+A (⌘A) skip
-  locked items for every role (a marquee with Shift keeps what was
-  selected); Tab still reaches them, which is the keyboard way to "Unlock".
-  In a selection with locked items, editing acts only on the unlocked ones
-  (copy, connect and zoom to selection act on all). Deleting or cutting such
-  a selection leaves the locked items selected and names their number, for
-  example "2 locked items were not deleted."; undo and redo skip changes to
-  locked items, for example "2 locked items were skipped.". When the server
-  answers `itemlocked` (the item was locked in the meantime), a notice like
-  "2 locked items were not changed." shows, and text goes to the text rescue
-  with "Not saved: this item is locked. Copy your text before closing.";
-  editing also ends with this notice when the item of the open editor gets
-  locked. Guests keep their locks when they come back in the same browser,
-  also through a renewed link; in a new browser only facilitators unlock
-  them. The locks of a deleted account stay ("Locked, locker unknown"), and
-  only facilitators unlock them. On the wire, an item is locked with a
-  `patch` whose only key is `lock`: any non-empty object locks (it is
-  checked like other values but not stored; the server records the sender as
-  the locker), and `null` unlocks. A `put` with a `lock` other than `null`
-  is answered with `bad`. Every change and every removal of a locked item
-  gets `itemlocked`, also from a facilitator before unlocking; change rows
-  carry `"lock":true` or `null`. The protocol stays at 2. No migration: the
-  columns come with the data foundation above. Debug value
-  `window.__knorke.scene().locks`; test hooks `data-knorke-action="lock"`
-  and `"unlock"`, `data-knorke-lock-badge`, the menu entries `lock` and
-  `unlock`, the toasts `lock-delete`, `lock-undo`, `lock-unlock` and
-  `lock-held`.
-- Unlock all for facilitators: the owner and everyone with "Can facilitate"
-  can lift many locks at once in the right-click menu (only in "Edit", with
-  a mouse, trackpad or pen; touch-only devices have no right-click menu).
-  "Unlock all" (German: "Alles entsperren") lifts every lock on the board,
-  of every kind. "Unlock all in this frame" (German: "Alles in diesem Frame
-  entsperren") lifts the locks of a frame and of everything inside it, the
-  frame's own lock included (connectors never count). "Unlock all locked by
-  {name}" (German: "Alles von {name} entsperren") lifts every
-  lock of that person on the whole board, not only in one frame, and leaves
-  all other locks, the facilitator's own included; "Unlock all" and "Unlock
-  all in this frame" lift the facilitator's own locks too, for example on
-  frames and items prepared for the workshop. In the menu of the empty
-  canvas, "Unlock all in this frame" (for the frame under the pointer; the
-  inside of a frame counts as empty canvas) and "Unlock all" are the last
-  two entries, after the grid entries. A right-click on a frame's title band
-  or edge, or Tab to the frame and Shift+F10, shows "Unlock all in this
-  frame" after the lock entries; on an item someone else locked
-  (right-click, or Tab and Shift+F10), "Unlock all locked by {name}" comes
-  right after the "Unlock (locked by …)" entry. With the keyboard, while the
-  canvas has the focus, Esc (which clears the selection) and then Shift+F10
-  or the context-menu key open the menu of the empty canvas in the middle of
-  the canvas, and "in this frame" means the frame there. An entry shows only
-  while there is something to unlock when the menu opens. A right-click
-  inside a frame you prepared and locked offers only the two broad entries,
-  and "Unlock all in this frame" would lift your own locks there too; to
-  lift one person's locks and keep your own, right-click one of their locked
-  items and choose "Unlock all locked by {name}", which lifts that person's
-  locks on the whole board. The items are counted again on the click; when
-  someone was quicker and nothing is left, "Nothing left to unlock."
-  (German: "Nichts mehr zu entsperren.") shows. Otherwise it is one undo
-  step of plain `{"lock": null}` patches, sent at most 200 per request
-  within the write budget (a busy server is retried, nothing is lost); the
-  selection stays, and a notice names the number, for example "12 items
-  unlocked" (German: "12 Objekte entsperrt"). Undo locks the items again,
-  but in the facilitator's name: the original lockers cannot be restored,
-  because the server records whoever locks. There is no shortcut and no
-  confirmation, and the entries are neither in the context bar nor in the
-  "Facilitate" menu. The marquee and Ctrl+A (⌘A) still skip locked items for
-  every role, facilitators too. The server rule is unchanged: only
-  facilitators (`canModerate()`) lift someone else's or an unknown lock. The
-  protocol stays at 2; there is no new op and no new route. Test hooks: the
-  menu entries `unlock-all`, `unlock-frame` and `unlock-by`, the toasts
-  `unlock-all` and `unlock-none`.
-- Group items: select notes, shapes or text items and press Ctrl+G (⌘G on
-  a Mac), or use "Group items" (German: "Gruppieren") in the context bar or
-  the right-click menu; Ctrl+Shift+G (⌘⇧G) or "Ungroup" (German:
-  "Gruppierung aufheben") dissolves the whole group, also when only one of
-  its members is selected. The context bar shows "Group items" while the
-  selection holds at least two notes, shapes or text items that are not
-  exactly one group, and "Ungroup" while it contains a grouped item: a
-  selected group shows only "Ungroup", a group plus another note, shape or
-  text item shows both, and so does a group, or one of its members,
-  plus a frame, with "Group items" dimmed (frames cannot be grouped).
-  With a finger, use the context bar; to select
-  several items, hold a finger still on empty canvas until a ring
-  appears, then drag over them (see "Selecting with a finger" below). A
-  group holds at least two items, all in the same frame or all outside
-  frames; frames cannot be grouped, connectors are not members (a
-  connector between two members moves along), and groups do not nest:
-  grouping a selection that contains groups makes one new group of
-  all their members. When the selection cannot be grouped (a frame, a
-  locked item, items in different frames), "Group items" is dimmed, its
-  tooltip names the reason, and pressing it or Ctrl+G shows the reason
-  instead; "Ungroup" does the same for a group with a locked member. A
-  click on a member selects the whole group with one outline: it moves,
-  resizes (keeping its proportions), copies and deletes as a whole, and
-  dragging it moves it into or out of a frame as a whole. A second click
-  selects only that member, a double click edits its text. With the
-  keyboard, Tab selects a group like a click, and Enter on a selected group
-  first selects one member, the one you clicked or reached with Tab, and
-  then opens its editor unless it is locked; once Esc has closed the editor,
-  the next Tab reaches the next item in reading order, the next member
-  when no other item lies in between (Tab inside a note's editor starts
-  the next note to its right instead). Align, distribute and tidy up treat a
-  group as one item; copy, paste and duplicate make a new group of the
-  copies, and undo of a delete brings the members back grouped. Locking a
-  selected group locks every member; a group with a locked member does not
-  move or resize as a whole. When deleting leaves a group with one member,
-  the group dissolves; the server makes sure of that even when several
-  people delete at the same time, also for a locked member. Grouping and
-  ungrouping are one undo step each, apply to everyone on the board and
-  work for guests of the edit link as for other editors; votes stay per
-  item. The protocol stays at 2: a `put` may now carry `group` and a
-  `patch` may set the path `group` (`null` or a ULID; notes, shapes and
-  text items only; not together with `lock`), both answered with `bad`
-  before. No migration: the column comes with the data foundation above.
-  Debug value `window.__knorke.scene().groupOutlines`; test hooks
-  `data-knorke-action="group"` and `"ungroup"`, the menu entries `group`
-  and `ungroup`, the toast `group-blocked`.
-- Selecting with a finger: in edit mode on a touch device (one that also
-  reports a fine pointer, e.g. a pen), with the Select tool, hold a finger
-  still on empty canvas for 500 ms (half a second). A ring of 120 pixels
-  then appears under the finger, and the device vibrates for 20 ms where
-  the browser can. Dragging more than 10 pixels then draws a frame that
-  selects like a frame dragged with the mouse (without Shift) and replaces
-  the selection; the board does not move. Unchanged: a finger that moves
-  at once pans, a finger on an item drags it, and the hand tool, the create
-  tools and the vote and view modes work as before. Releasing keeps the
-  selection; a second finger, Esc, `pointercancel` and a mode switch end
-  the frame. A mouse or pen takes precedence over a finger held on empty
-  canvas (a palm resting on the screen), and another contact that lands
-  during a mouse or pen drag does not cancel that drag (together with the
-  resting palm it can still pan or zoom the board). Forced colors and
-  reduced motion (the ring shows without its fade-in) are covered. There is
-  no new button and no new text, and a long press still opens no menu.
-  Debug value `window.__knorke.scene().holdRing`; test hook
-  `data-knorke-hold-ring`.
-- Privacy notice for guests and on boards open by link: the name dialog of
-  guests shows a notice text and the link to the privacy policy above the
-  name field; joining needs no extra click. A long text scrolls on its own
-  (at most 30 % of the window height), and the links stay visible below it.
-  People who can only vote get their own built-in wording ("Others on this
-  board see neither your cursor nor how you vote."). A returning guest sees
-  the notice once per browser tab as a card that can be closed. Signed-in
-  accounts see the badge "Open by link" (German: "Per Link offen") in the
-  top bar while an edit or voting link of the board is active, the owner
-  too; a press opens the card with what guests can see. Once per board,
-  account and device the card also appears by itself, never for the owner;
-  it appears again when the link is switched on again or renewed.
-  Administrators set the notice in the new section "Knorke" of the
-  Administration settings: a default text, texts per language and a privacy
-  policy URL that overrides the one from Theming. Nothing is worded as
-  consent. New route `PUT /api/v1/settings/privacy` (administrators only),
-  new snapshot field `board.linkOpenSince` for accounts, and the initial
-  state of every page has 12 keys; the protocol stays at 2. No migration,
-  no `occ upgrade`.
-- Screenshots for the entry in the App Store and the Apps page of Nextcloud
-  (`<screenshot>` in `appinfo/info.xml`): a retrospective board with
-  frames, sticky notes and the cursor of a second participant, a running
-  vote, and the context bar with "Align items". The images live in
-  `docs/screenshots/` and are not part of the app archive.
+- Group items: Ctrl+G (⌘G on a Mac) or "Group items" in the context bar or
+  the right-click menu. A group moves, resizes, copies and deletes as a
+  whole; Ctrl+Shift+G (⌘⇧G) or "Ungroup" dissolves it.
+- Lock items: "Lock" and "Unlock" (Ctrl+Shift+L, ⌘⇧L) for everyone who may
+  edit. Nobody moves, edits or deletes a locked item until it is unlocked.
+  Facilitators can lift any lock, also many at once with "Unlock all",
+  "Unlock all in this frame" and "Unlock all locked by {name}".
+- Align, distribute and tidy up: "Align items" in the context bar lines up
+  edges and centers, spaces three or more items evenly and puts items on a
+  tidy grid.
+- Snapping: dragged and resized items snap to the edges, centers and gaps of
+  the items around them, with guides. Hold Ctrl (⌘) to move freely.
+- Background grid: "Show grid" in the right-click menu of the canvas or the
+  key G; items snap to it while "Snap to grid" is on.
+- Selecting with a finger: hold a finger still on empty canvas until a ring
+  appears, then drag over the items.
+- Share notifications: people get a Nextcloud notification when a board is
+  shared with them, their group or their team.
+- Share dialog: "Cannot open Knorke" below accounts that are not allowed to
+  use the app.
+- Boards in Nextcloud's unified search (board titles only).
+- Privacy notice for guests, with a link to the privacy policy.
+  Administrators set the text in the new "Knorke" section of the
+  Administration settings. Signed-in people see "Open by link" while a
+  guest link of the board is active.
+- The right-click menu of the canvas shows how many items are on the board.
+- Screenshots for the App Store.
 
 ### Changed
-- Context bar: while the canvas has the focus (or nothing has, after a
-  click beside a button), Esc first closes an open panel of the bar, for
-  example after a mouse click on an align command. The selection and the
-  bar stay, and following another participant goes on. A second Esc with
-  the canvas focus then clears the selection as before.
-- Context bar: the panel now comes right after the last panel button in
-  the Tab order (and for screen readers). After "Align items" or
-  "Arrange", one Tab leads into the panel; Copy, Cut, Duplicate and the
-  other buttons are no longer in the way. On screen the panel stays where
-  it was, below the bar.
-- The app description on Nextcloud's Apps page no longer names a version or
-  milestone; the page shows the installed version on its own.
-- Signed-in accounts are no longer signed out by a single "not logged in"
-  answer (HTTP 401) on sync. When Redis restarts, Nextcloud gives this
-  answer for a moment to accounts that signed in without "remember me",
-  although their session is still valid. The board now keeps the unsent
-  changes and tries again after the next retry step (about a second when
-  nothing failed before); only a second such answer in a row, with no
-  successful sync in between, shows "Your session has ended. Please sign in
-  again." (German: "Deine Sitzung ist abgelaufen. Bitte melde dich neu an.")
-  as before. When a board is opened, and when the board data is fully
-  reloaded after a resync, the first such answer still signs the account
-  out; guest tabs still join the board again once. A Redis outage that
-  lasts longer than the retry still signs these accounts out (README,
-  Known limits). Client only; the protocol stays at 2.
-- Sync and the guest join report the end of access with HTTP 200 instead of
-  401 or 403, so that ban rules at a reverse proxy (for example CrowdSec's
-  http-generic-403-bf and -401-bf scenarios) no longer count them. When a
-  link is revoked, renewed or expires, a guest tab gets 200 with
-  `{"end": "<code>", "message": "<text>"}` on its next sync and on its
-  automatic join; when the administrator turns off link sharing, it gets the
-  200 on its next sync and ends there, without a join (codes `guest_token`,
-  `not_logged_in`, `link_revoked`, `link_expired`, `links_disabled`). Only
-  requests with the header `X-Knorke-End-State: 1` get this form; the board
-  sends it with every sync and with the guest join, and without it the
-  answers stay as before. After a new password the sync gets the 200 as
-  well, but the join still gets one 403 (`password_required`); a missing or
-  wrong link password stays a 403, so guessing keeps counting. The screens
-  are the same as before. In the access log such requests now show as 200;
-  the end state is only in the response body. The protocol stays at 2.
+- The end of access (link revoked, expired or switched off, session ended)
+  is answered with HTTP 200 and an end state in the body instead of 401 or
+  403, so ban rules at a reverse proxy (for example CrowdSec) no longer
+  count it. Only requests with the header `X-Knorke-End-State: 1` get this
+  form; the board always sends it.
+- A single "not logged in" answer during sync, as Nextcloud gives it for a
+  moment while Redis restarts, no longer signs you out; Knorke tries again.
+- Context bar: Esc closes an open panel first, and the panel comes right
+  after its button in the Tab order.
+- The app description no longer names a version.
 
 ### Fixed
-- Esc with the canvas focus clears the selection (or cancels a drag) also
-  for signed-in users. Nextcloud's header menus, such as the notifications,
-  cancel every Esc before the board sees it, and the board used to ignore
-  a cancelled key; only holding Esc worked, through the key repeat.
-- Right-click menu: a press on its inner padding, on the gap above the count
-  line or on its border no longer moves the focus out of the menu; the
-  active entry keeps it, so Esc and the arrow keys still work. A menu that
-  has to scroll (only in very short browser windows) behaves as before, so
-  its scrollbar keeps working.
-- Align items: a double click on an align command (or a second click to be
-  sure) no longer adds a second, invisible undo step, also after more items
-  were added to an aligned selection and on boards with very large
-  coordinates. For this, a click that moves something puts items that were
-  already almost in place (within 0.01 world units) onto the edge or center
-  line as well, in the same undo step.
-- Browser tab icon, bookmark icon and home screen icon: Knorke pages now
-  show the Knorke icon (the white note on the instance's primary colour),
-  for accounts and for guests, on Nextcloud 34 and 35. Nextcloud's theming
-  answered `/apps/theming/icon/knorke` and `/apps/theming/favicon/knorke`
-  with 404 because it did not recognise the app icon file as an SVG image;
-  the icon files now start with an XML declaration. A home screen shortcut
-  that was made before keeps its old picture until it is removed and added
-  again.
-- Edit and voting links: guests can no longer install the guest page as an
-  app. Since the page shows the Knorke icon, Chrome on Android offered
-  "Install app" there, and the installed app started on Knorke's start
-  page, which for a guest is Nextcloud's login page, without an address
-  bar. The guest page now links no web app manifest, so the browser offers
-  only "Add to home screen", and that shortcut opens the guest link with
-  the board. An app installed before still starts on the login page:
-  remove it and add the page to the home screen again. Pages for signed-in
-  accounts are unchanged.
-- Nextcloud's unified search: the Knorke icon in front of each board hit
-  stays visible in the dark theme. Hits now show `img/app-neutral.svg`, the
-  Knorke icon in a mid grey (`#808080`), instead of the black
-  `img/app-dark.svg`, which was barely visible on the dark background of
-  Nextcloud 34 (about 1.2 : 1). The new icon reaches at least 3 : 1 in the
-  light and in the dark theme on Nextcloud 34 and 35. Under
-  "Partial matches" (German: "Teilübereinstimmungen") it reaches only
-  about 2.3–2.9 : 1. Nextcloud lists Knorke's hits there while a date or
-  person filter is active in the search, as Knorke does not support these
-  filters, and fades that group to 70 % opacity.
-- Accounts of the Guests app: while that app's whitelist keeps Knorke out,
-  such an account no longer finds boards in Nextcloud's search, no longer
-  sees "Knorke boards" under "Places" in the search dialog and no longer
-  gets Knorke's share notification in the bell, as a push message or in the
-  e-mail digest. Before, the search hits and the notification showed the
-  board title and the owner's name, and a click on the notification led to
-  the Guests app's error page. Knorke deletes such a notification the first
-  time it would be shown, so it does not come back once Knorke is allowed;
-  the share stays, and the board is in the account's board list. To notify
-  the account again, note its role in "Share" → "People", remove the share
-  and save, then share the board again, or send the address from
-  "Copy board link". Both help only once Knorke is allowed: before that, a
-  new notification is deleted the same way, and the address leads to the
-  Guests app's error page. For a direct share, you see in "Share" → "People"
-  whether Knorke is allowed: once it is, the account's row no longer says
-  "Cannot open Knorke" the next time you open the dialog. Once you remove
-  the share, the dialog no longer shows the account's role, and shared
-  again, the account starts with the default role "Can edit"; pick the noted
-  role before saving. For a share through a group or team, removing it takes
-  the board away from its members until you share it again, and they get a
-  new notification on the next cron run; keep that share instead and share
-  the board with the guest account directly, with the role it has through
-  the group or team. That direct share stays when the account later leaves
-  the group or team, or when the group or team share is removed or gets a
-  lower role (the highest role of all shares counts: the account keeps
-  "Can edit" from the direct share when the group or team gets "Can view");
-  remove the direct share then too. When Knorke cannot ask the Guests app
-  (for example after a change in a new version of that app), it treats such
-  accounts as kept out. Other accounts are not affected. No new route, no
-  migration; the protocol stays at 2.
-- Panning and zooming no longer leave an empty strip at the edge. With the
-  mouse wheel, the trackpad, one finger, a pinch, and while following
-  someone, items that come into view are drawn right away; before, the
-  strip at the old window edge showed only the grid until the board was
-  redrawn. For this the board is drawn up to 384 pixels beyond each window
-  edge, within a fixed memory budget, so each of its two canvas layers
-  needs about 2 to 3 times the memory. A very large window at high pixel
-  density (for example a 2560 × 1440 browser window at 2×, such as full
-  screen on a 5K display) gets no margin; there a pan redraws in nearly
-  every frame instead of showing a gap. Panning with the mouse or a pen
-  (hand tool, space bar, middle mouse button, and a plain drag when you
-  can only view or vote) now draws the larger area in every frame; in a
-  WebKit lab without a GPU this was clearly slower (about 35 instead of 54
-  frames per second at 100 % zoom). It has not been measured on a real
-  iPad or in Safari yet.
-- Opening a board that you cannot open any more (it was deleted, your
-  access was removed, the link you joined through was renewed, revoked or
-  expired, or link sharing was turned off by the administrator), for
-  example from a board list that was not reloaded, a bookmark or a search
-  result, no longer leaves the loading spinner turning below the banner.
-  The page now shows "Could not open the board", and accounts get the button
-  "Back to all boards" to the board list. The banner above it still says
-  why. If the board list in this tab knew that you had the board through
-  a link, it says
-  "Your access through the link ended. Open the link again."; otherwise,
-  for example after a bookmark, a search result or a reload, it says
-  "This board is no longer available.", because the server's answer is
-  the same for everyone. Guests keep their own pages, for example for a
-  revoked or expired link. A board that is already open behaves as
-  before: it stays visible, frozen, below the banner.
+- Panning and zooming no longer leave an empty strip at the window edge.
+- Opening a board you can no longer open shows "Could not open the board"
+  instead of an endless spinner.
+- Browser tab, bookmark and home screen show the Knorke icon.
+- Guests can no longer install the guest page as an app that starts on the
+  login page.
+- Accounts of the Guests app that may not use Knorke get no search hits and
+  no share notifications.
+- The Knorke icon in the unified search is visible in the dark theme.
+- Esc clears the selection for signed-in users too.
+- Align items: a double click no longer adds an invisible undo step.
+- The right-click menu keeps the keyboard focus after a click on its edge.
+- Pen tablets: a palm resting on the screen no longer pans or zooms the board
+  during a pen or mouse drag, and new notes and connectors appear at the pen.
 
 ### Security
-- DOMPurify 3.4.17 instead of 3.4.16 in the bundle (it comes in through
-  `@nextcloud/l10n` and `@nextcloud/vue`; only `package-lock.json`
-  changed). It fixes GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr and
-  GHSA-c6gr-qvv4-5v3f, published on 22.10.2026, which made the CI step
-  `npm audit --omit=dev --audit-level=low` fail. All three need DOMPurify
-  options (`SAFE_FOR_TEMPLATES`, `IN_PLACE` with hooks, `PARSER_MEDIA_TYPE`
-  `application/xhtml+xml`) that neither of the two packages uses.
+- DOMPurify 3.4.17 (GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr,
+  GHSA-c6gr-qvv4-5v3f). Knorke does not use the affected options.
 
 ## [0.2.0] – 2026-10-15
 

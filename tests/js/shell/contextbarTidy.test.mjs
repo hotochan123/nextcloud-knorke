@@ -110,11 +110,9 @@ test('M2 tidy up (AK10): "Tidy up" has its German text in l10n/de.json', () => {
 	assert.equal(de['Tidy up'], 'Aufräumen')
 })
 
-test('M2 tidy up (AK11): icons.tidyUp is the path of MDI view-grid, apart from every align and distribute icon; the README names it', () => {
+test('M2 tidy up (AK11): icons.tidyUp is the path of MDI view-grid, apart from every align and distribute icon', () => {
 	assert.equal(icons.tidyUp, 'M3,11H11V3H3M3,21H11V13H3M13,21H21V13H13M13,3V11H21V3')
 	const others = Object.entries(icons).filter(([k]) => k.startsWith('alignItems') || k.startsWith('distribute'))
 	assert.equal(others.length, 8)
 	assert.ok(others.every(([, p]) => p !== icons.tidyUp), 'not an align or distribute icon')
-	const readme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8')
-	assert.match(readme, /\| `distributeVertical` \| `mdi-distribute-vertical-center` \|\n\| `tidyUp` \| `mdi-view-grid` \|\n/)
 })

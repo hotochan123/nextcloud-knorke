@@ -30,26 +30,39 @@
  * the other one is about to replace, and the view would snap back when the
  * other one ends):
  * - a mouse/pen pan that starts during a wheel gesture ends it first
- *   (commit), so the pan continues from the camera the user sees; during a
- *   touch gesture it does not start at all;
+ *   (commit), so the pan continues from the camera the user sees; a touch
+ *   gesture ends at every pen press (below);
  * - wheel events during a mouse/pen pan (or a touch gesture) are swallowed,
- *   e.g. trackpad momentum or a free-spinning wheel;
- * - a touch that lands during a mouse/pen pan is ignored (palm, second
- *   device) and stays ignored until it lifts.
+ *   e.g. trackpad momentum or a free-spinning wheel.
+ *
+ * The pen goes first (job 134, pen tablets without palm rejection): a pen
+ * press is a pointerdown of a pen or a mouse with button 0 or 1 on the
+ * canvas (not ignoreTarget), whatever it does (pan, drag, marquee, create,
+ * connect, transform, a tap in mode vote), until the pointerup or
+ * pointercancel of that pointer or a pointermove of it with buttons 0 (a
+ * missed pointerup); cancel() does not end it, destroy() forgets it. Its
+ * pointer is captured at the pointerdown. At its pointerdown every finger
+ * that is down loses its effect until it lifts: a pending finger is no
+ * longer pending (no pan, tap or hold signal), a claimed one no longer
+ * claimed (the input controller ends its press itself), and a running touch
+ * gesture ends at once with a commit (this controller listens before the
+ * input controller, which so maps the pen point with the camera shown).
+ * Then the press runs as without fingers (wantsPan: the pan starts). A
+ * touch that lands during a pen press (palm, second device) is ignored
+ * until it lifts: claimTouch is not asked, no gesture, tap or hold timer.
  *
  * A first touch on an item in edit mode may be claimed by the input
  * controller (claimTouch → true) for selection and dragging; (H1, SPEC-M1
  * §35) with a create tool or the connector any first touch in edit mode is
  * claimed (it creates like the mouse, no pan). A second finger
  * cancels that claim (cancelClaim: the input controller aborts a finger's
- * press like Esc; a mouse or pen press that runs meanwhile, e.g. after a
- * held palm, goes on) and both fingers belong to a new pinch. In view-only
+ * press like Esc) and both fingers belong to a new pinch. In view-only
  * mode nothing is ever claimed.
  *
  * Hold, then drag (SPEC-M1 §6.3 (R38) "Halten, dann Ziehen"): a first
  * finger that becomes pending outside view-only mode starts a hold timer of
  * LONG_PRESS_MS (setTimer; only when the longPress option is given). A move
- * beyond TAP_SLOP_PX, its pointerup or pointercancel, a second finger, a
+ * beyond TAP_SLOP_PX, its pointerup or pointercancel, a second finger, any
  * mouse or pen pointerdown (the pen goes first: a palm resting on the
  * screen gets no hold signal), cancel() and destroy() clear it, and
  * nothing happens. When it runs out
@@ -122,6 +135,8 @@ export class GestureController {
 	#pendingTouch = null
 	/** a mouse/pen press whose pan waits for its threshold (deferPan) @type {null|{id:number, x:number, y:number, t0:number, slop:number, type:string}} */
 	#armed = null
+	/** pointers of the running pen presses (pen or mouse, button 0 or 1): fingers are inert meanwhile @type {Set<number>} */
+	#pens = new Set()
 	#wheelTimer = null
 	/** hold timer of the pending first finger (LONG_PRESS_MS), null while none runs */
 	#holdTimer = null
@@ -263,6 +278,7 @@ export class GestureController {
 		this.#direct = null
 		this.#pendingTouch = null
 		this.#armed = null
+		this.#pens.clear()
 		this.#touches.clear()
 		this.#claimed.clear()
 		this.#gp = []
@@ -361,6 +377,10 @@ export class GestureController {
 		}
 		// (R38) a mouse or pen press goes first: a waiting finger (a resting palm) gets no hold signal
 		this.#clearHold()
+		const pen = (e.pointerType === 'pen' || e.pointerType === 'mouse') && (e.button === 0 || e.button === 1) && !this.#o.ignoreTarget(e)
+		if (pen) {
+			this.#penDown(e)
+		}
 		if (this.#direct || this.#armed || this.#mode === 'touch' || this.#pendingTouch || this.#o.ignoreTarget(e)) {
 			return
 		}
@@ -374,7 +394,7 @@ export class GestureController {
 			// commit the wheel camera first: the pan (or the click) continues from what the user sees
 			this.#end()
 		}
-		this.#capture(e)
+		if (!pen) this.#capture(e)
 		const p = this.#local(e)
 		const slop = Number(this.#o.deferPan(e))
 		if (slop > 0) {
@@ -382,6 +402,26 @@ export class GestureController {
 			return
 		}
 		this.#beginDirect(e.pointerId, p)
+	}
+
+	/**
+	 * A pen press starts (header, "The pen goes first"): its pointer is captured, and every
+	 * finger that is down loses its effect until it lifts. A pending finger is dropped (no pan,
+	 * tap or hold), a claimed one too (the input controller ends its press), a running touch
+	 * gesture ends with a commit; the fingers leave #touches, so their moves and releases do
+	 * nothing and no later finger pinches with them.
+	 *
+	 * @param {PointerEvent} e pointerdown of a pen or a mouse, button 0 or 1, on the canvas
+	 */
+	#penDown(e) {
+		this.#pens.add(e.pointerId)
+		this.#capture(e)
+		this.#pendingTouch = null
+		this.#claimed.clear()
+		this.#touches.clear()
+		if (this.#mode === 'touch') {
+			this.#end()
+		}
 	}
 
 	/**
@@ -395,8 +435,8 @@ export class GestureController {
 	}
 
 	#touchDown(e) {
-		if (this.#direct || this.#armed || this.#o.ignoreTarget(e)) {
-			return // a mouse/pen pan (or press) owns the camera; this touch stays inert until it lifts
+		if (this.#direct || this.#armed || this.#pens.size > 0 || this.#o.ignoreTarget(e)) {
+			return // a mouse/pen pan or press runs: the pen goes first, this touch stays inert until it lifts
 		}
 		const id = e.pointerId
 		this.#touches.set(id, this.#local(e))
@@ -421,8 +461,8 @@ export class GestureController {
 		}
 		if (this.#claimed.size > 0) {
 			// Another finger while a finger is claimed: cancelClaim aborts a finger's
-			// press like Esc (InputController.cancelTouch; a mouse or pen press that runs
-			// meanwhile, e.g. after a held palm, goes on) and the fingers belong to a pinch.
+			// press like Esc (InputController.cancelTouch; never during a pen press, which
+			// keeps every finger out) and the fingers belong to a pinch.
 			const held = [...this.#claimed].filter((k) => this.#touches.has(k))
 			this.#claimed.clear()
 			this.#o.cancelClaim()
@@ -554,6 +594,10 @@ export class GestureController {
 			this.#frame()
 			return
 		}
+		if (e.buttons === 0) {
+			// no button down any more: a pointerup of this pen press was missed
+			this.#pens.delete(e.pointerId)
+		}
 		const a = this.#armed
 		if (a !== null && e.pointerId === a.id) {
 			const p = this.#local(e)
@@ -601,6 +645,7 @@ export class GestureController {
 			}
 			return
 		}
+		this.#pens.delete(e.pointerId)
 		const a = this.#armed
 		if (a !== null && e.pointerId === a.id) {
 			// released below its threshold: a click (mouse, any duration) or a tap (pen, within TAP_MS)

@@ -35,9 +35,10 @@
  * - (round-1 UX B2) a pen or mouse goes before a held finger, e.g. a palm
  *   resting on a pen tablet: its pointerdown ends the hold press like Esc
  *   and works as usual; one while the finger still waits means no signal
- * - (052) a third contact during that pen or mouse drag: the press goes on
- *   (exactly one move), the palm and the new contact pinch; a second finger
- *   during a finger's drag still ends it like Esc (no move)
+ * - (052, job 134) a third contact during that pen or mouse drag: the press
+ *   goes on (exactly one move), the palm and the new contact neither pan nor
+ *   zoom; a second finger during a finger's drag still ends it like Esc (no
+ *   move)
  */
 import { test, describe, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
@@ -622,8 +623,8 @@ describe('a pen or mouse goes before a held finger (a resting palm; round-1 UX B
 		})
 	}
 
-	// (052) a third contact during the drag still makes the GestureController cancel its claim of
-	// the palm; cancelTouch leaves the pen's (mouse's) press alone, so its move goes through
+	// (052, job 134) a third contact during the drag is inert: the pen (mouse) press keeps every
+	// finger out of the GestureController, so its move goes through
 	for (const [name, input] of [['pen', pen], ['mouse', { pointerType: 'mouse', pointerId: 1 }]]) {
 		test(`the palm got the signal, the ${name} drags A, a third contact lands and rests: exactly one move of A by (100, 60); no ring, no second signal`, () => {
 			setup()
@@ -650,7 +651,7 @@ describe('a pen or mouse goes before a held finger (a resting palm; round-1 UX B
 		})
 	}
 
-	test('the palm got the signal, the pen drags A, a third contact lands and the two spread: still exactly one move of A; the pinch zooms as before', () => {
+	test('the palm got the signal, the pen drags A, a third contact lands and the two spread: exactly one move of A by (100, 60); the camera stays at scale 1 (the pen goes first, job 134)', () => {
 		setup()
 		hold(50, 600)
 		h.pointer('pointerdown', 200, 200, pen)
@@ -666,9 +667,9 @@ describe('a pen or mouse goes before a held finger (a resting palm; round-1 UX B
 		up(580, 760, 6)
 		const moves = h.intents('move')
 		assert.equal(moves.length, 1, 'the pen drag went through')
-		assert.deepEqual(moves[0].ids, [A])
+		assert.deepEqual([moves[0].ids, moves[0].dx, moves[0].dy], [[A], 100, 60])
 		assert.equal(h.intents().length, 1, 'only the move')
-		assert.notEqual(h.scene.getCamera().scale, 1, 'palm and third contact pinched')
+		assert.equal(h.scene.getCamera().scale, 1, 'palm and third contact do not pinch')
 	})
 })
 
