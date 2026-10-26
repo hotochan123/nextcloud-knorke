@@ -74,7 +74,7 @@ const USAGE = 'usage: dev/release.sh [--key <privater Schlüssel> --cert <Zertif
 const RUNTIME = [
 	'appinfo/info.xml', 'appinfo/routes.php', 'lib/Service/A.php', 'templates/main.php', 'img/app.svg',
 	'js/knorke-main.mjs', 'js/knorke-main.mjs.map', 'js/knorke-main.mjs.license', 'css/knorke-style.css',
-	'l10n/de.json', 'l10n/de.js', 'LICENSE', 'README.md', 'CHANGELOG.md',
+	'l10n/de.json', 'l10n/de.js', 'LICENSE', 'README.md', 'THIRD-PARTY.md', 'CHANGELOG.md',
 ]
 /** Files a release must never carry. */
 const NEVER = [
@@ -190,7 +190,7 @@ const tarList = (tgz) => spawnSync('tar', ['tzf', tgz], { encoding: 'utf8' }).st
 
 test('the lists of dev/release.sh are those of SPEC-M1 §10 P9 (R19): runtime folders, root files, the check companion and the code signature excluded; the signing image is fixed (AK1)', () => {
 	assert.match(SCRIPT, /^RUNTIME_DIRS="appinfo lib templates img js css l10n"$/m)
-	assert.match(SCRIPT, /^RUNTIME_FILES="LICENSE README\.md CHANGELOG\.md"$/m)
+	assert.match(SCRIPT, /^RUNTIME_FILES="LICENSE README\.md THIRD-PARTY\.md CHANGELOG\.md"$/m)
 	assert.match(SCRIPT, /^EXCLUDE="js\/knorke-style\.fresh\.json appinfo\/signature\.json"$/m)
 	assert.match(SCRIPT, /^SIGN_IMAGE="nextcloud:34-apache"$/m, 'the image of the signing container, no override')
 	assert.equal((SCRIPT.match(/^SIGN_IMAGE=/gm) || []).length, 1, 'SIGN_IMAGE is set once')
@@ -328,7 +328,7 @@ test('signing run: signed/knorke-1.2.3/ with signature.json, its archive, .sha25
 	fs.writeFileSync(sigBin, Buffer.from(r.stdout.replace(/\n/g, ''), 'base64'))
 	const v = spawnSync('openssl', ['dgst', '-sha512', '-verify', KEYS.pub, '-signature', sigBin, tgz], { encoding: 'utf8' })
 	assert.equal(v.stdout.trim(), 'Verified OK', v.stderr)
-	assert.match(r.stderr, /signiert: .*signed\/knorke-1\.2\.3 \(15 Dateien\).*nur für den App Store/, 'the log line on stderr')
+	assert.match(r.stderr, /signiert: .*signed\/knorke-1\.2\.3 \(16 Dateien\).*nur für den App Store/, 'the log line on stderr')
 })
 
 test('signing run: exactly two docker runs, sign-app with key and certificate as read-only single files, then check-app without the key; no network; never the tree or the key folder; the key in no file (AK5)', (t) => {

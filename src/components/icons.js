@@ -4,7 +4,7 @@
  */
 /*
  * SVG path data of the icons the shell uses, copied from Material Design
- * Icons 7.4.47 (Pictogrammers, Apache-2.0; noted in the README). Rendered with
+ * Icons 7.4.47 (Pictogrammers, Apache-2.0; noted in THIRD-PARTY.md). Rendered with
  * NcIconSvgWrapper :path. No @mdi/js dependency: the full set would only be
  * tree-shaken anyway, and these few strings never change.
  *

@@ -73,7 +73,7 @@ unset KD_NS
 OUT="$DEV/release/out"
 APP_ID=knorke
 RUNTIME_DIRS="appinfo lib templates img js css l10n"
-RUNTIME_FILES="LICENSE README.md CHANGELOG.md"
+RUNTIME_FILES="LICENSE README.md THIRD-PARTY.md CHANGELOG.md"
 # companion files of the checks and the code signature inside the runtime folders: never shipped
 EXCLUDE="js/knorke-style.fresh.json appinfo/signature.json"
 # one mtime for every archive entry (reproducible archive)

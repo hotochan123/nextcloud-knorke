@@ -26,7 +26,7 @@ namespace OCA\Knorke\Service;
  * never refused afterwards.
  *
  * Without Redis (no distributed cache with TTL) there is no write budget
- * (README, §5.6). Guests count per gid, accounts per pid (all tabs of an
+ * (docs/ADMIN.md, §5.6). Guests count per gid, accounts per pid (all tabs of an
  * account share one budget). No ILimiter here: it costs three round trips
  * with a JSON list of all time stamps and is not atomic (§4.13.6).
  *

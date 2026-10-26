@@ -8,7 +8,7 @@
  * or runs a block of a doc; sentences of the docs are not pinned for their
  * own sake (product owner, 2026-10-23).
  *
- * - README "Licences": every icon key in src/components/icons.js is listed
+ * - THIRD-PARTY.md: every icon key in src/components/icons.js is listed
  *   exactly once – either with its Material Design Icons name (version 7.4.47)
  *   or as "own drawing"; nothing else is listed. With
  *   KD_MDI_JS=<path to @mdi/js 7.4.47 mdi.js> the path data of the MDI keys is
@@ -21,8 +21,6 @@
  * - Every Markdown document has exactly one SPDX header and one H1: a
  *   scripted edit with String.prototype.replace and "$`" in the replacement
  *   once copied docs/ENTWICKLUNG.md into itself twice (round 2, trap 9.22).
- * - The README names the ranges C01–C<last> and E01–E<last> of
- *   dev/sim/contract.mjs and dev/e2e/scenarios/index.mjs.
  * - ENTWICKLUNG §5.4 (scene lab): the gate and check counts that
  *   dev/scene-lab/run.mjs declares, gates, checks and measure rows that exist
  *   in the lab, the automatic rows of ipad/check.mjs, KNORKE_LAB_LABEL as
@@ -55,7 +53,7 @@
  *   ENTWICKLUNG §3.10 and §3.2 are the same three; the KD_DNS row of §3.2
  *   has no IP address.
  * - No private values: no doc names an address of the edge check, the README
- *   names no private host value (dev/selftest/lib/privateValues.mjs).
+ *   and the docs it links name no private host value (dev/selftest/lib/privateValues.mjs).
  *
  * Run: node --test 'dev/selftest/*.test.mjs'
  */
@@ -77,27 +75,27 @@ function iconPaths() {
 	return new Map([...src.matchAll(/^\s*(\w+):\s*'([^']+)',?\s*$/gm)].map((m) => [m[1], m[2]]))
 }
 
-/** README icon table → key → MDI name. */
+/** THIRD-PARTY.md icon table → key → MDI name. */
 function readmeIcons() {
-	const md = read('README.md')
+	const md = read('THIRD-PARTY.md')
 	return new Map([...md.matchAll(/^\| `(\w+)` \| `mdi-([a-z0-9-]+)` \|$/gm)].map((m) => [m[1], m[2]]))
 }
 
-/** README keys listed as own drawings ("| `key` | own drawing |"). */
+/** THIRD-PARTY.md keys listed as own drawings ("| `key` | own drawing |"). */
 function readmeOwnIcons() {
-	const md = read('README.md')
+	const md = read('THIRD-PARTY.md')
 	return [...md.matchAll(/^\| `(\w+)` \| own drawing \|$/gm)].map((m) => m[1])
 }
 
-test('README names every icon of src/components/icons.js once: MDI name or own drawing', () => {
+test('THIRD-PARTY.md names every icon of src/components/icons.js once: MDI name or own drawing', () => {
 	const code = iconPaths()
 	const docs = readmeIcons()
 	const own = readmeOwnIcons()
 	assert.ok(code.size >= 10, `icons.js parsed (${code.size} keys)`)
 	assert.deepEqual(own.filter((k) => docs.has(k)), [], 'no key is both MDI and own drawing')
 	assert.equal(new Set(own).size, own.length, 'no own drawing listed twice')
-	assert.deepEqual([...docs.keys(), ...own].sort(), [...code.keys()].sort(), 'README tables (MDI + own drawings) = icons.js keys')
-	const md = read('README.md')
+	assert.deepEqual([...docs.keys(), ...own].sort(), [...code.keys()].sort(), 'THIRD-PARTY.md tables (MDI + own drawings) = icons.js keys')
+	const md = read('THIRD-PARTY.md')
 	assert.match(md, /Material Design Icons\]\([^)]+\) 7\.4\.47/)
 	assert.match(read('src/components/icons.js'), /Material Design\s+\*?\s*Icons 7\.4\.47/)
 })
@@ -192,7 +190,7 @@ test('every createDistributed( in lib/ has the epoch prefix form of SPEC-M1 §5.
 	assert.deepEqual(wrong, [], 'createDistributed(<arg>) not in the form \'knorke/\' . $epoch . \'/\' (owner [B], SPEC-M1 §9.6)')
 })
 
-const MD_DOCS = ['README.md', 'CHANGELOG.md', 'docs/ARCHITEKTUR.md', 'docs/ENTWICKLUNG.md', 'docs/PROTOKOLL.md']
+const MD_DOCS = ['README.md', 'CHANGELOG.md', 'SECURITY.md', 'THIRD-PARTY.md', 'docs/FEATURES.md', 'docs/ADMIN.md', 'docs/ARCHITEKTUR.md', 'docs/ENTWICKLUNG.md', 'docs/PROTOKOLL.md']
 
 test('every Markdown document has exactly one SPDX header and one H1 (no self-copy)', () => {
 	for (const f of MD_DOCS) {
@@ -202,19 +200,6 @@ test('every Markdown document has exactly one SPDX header and one H1 (no self-co
 		const h1 = md.replace(/^```[\s\S]*?^```/gm, '').match(/^# /gm) || []
 		assert.equal(h1.length, 1, `${f}: one H1`)
 	}
-})
-
-test('README names the last contract case and the last browser scenario', () => {
-	const contract = read('dev/sim/contract.mjs')
-	const cases = [...contract.matchAll(/^await C\('C(\d+)/gm)].map((m) => Number(m[1]))
-	const lastC = Math.max(...cases)
-	const index = read('dev/e2e/scenarios/index.mjs')
-	const list = index.match(/SCENARIOS = \[([^\]]+)\]/)[1]
-	const lastE = Math.max(...[...list.matchAll(/E(\d+)\b/g)].map((m) => Number(m[1])))
-	const md = read('README.md')
-	assert.ok(md.includes(`C01–C${lastC}`), `README names C01–C${lastC}`)
-	assert.ok(md.includes(`E01–E${lastE}`), `README names E01–E${lastE}`)
-	assert.ok(!new RegExp(`C01–C(?!${lastC}\\b)\\d+`).test(md), 'README names no older contract range')
 })
 
 test('ENTWICKLUNG §5.4 matches the scene lab: gate and check counts, stage-2 checks, measure rows (SPEC-M1 §8.5 R13)', () => {
@@ -364,7 +349,7 @@ test('R20 known fixes in the docs: ENTWICKLUNG §5.4 -noshadow as names.js build
 // ── review round P7-C (SPEC-M1 §33.1 n, k) ────────────────────────────────
 
 test('no doc names an address of the edge check (the forgery probe uses the RFC 5737 address)', () => {
-	for (const f of ['docs/ENTWICKLUNG.md', 'README.md', 'CHANGELOG.md', 'docs/PROTOKOLL.md', 'docs/ARCHITEKTUR.md']) {
+	for (const f of ['docs/ENTWICKLUNG.md', 'README.md', 'CHANGELOG.md', 'docs/PROTOKOLL.md', 'docs/ARCHITEKTUR.md', 'docs/FEATURES.md', 'docs/ADMIN.md', 'SECURITY.md']) {
 		const md = read(f).replace(/203\.0\.113\.\d+/g, '')
 		assert.doesNotMatch(md, /\b(?:100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])|172\.31)\.\d+/, `${f}: no address from the edge check`)
 	}
@@ -490,11 +475,13 @@ test('ENTWICKLUNG §10 P9 step 3 and hotfix step 4 run in bash: after a failed t
 	}
 })
 
-test('the README names no private host value (lib/privateValues.mjs)', () => {
-	const md = read('README.md')
-	// no host name or address of this installation in the README (the private domain is known only by its digest, lib/privateValues.mjs)
-	assert.doesNotMatch(md, /\.home\./)
-	assert.deepEqual(scanText(md), [], 'README names no private host value')
+test('the README and the docs it links name no private host value (lib/privateValues.mjs)', () => {
+	for (const f of ['README.md', 'docs/FEATURES.md', 'docs/ADMIN.md', 'THIRD-PARTY.md', 'SECURITY.md']) {
+		const md = read(f)
+		// no host name or address of this installation (the private domain is known only by its digest, lib/privateValues.mjs)
+		assert.doesNotMatch(md, /\.home\./, f)
+		assert.deepEqual(scanText(md), [], `${f} names no private host value`)
+	}
 })
 
 test('docs describe the end states with HTTP 200 as built (SPEC-M1 R39, factory job 028)', () => {
@@ -604,11 +591,10 @@ test('docs describe the privacy notice as built (SPEC-M1 R40, factory job 032)',
 		assert.equal(rows.length, 1, `§6.11: exactly one row with "${en.slice(0, 40)}" and its German`)
 	}
 
-	// 7. README: the paragraph under Installation names the limits of PrivacyNotice.php
-	const md = read('README.md')
-	const inst = md.slice(md.indexOf('## Installation'), md.indexOf('## Building'))
-	const paras = inst.split(/\n\s*\n/).filter((p) => p.startsWith('**Privacy notice for guests.**'))
-	assert.equal(paras.length, 1, 'README Installation has one paragraph "Privacy notice for guests."')
+	// 7. docs/ADMIN.md: the paragraph under Settings names the limits of PrivacyNotice.php
+	const settings = section('docs/ADMIN.md', '## Settings')
+	const paras = settings.split(/\n\s*\n/).filter((p) => p.startsWith('**Privacy notice for guests.**'))
+	assert.equal(paras.length, 1, 'docs/ADMIN.md Settings has one paragraph "Privacy notice for guests."')
 	const flat = paras[0].replace(/\s+/g, ' ')
 	for (const x of [`${TEXT_MAX} characters`, `${LANGUAGES_MAX} languages`]) assert.ok(flat.includes(x), `the paragraph names ${x}`)
 })
