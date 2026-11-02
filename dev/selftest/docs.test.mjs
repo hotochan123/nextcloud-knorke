@@ -514,8 +514,9 @@ function manualRsyncCalls() {
 // -t (also inside -a) keeps the archive's fixed mtime, which hides a change from opcache and APCu (traps 9.3, 9.4)
 const keepsTimes = (o) => o === '--times' || o === '--archive' || /^-[^-]*[at]/.test(o)
 
-// factory job 166: a copy by hand works like factory/deploy.sh
-test('ENTWICKLUNG §10 copies a release by hand with the rsync options of copy_app in factory/deploy.sh (P9 step 3, hotfix steps 4 and 8), never with -a, -t or --times (factory job 166)', () => {
+// factory job 166: a copy by hand works like factory/deploy.sh; the public repository has no factory/
+const HAS_DEPLOY = fs.existsSync(path.join(ROOT, 'factory/deploy.sh'))
+test('ENTWICKLUNG §10 copies a release by hand with the rsync options of copy_app in factory/deploy.sh (P9 step 3, hotfix steps 4 and 8), never with -a, -t or --times (factory job 166)', { skip: !HAS_DEPLOY && 'factory/deploy.sh is not in the public tree' }, () => {
 	const opts = copyAppOptions()
 	assert.ok(!opts.some(keepsTimes), `copy_app copies without -a, -t or --times (${opts.join(' ')})`)
 	const calls = manualRsyncCalls()
