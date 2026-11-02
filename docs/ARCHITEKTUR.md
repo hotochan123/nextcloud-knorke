@@ -128,7 +128,7 @@ SceneModel (Objekte, absolute Boxen, rbush, Ordnung) ── ChangeSummary ──
 
 ## 4. Bündel
 
-`npm run build` (Vite 7, @nextcloud/vite-config) erzeugt genau `js/knorke-main.mjs`, `js/vendor-<hash>.chunk.mjs`, `js/canvas-<hash>.chunk.mjs` und `css/knorke-style.css`; `build/check-bundle.mjs` prüft Form und Größe (≤ 350 KiB gzip). Eine kalte Board-Seite lädt damit 3 JS + 1 CSS (+ 1 l10n für deutsche Nutzer) und genau einen Snapshot bzw. Beitritt vor dem ersten Sync.
+`npm run build` (Vite 7, @nextcloud/vite-config) erzeugt genau `js/knorke-main.mjs`, `js/vendor-<hash>.chunk.mjs`, `js/canvas-<hash>.chunk.mjs` und `css/knorke-style.css`; `build/check-bundle.mjs` prüft Form und Größe (≤ 360 KiB gzip; bis Factory-Job 155 waren es 350). Eine kalte Board-Seite lädt damit 3 JS + 1 CSS (+ 1 l10n für deutsche Nutzer) und genau einen Snapshot bzw. Beitritt vor dem ersten Sync.
 
 ## 5. Was später kommt
 

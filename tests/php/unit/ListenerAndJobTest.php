@@ -10,6 +10,7 @@ namespace OCA\Knorke\Tests\Unit;
 use OCA\Knorke\BackgroundJob\CleanupJob;
 use OCA\Knorke\Listener\UserDeletedListener;
 use OCA\Knorke\Service\BoardService;
+use OCA\Knorke\Service\CommentService;
 use OCA\Knorke\Service\AccessResult;
 use OCA\Knorke\Service\Limits;
 use OCA\Knorke\Service\Role;
@@ -21,6 +22,7 @@ use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\FakeItemStore;
 use OCA\Knorke\Tests\Support\StubReconciler;
 use OCA\Knorke\Tests\Support\SyncHarness;
+use OCA\Knorke\Tests\Support\TemplateHarness;
 use OCA\Knorke\Tests\Support\VoteHarness;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\EventDispatcher\Event;
@@ -34,6 +36,34 @@ use Psr\Log\LoggerInterface;
  * 023, the locks each on their own); CleanupJob prunes > 30 days.
  */
 final class ListenerAndJobTest extends TestCase {
+    public function testListenerRewritesTheMentionsOfTheDeletedAccountAndSwallows(): void {
+        // factory job 249, AK3
+        $h = new AccessHarness();
+        $b = $h->service->create('owen', 'O')['id'];
+        $h->items->addBoard($b);
+        $h->shareRows->add($b, 'user', 'dora', 'view');
+        $h->uid = 'owen';
+        $t = $h->commentService->create($h->access->forUser($b, true)->principal, $b, ['text' => 'For @"dora"', 'x' => 0, 'y' => 0], '10.0.0.1', 1_760_000_000_000)['thread'];
+        $errors = [];
+        $logger = Fake::of(LoggerInterface::class, ['error' => function ($m, array $c = []) use (&$errors): void {
+            $errors[] = $m;
+        }]);
+        $user = Fake::of(IUser::class, ['getUID' => fn () => 'dora']);
+        $listener = fn (?CommentService $comments): UserDeletedListener => new UserDeletedListener($h->service, (new VoteHarness())->votes, $h->access, $logger,
+            (new SyncHarness())->sync, (new TemplateHarness())->store, null, $comments);
+        $h->mentionStore->failWith = new \RuntimeException('db gone');
+        $listener($h->commentService)->handle(new UserDeletedEvent($user));
+        $this->assertSame(['Knorke: rewriting the mentions of a deleted account failed'], $errors, 'logged, not thrown');
+        $this->assertSame('For @"dora"', $h->comments->rows[$t['id']]->getMessage());
+        $h->mentionStore->failWith = null;
+        $listener($h->commentService)->handle(new UserDeletedEvent($user));
+        $this->assertSame('For @"deleted_users"', $h->comments->rows[$t['id']]->getMessage());
+        $this->assertSame([], $h->comments->knorke($t['id'])['mentions']);
+        $this->assertArrayHasKey($b, $h->boards->boards, 'the other parts ran: owen\'s board stays');
+        $listener((new \ReflectionClass(CommentService::class))->newInstanceWithoutConstructor())->handle(new UserDeletedEvent($user));
+        $this->assertCount(2, $errors, 'a broken comment service is logged on its own');
+    }
+
     public function testListenerDelegatesAndSwallows(): void {
         $h = new AccessHarness();
         $b = $h->service->create('dora', 'D')['id'];
@@ -44,16 +74,16 @@ final class ListenerAndJobTest extends TestCase {
         $user = Fake::of(IUser::class, ['getUID' => fn () => 'dora']);
         $votes = (new VoteHarness())->votes;
         $sync = (new SyncHarness())->sync;
-        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $sync))->handle(new UserDeletedEvent($user));
+        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $sync, (new TemplateHarness())->store))->handle(new UserDeletedEvent($user));
         $this->assertArrayNotHasKey($b, $h->boards->boards);
-        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $sync))->handle(new Event());
+        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $sync, (new TemplateHarness())->store))->handle(new Event());
         $broken = (new \ReflectionClass(BoardService::class))->newInstanceWithoutConstructor();
-        (new UserDeletedListener($broken, $votes, $h->access, $logger, $sync))->handle(new UserDeletedEvent($user));
+        (new UserDeletedListener($broken, $votes, $h->access, $logger, $sync, (new TemplateHarness())->store))->handle(new UserDeletedEvent($user));
         $this->assertCount(1, $errors, 'logged, not thrown');
         // A broken vote clean-up is logged on its own and does not stop the board clean-up.
         $b2 = $h->service->create('dora', 'D2')['id'];
         $brokenVotes = (new \ReflectionClass(VoteService::class))->newInstanceWithoutConstructor();
-        (new UserDeletedListener($h->service, $brokenVotes, $h->access, $logger, $sync))->handle(new UserDeletedEvent($user));
+        (new UserDeletedListener($h->service, $brokenVotes, $h->access, $logger, $sync, (new TemplateHarness())->store))->handle(new UserDeletedEvent($user));
         $this->assertArrayNotHasKey($b2, $h->boards->boards);
         $this->assertCount(2, $errors);
         $this->assertSame('Knorke: removing the votes of a deleted account failed', $errors[1]);
@@ -120,7 +150,7 @@ final class ListenerAndJobTest extends TestCase {
         $h = new AccessHarness();
         $user = Fake::of(IUser::class, ['getUID' => fn () => 'bob']);
         $s->log = [];
-        (new UserDeletedListener($h->service, (new VoteHarness())->votes, $h->access, $logger, $s->sync))->handle(new UserDeletedEvent($user));
+        (new UserDeletedListener($h->service, (new VoteHarness())->votes, $h->access, $logger, $s->sync, (new TemplateHarness())->store))->handle(new UserDeletedEvent($user));
         $this->assertSame([], $errors);
         $this->assertSame([1, null, null], $st->lockOf(1, $id(1)), 'still locked, locker unknown');
         $this->assertSame([1, null, null], $st->lockOf(2, $id(3)));
@@ -171,7 +201,7 @@ final class ListenerAndJobTest extends TestCase {
                 throw new \RuntimeException('database gone');
             }
         };
-        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $broken))->handle(new UserDeletedEvent($user));
+        (new UserDeletedListener($h->service, $votes, $h->access, $logger, $broken, (new TemplateHarness())->store))->handle(new UserDeletedEvent($user));
         $this->assertArrayNotHasKey($b, $h->boards->boards, 'the boards block ran');
         $this->assertSame(['dora'], $votes->calls, 'the votes block ran');
         $this->assertSame(['Knorke: removing a deleted account from its locks failed'], $errors, 'logged, not thrown');

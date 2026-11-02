@@ -9,7 +9,10 @@ namespace OCA\Knorke\Listener;
 
 use OCA\Knorke\Service\Access;
 use OCA\Knorke\Service\BoardService;
+use OCA\Knorke\Service\CommentService;
 use OCA\Knorke\Service\SyncService;
+use OCA\Knorke\Service\ShapeLibStore;
+use OCA\Knorke\Service\TemplateStore;
 use OCA\Knorke\Service\VoteService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
@@ -25,7 +28,13 @@ use Psr\Log\LoggerInterface;
  * them and their spent budget. Its name and id leave its locks (M2, R20,
  * SyncService::clearLocker): the items stay locked ("locked, locker
  * unknown", only moderators unlock), so a later account with the same uid
- * does not own them. Nothing may escape from here: an exception would abort
+ * does not own them. Its template suggestions (factory job 182,
+ * TemplateStore::onUserDeleted): the pending ones go with their admin
+ * notifications, adopted templates stay. Its shape libraries (factory job
+ * 203, ShapeLibStore::onUserDeleted) go with its suggestions; adopted
+ * libraries stay. Its @-mentions in comments become "Deleted user" (factory
+ * job 249, CommentService::onUserDeleted), so a later account with the same
+ * uid never shows up there. Nothing may escape from here: an exception would abort
  * Nextcloud's own clean-up of the account; each part runs on its own.
  *
  * @template-implements IEventListener<UserDeletedEvent>
@@ -37,6 +46,9 @@ class UserDeletedListener implements IEventListener {
         private Access $access,
         private LoggerInterface $logger,
         private SyncService $sync,
+        private TemplateStore $templates,
+        private ?ShapeLibStore $shapeLibs = null,
+        private ?CommentService $comments = null,
     ) {
     }
 
@@ -59,6 +71,21 @@ class UserDeletedListener implements IEventListener {
             $this->sync->clearLocker('u:' . $uid, (int)floor(microtime(true) * 1000));
         } catch (\Throwable $e) {
             $this->logger->error('Knorke: removing a deleted account from its locks failed', ['exception' => $e, 'app' => 'knorke']);
+        }
+        try {
+            $this->templates->onUserDeleted($uid);
+        } catch (\Throwable $e) {
+            $this->logger->error('Knorke: cleaning up the templates of a deleted account failed', ['exception' => $e, 'app' => 'knorke']);
+        }
+        try {
+            $this->shapeLibs?->onUserDeleted($uid);
+        } catch (\Throwable $e) {
+            $this->logger->error('Knorke: cleaning up the shape libraries of a deleted account failed', ['exception' => $e, 'app' => 'knorke']);
+        }
+        try {
+            $this->comments?->onUserDeleted($uid);
+        } catch (\Throwable $e) {
+            $this->logger->error('Knorke: rewriting the mentions of a deleted account failed', ['exception' => $e, 'app' => 'knorke']);
         }
     }
 }

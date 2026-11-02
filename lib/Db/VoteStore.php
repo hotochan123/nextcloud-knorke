@@ -31,9 +31,12 @@ use OCP\IDBConnection;
  * one. A revived item's rows count again.
  *
  * Session rows come back as
- *   {id, board_id, state, config: {per, perItem, scope, types}, seq, voters,
- *    started_by, started_at, ends_at: ?int, closed_at: ?int}
- * with int columns cast and the config decoded.
+ *   {id, board_id, state, config: {per, perItem, scope, types, live,
+ *    accountsOnly}, seq, voters, started_by, started_at, ends_at: ?int,
+ *    closed_at: ?int}
+ * with int columns cast and the config decoded (live: the stored "live" is
+ * literally true, the live count for moderators of job 149; accountsOnly:
+ * the stored "accountsOnly" is literally true, only accounts vote, job 175).
  */
 class VoteStore {
     /** IN lists in blocks (SQLite ≤ 999 parameters, SPEC-M1 §3.9). */
@@ -72,7 +75,7 @@ class VoteStore {
     /**
      * A new open session; returns its id (the sid).
      *
-     * @param array{per: int, perItem: int, scope: ?string, types: list<string>} $cfg
+     * @param array{per: int, perItem: int, scope: ?string, types: list<string>, live?: bool, accountsOnly?: bool} $cfg
      */
     public function insert(int $board, array $cfg, string $by, int $nowMs, ?int $endsAt): int {
         $this->exec(
@@ -187,7 +190,8 @@ class VoteStore {
 
     /**
      * Σ n per LIVE item of the session (item id → n > 0), ORDER BY item id:
-     * the results frozen on close (SPEC-M1 §3.6, §4.13.5).
+     * the results frozen on close (SPEC-M1 §3.6, §4.13.5) and the live count
+     * of a session with live (job 149).
      *
      * @return array<string, int>
      */
@@ -272,12 +276,24 @@ class VoteStore {
         ));
     }
 
-    /** The stored config JSON: {"per","perItem","scope","types"} in this order (ASCII). */
+    /**
+     * The stored config JSON: {"per","perItem","scope","types"} in this order
+     * (ASCII), plus "live":true after types only with the live count (job
+     * 149) and "accountsOnly":true after that only when only accounts vote
+     * (job 175); without them the text stays byte for byte as before.
+     */
     public static function configJson(array $cfg): string {
-        return json_encode([
+        $out = [
             'per' => (int)$cfg['per'], 'perItem' => (int)$cfg['perItem'],
             'scope' => $cfg['scope'] ?? null, 'types' => array_values($cfg['types']),
-        ], self::JSON_FLAGS);
+        ];
+        if (($cfg['live'] ?? null) === true) {
+            $out['live'] = true;
+        }
+        if (($cfg['accountsOnly'] ?? null) === true) {
+            $out['accountsOnly'] = true;
+        }
+        return json_encode($out, self::JSON_FLAGS);
     }
 
     private static function session(array $r): array {
@@ -292,6 +308,8 @@ class VoteStore {
                 'perItem' => (int)($cfg['perItem'] ?? 1),
                 'scope' => is_string($cfg['scope'] ?? null) ? $cfg['scope'] : null,
                 'types' => is_array($cfg['types'] ?? null) ? array_values(array_filter($cfg['types'], 'is_string')) : ['sticky'],
+                'live' => ($cfg['live'] ?? null) === true,
+                'accountsOnly' => ($cfg['accountsOnly'] ?? null) === true,
             ],
             'seq' => (int)$r['seq'],
             'voters' => (int)$r['voters'],

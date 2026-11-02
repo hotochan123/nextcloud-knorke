@@ -23,6 +23,20 @@
  *                                            (M2: name dialog or the info card, once per tab session)
  *   localStorage   knorke.linkInfo.<boardId>.<pid>  linkOpenSince (ms, as text) the account's
  *                                            one-time privacy info was shown for (M2, per device)
+ *   localStorage   knorke.touchTip          '1' = this browser showed the one-time tip about selecting
+ *                                            with a finger (job 142; every board, account and guest)
+ *   localStorage   knorke.cursors           '0' = other people's cursors hidden (job 147; every board,
+ *                                            account and guest; missing or any other value: shown)
+ *   localStorage   knorke.wheel             'zoom' or 'pan' = what the mouse wheel does without Ctrl/⌘ (job 154;
+ *                                            every board, account and guest; missing or any other value: automatic)
+ *   localStorage   knorke.bubbles           '0' = no comment bubbles on the boards (job 189; every board, account and
+ *                                            guest of this browser; missing or any other value: shown)
+ *   localStorage   knorke.shapes            JSON {hidden, folded, recent} of the shapes panel (job 201; every board,
+ *                                            account and guest of this browser; components/shapeLibs.js readPrefs)
+ *   localStorage   knorke.pdfPage           'a4', 'a3' or 'content' = the page size of "Save as PDF…" (job 207; every board,
+ *                                            account and guest of this browser; missing or any other value: content)
+ *   localStorage   knorke.boardSort         'opened', 'updated' or 'name' = the sort order of the board list (job 219;
+ *                                            every account of this browser; missing or any other value: updated)
  */
 
 /**
@@ -128,6 +142,11 @@ export const keys = Object.freeze({
 	gridSnap: () => 'knorke.gridSnap',
 	privacy: (boardId) => 'knorke.privacy.' + boardId,
 	linkInfo: (boardId, pid) => 'knorke.linkInfo.' + boardId + '.' + pid,
+	touchTip: () => 'knorke.touchTip',
+	cursors: () => 'knorke.cursors',
+	wheel: () => 'knorke.wheel',
+	bubbles: () => 'knorke.bubbles',
+	pdfPage: () => 'knorke.pdfPage',
 })
 
 /**

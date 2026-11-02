@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace OCA\Knorke\Tests\Unit;
 
 use OCA\Knorke\Db\ItemStore;
+use OCA\Knorke\Service\AccessResult;
 use OCA\Knorke\Service\Role;
 use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\VoteHarness;
@@ -61,7 +62,7 @@ final class ItemStoreSqlTest extends TestCase {
         [$rows, $upTo, $more] = $this->store(array_merge(self::rev(5, 3), self::rev(6, 2)))->itemsSince(1, 4, 9, 500);
         $this->assertSame([5, 9, false], [count($rows), $upTo, $more], 'cursor = upTo, not the last row rev');
         $this->assertSame('SELECT id, type, parent_id, z, x, y, w, h, rotation, CASE WHEN deleted = 0 THEN data END AS data, CASE WHEN deleted = 0 THEN style END AS style, deleted, rev,'
-            . ' group_id, locked, locked_by, locked_name'
+            . ' group_id, locked, locked_by, locked_name, created_by, created_at'
             . ' FROM *PREFIX*knorke_items WHERE board_id = ? AND rev > ? AND rev <= ? ORDER BY rev, id LIMIT 501', $this->queries[0][0], 'tombstones without payload (T1)');
         $this->assertSame([1, 4, 9], $this->queries[0][1]);
     }
@@ -143,6 +144,27 @@ final class ItemStoreSqlTest extends TestCase {
         $this->assertSame(['by', 'name'], array_keys($d['lock']));
     }
 
+    /** Job 151: a guest's lock (locked_by g:…) ends with "guest":true; accounts, NULL and '' keep the form of 0.3.0. */
+    public function testItemJsonMarksAGuestsLock(): void {
+        $row = ['id' => '01JA2B3C4D5E6F7G8H9J0KMNPQ', 'type' => 'sticky', 'x' => '1', 'y' => '2', 'w' => '200', 'h' => '200',
+            'rotation' => '0', 'z' => 'i0', 'parent_id' => null, 'data' => '{}', 'style' => '{}',
+            'group_id' => null, 'locked' => 1, 'locked_by' => 'g:gAAAAAAAAAAA', 'locked_name' => 'Gina'];
+        $pidOf = static fn (string $id): string => 'pid-of-' . substr($id, 2);
+        $json = ItemStore::itemJson($row, $pidOf);
+        $this->assertStringEndsWith(',"lock":{"by":"pid-of-gAAAAAAAAAAA","name":"Gina","guest":true}}', $json);
+        $this->assertStringEndsWith(',"guest":true}}', $json);
+        $this->assertStringNotContainsString('g:gAAAAAAAAAAA', $json, 'the stored principal id never leaves the server');
+        $this->assertSame(['by', 'name', 'guest'], array_keys(json_decode($json, true, 512, JSON_THROW_ON_ERROR)['lock']));
+        $this->assertStringEndsWith(',"lock":{"by":null,"name":"Gina","guest":true}}', ItemStore::itemJson($row), 'no mapping: by null, still a guest');
+        $this->assertStringEndsWith(',"lock":{"by":"pid-of-gAAAAAAAAAAA","name":null,"guest":true}}', ItemStore::itemJson(['locked_name' => null] + $row, $pidOf));
+        // the forms of 0.3.0, byte for byte
+        $this->assertStringEndsWith(',"lock":{"by":"pid-of-alice","name":"Alice Adler"}}', ItemStore::itemJson(['locked_by' => 'u:alice', 'locked_name' => 'Alice Adler'] + $row, $pidOf), 'an account');
+        $this->assertStringEndsWith(',"lock":{"by":null,"name":"Gina"}}', ItemStore::itemJson(['locked_by' => null] + $row, $pidOf), 'locked_by NULL');
+        $this->assertStringEndsWith(',"lock":{"by":null,"name":"Gina"}}', ItemStore::itemJson(['locked_by' => ''] + $row, $pidOf), "locked_by ''");
+        $this->assertStringEndsWith(',"lock":{"by":null,"name":null}}', ItemStore::itemJson(['locked_by' => null, 'locked_name' => null] + $row, $pidOf), 'locked, locker unknown');
+        $this->assertStringEndsWith(',"lock":null}', ItemStore::itemJson(['locked' => null] + $row, $pidOf), 'not locked: no lock, no guest');
+    }
+
     public function testObjAndNum(): void {
         $this->assertSame('{}', ItemStore::obj([]));
         $this->assertSame('{"t":"漢😀</b>","u":"a/b","f":1.0}', ItemStore::obj(['t' => '漢😀</b>', 'u' => 'a/b', 'f' => 1.0]), 'no \u escapes, no HEX_TAG, zero fraction kept');
@@ -166,10 +188,10 @@ final class ItemStoreSqlTest extends TestCase {
             }
         };
         $items = iterator_to_array($store->snapshotItems(7, static fn (string $id): string => 'pid:' . $id), false);
-        $this->assertStringEndsWith(',"group":"01JF5Q4T0V9W8X7Y6Z5A4B3C2D","lock":{"by":"pid:g:gAAAAAAAAAAA","name":"Gina"}}', $items[0]);
-        $this->assertSame('SELECT id, type, parent_id, z, x, y, w, h, rotation, data, style, deleted, rev, group_id, locked, locked_by, locked_name'
+        $this->assertStringEndsWith(',"group":"01JF5Q4T0V9W8X7Y6Z5A4B3C2D","lock":{"by":"pid:g:gAAAAAAAAAAA","name":"Gina","guest":true}}', $items[0]);
+        $this->assertSame('SELECT id, type, parent_id, z, x, y, w, h, rotation, data, style, deleted, rev, group_id, locked, locked_by, locked_name, created_by, created_at'
             . ' FROM *PREFIX*knorke_items WHERE board_id = ? AND deleted = 0 ORDER BY id', $this->queries[0][0]);
-        $this->assertStringEndsWith(',"lock":{"by":null,"name":"Gina"}}', iterator_to_array($store->snapshotItems(7), false)[0], 'without a mapping: by null');
+        $this->assertStringEndsWith(',"lock":{"by":null,"name":"Gina","guest":true}}', iterator_to_array($store->snapshotItems(7), false)[0], 'without a mapping: by null');
     }
 
     public function testSnapshotStreamsAndReleaseManyIsChunked(): void {
@@ -313,6 +335,22 @@ final class ItemStoreSqlTest extends TestCase {
         $this->assertSame([null, null], ItemStore::endItems(['t' => 'connector', 'data' => []]));
     }
 
+    /** Job 251 AK6: lockers() takes its prefix literally (% and _ escaped, ESCAPE '!') on a real engine. */
+    public function testLockersTakeThePrefixLiterally(): void {
+        $h = new VoteHarness();
+        $b = $h->sql->addBoard('alice', 'B', 1);
+        foreach (['u:a_b', 'u:axb', 'u:abc', 'u:a%z', 'u:a!c', 'g:gAbc'] as $i => $by) {
+            $id = VoteHarness::ulid($i + 1);
+            $h->sql->addItem($b, $id, 'sticky');
+            $h->sql->all('UPDATE *PREFIX*knorke_items SET locked = 1, locked_by = ? WHERE board_id = ? AND id = ?', [$by, $b, $id]);
+        }
+        $this->assertSame(['u:a_b'], $h->items->lockers('u:a_'), '_ is no wildcard');
+        $this->assertSame(['u:a%z'], $h->items->lockers('u:a%'), '% is no wildcard');
+        $this->assertSame(['u:a!c'], $h->items->lockers('u:a!'), 'the escape character itself');
+        $this->assertSame(['u:a!c', 'u:a%z', 'u:a_b', 'u:abc', 'u:axb'], $h->items->lockers('u:'));
+        $this->assertSame('u!_x!%!!%', ItemStore::likePrefix('u_x%!'));
+    }
+
     /**
      * Job 023 (AK4) on a real engine (SqliteDb with the production SQL): a
      * lock through /sync writes locked = 1, locked_by and locked_name;
@@ -358,7 +396,7 @@ final class ItemStoreSqlTest extends TestCase {
         $unlock = ['o' => 'patch', 'id' => $a, 'p' => ['lock' => null]];
         $this->assertSame(['itemlocked'], $h->syncDecoded(['seq' => 3, 'ops' => [$unlock]], $bob, $b1)['acks']['res']);
         $this->assertSame(['ok'], $h->syncDecoded(['seq' => 1, 'ops' => [$unlock]], VoteHarness::user(), $b1)['acks']['res']);
-        $this->assertSame(['locked' => null, 'locked_by' => null, 'locked_name' => null], array_slice($row($b1, $a), 0, 3));
+        $this->assertSame(['locked' => 0, 'locked_by' => null, 'locked_name' => null], array_slice($row($b1, $a), 0, 3), 'job 152: an unknown lock is remembered as unknown');
     }
 
     /**
@@ -392,6 +430,46 @@ final class ItemStoreSqlTest extends TestCase {
         $h->sql->pdo->prepare('UPDATE oc_knorke_items SET locked = 1, locked_by = ?, locked_name = ? WHERE board_id = ? AND id = ?')->execute(['u:carol', 'Carol', $b, $y]);
         $this->assertSame(['ok'], $h->syncDecoded(['seq' => 3, 'ops' => [$put($y)]], $owner, $b)['acks']['res']);
         $this->assertSame('{"deleted":0,"locked":null,"locked_by":null,"locked_name":null}', $lock($y));
+    }
+
+    /**
+     * Job 152 (AK4) on the production SQL (SqliteDb): bob locks X, alice
+     * unlocks it → locked 0 with locked_by and locked_name kept; snapshot and
+     * sync send "lock":null without bob's pid or name; lockers() still finds
+     * bob; alice's restore with the pid she saw locks X for bob again; after
+     * bob's own unlock a remove clears all three columns.
+     */
+    public function testARememberedLockOnSqlite(): void {
+        $h = new VoteHarness();
+        $b = $h->sql->addBoard('alice', 'B', 10);
+        $x = VoteHarness::ulid(1);
+        $h->sql->addItem($b, $x, 'sticky', null, false, 5);
+        $bob = VoteHarness::user('bob', Role::Edit);
+        $alice = VoteHarness::user();
+        $row = static fn (): string => json_encode($h->sql->all('SELECT deleted, locked, locked_by, locked_name FROM *PREFIX*knorke_items WHERE board_id = ? AND id = ?', [$b, $x])[0]);
+        $send = static fn (array $op, $p): array => $h->syncDecoded(['seq' => 1, 'ops' => [$op]], $p, $b)['acks']['res'];
+        $this->assertSame(['ok'], $send(['o' => 'patch', 'id' => $x, 'p' => ['lock' => ['by' => 'x', 'name' => 'y']]], $bob));
+        $pid = array_column(json_decode($h->syncRaw(['since' => 0], $alice, $b), true)['items'], 'lock', 'id')[$x]['by'];
+        $this->assertIsString($pid);
+        $this->assertSame(['ok'], $send(['o' => 'patch', 'id' => $x, 'p' => ['lock' => null]], $alice));
+        $this->assertSame('{"deleted":0,"locked":0,"locked_by":"u:bob","locked_name":"Bob Adler"}', $row(), 'the lifted lock is remembered');
+        $answers = [
+            'snapshot' => $h->sync->snapshotJson(new AccessResult($alice, null, 0), $b, ['id' => $b, 'role' => 'owner']),
+            'sync' => $h->syncRaw(['since' => 0], $alice, $b),
+        ];
+        foreach ($answers as $k => $answer) {
+            $this->assertNull(array_column(json_decode($answer, true)['items'], null, 'id')[$x]['lock'], $k . ': "lock":null');
+            $this->assertStringNotContainsString($pid, $answer, $k . ': no pid of the remembered locker');
+            $this->assertStringNotContainsString('Bob Adler', $answer, $k . ': no name of the remembered locker');
+        }
+        $this->assertSame(['u:bob'], $h->items->lockers('u:'), 'a remembered locker is found');
+        $restore = ['o' => 'patch', 'id' => $x, 'p' => ['lock' => ['by' => $pid, 'name' => 'Mallory']], 'restore' => true];
+        $this->assertSame(['ok'], $send($restore, $alice));
+        $this->assertSame('{"deleted":0,"locked":1,"locked_by":"u:bob","locked_name":"Bob Adler"}', $row(), 'bob\'s lock again');
+        $this->assertSame(['ok'], $send(['o' => 'patch', 'id' => $x, 'p' => ['lock' => null]], $bob));
+        $this->assertSame(['ok'], $send(['o' => 'remove', 'id' => $x], $alice));
+        $this->assertSame('{"deleted":1,"locked":null,"locked_by":null,"locked_name":null}', $row(), 'remove clears all three columns');
+        $this->assertSame([], $h->items->lockers('u:'));
     }
 
     /**

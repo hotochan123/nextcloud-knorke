@@ -43,12 +43,13 @@ final class FourByteTextTest extends TestCase {
     public function testValidatorReplacesInEveryStringOfDataAndStyle(): void {
         $put = ['o' => 'put', 'id' => '01JA2B3C4D5E6F7G8H9J0KMNPQ', 't' => 'sticky', 'p' => [
             'x' => 1, 'y' => 2, 'w' => 200, 'h' => 200, 'z' => 'i1', 'parent' => null,
-            'data' => ['text' => 'Retro 👍', 'tags' => ['🔥', 'ok'], 'meta' => ['by' => ['n' => '🦊 Fuchs']]],
+            // job 191: data.tags of a note is a typed field (tag ids) now; a list of other strings under another key
+            'data' => ['text' => 'Retro 👍', 'words' => ['🔥', 'ok'], 'meta' => ['by' => ['n' => '🦊 Fuchs']]],
             'style' => ['fill' => '#a8d8f8', 'emoji' => '🎉'],
         ]];
         $n = OpValidator::normalize(self::editor(), $put, false);
         $this->assertSame('put', $n['o']);
-        $this->assertSame(['text' => 'Retro ' . self::R, 'tags' => [self::R, 'ok'], 'meta' => ['by' => ['n' => self::R . ' Fuchs']]], $n['item']['data']);
+        $this->assertSame(['text' => 'Retro ' . self::R, 'words' => [self::R, 'ok'], 'meta' => ['by' => ['n' => self::R . ' Fuchs']]], $n['item']['data']);
         $this->assertSame(['fill' => '#a8d8f8', 'emoji' => self::R], $n['item']['style']);
         $this->assertSame('Retro 👍', OpValidator::normalize(self::editor(), $put)['item']['data']['text'], 'with 4-byte support the text is kept');
 

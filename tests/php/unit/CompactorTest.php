@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
  * Tombstone purge, changes cap and 30-day cut (SPEC-M1 §4.13.7 with R19
  * T4-06, T4-07, T4-15; §8.2 (4)) on a real SQL engine (SQLite in memory):
  * X1/X2/Xz/X, blocks of PURGE_CHUNK rows plus the rows of the boundary rev,
- * min_rev monotonic through the CASE update, setGens after every block,
+ * min_rev monotonic through the CASE update, raiseMinRev after every block,
  * "Xz null" ends only the tombstone blocks, the cap keeps every row of rev
  * R, the board's 30-day cut, --board and --now semantics, the cursor and
  * the time budget of a run. All times are fixed numbers (no wall clock).
@@ -47,11 +47,12 @@ final class CompactorTest extends TestCase {
         $this->h->items($b, 1, 12000, 3, true, self::NOW - 40 * self::DAY);
         $this->h->items($b, 4001, 10, 1, false, self::NOW - 40 * self::DAY, 20000);
         $this->h->items($b, 4050, 5, 1, true, self::NOW - 1000, 30000);
+        $this->h->cache->seedGens($b, 1, 1, 0, true, 1);
         $minRevAtLock = [];
         $setsAtLock = [];
         $setsAtRaise = [];
         $this->h->sql->onStatement = function (string $sql) use ($b, &$minRevAtLock, &$setsAtLock, &$setsAtRaise): void {
-            $sets = count(array_filter($this->h->mem->log, static fn (string $l): bool => $l === 'set a:' . $b));
+            $sets = count(array_filter($this->h->mem->log, static fn (string $l): bool => $l === 'cas a:' . $b));
             if (str_starts_with($sql, 'UPDATE oc_knorke_boards SET acl_gen')) {
                 $minRevAtLock[] = (int)$this->h->sql->pdo->query('SELECT min_rev FROM oc_knorke_boards WHERE id = ' . $b)->fetchColumn();
                 $setsAtLock[] = $sets;
@@ -63,7 +64,7 @@ final class CompactorTest extends TestCase {
         $this->assertSame(['board' => $b, 'blocks' => 3, 'tombstones' => 12000, 'changes' => 0, 'minRevBefore' => 0, 'minRev' => 4000], $line);
         $this->assertSame(self::LINE_KEYS, array_keys($line));
         $this->assertSame([0, 1667, 3334, 4000], $minRevAtLock, 'min_rev before each block (the fourth finds nothing): monotonic steps X = 1667, 3334, 4000');
-        $this->assertSame([0, 1, 2, 3], $setsAtLock, 'setGens after each block, before the next lock');
+        $this->assertSame([0, 1, 2, 3], $setsAtLock, 'raiseMinRev after each block, before the next lock');
         $this->assertSame([0, 1, 2], $setsAtRaise, 'never before the block\'s own min_rev update (it follows its COMMIT)');
         $deletes = $this->h->statements('DELETE FROM oc_knorke_items');
         $this->assertCount(3, $deletes);
@@ -125,13 +126,43 @@ final class CompactorTest extends TestCase {
 
     public function testMinRevNeverGoesDown(): void {
         // CASE WHEN min_rev < X: a min_rev already above X (set-min-rev, a
-        // concurrent purge) stays; setGens carries the higher one.
+        // concurrent purge) stays; raiseMinRev carries the higher one.
         $b = $this->h->board(60, 50);
         $this->h->items($b, 1, 10, 1, true, self::NOW - 40 * self::DAY);
+        $this->h->cache->seedGens($b, 1, 1, 0, true, 1);
         $this->assertSame(['board' => $b, 'blocks' => 1, 'tombstones' => 10, 'changes' => 0, 'minRevBefore' => 50, 'minRev' => 50],
             $this->h->compactor->board($b, self::NOW));
         $this->assertSame(50, $this->h->minRev($b));
         $this->assertSame(50, $this->h->mem->get('a:' . $b)[2]);
+    }
+
+    public function testTheCleanupWritesOnlyMinRev(): void {
+        // A revocation commits after the block read the board row (acl 1)
+        // and writes its gens first: the cleanup raises minRev only, the
+        // revocation's acl and links stay.
+        $b = $this->h->board(20);
+        $this->h->items($b, 1, 10, 1, true, self::NOW - 40 * self::DAY);
+        $this->h->cache->seedGens($b, 1, 1, 0, true, 1);
+        $this->h->sql->onStatement = function (string $sql) use ($b): void {
+            if (str_starts_with($sql, 'DELETE FROM oc_knorke_items')) {
+                $this->h->cache->setGens($b, 2, 1, 0, false, 1);
+            }
+        };
+        $this->assertSame(10, $this->h->compactor->board($b, self::NOW)['minRev']);
+        $this->assertSame([2, 1, 10, 0, 1], $this->h->mem->get('a:' . $b), 'acl 2 and links 0 of the revocation, minRev of the cleanup');
+        $this->assertSame(120, $this->h->mem->ttl('a:' . $b));
+        // No a: (a quiet board): the cleanup adds none, the next reader seeds from the DB.
+        $this->h->sql->onStatement = null;
+        $quiet = $this->h->board(20);
+        $this->h->items($quiet, 1, 10, 1, true, self::NOW - 40 * self::DAY);
+        $this->assertSame(10, $this->h->compactor->board($quiet, self::NOW)['minRev']);
+        $this->assertNull($this->h->mem->get('a:' . $quiet));
+        // The deleted mark stays.
+        $gone = $this->h->board(20);
+        $this->h->items($gone, 1, 10, 1, true, self::NOW - 40 * self::DAY);
+        $this->h->cache->markGone($gone);
+        $this->h->compactor->board($gone, self::NOW);
+        $this->assertTrue($this->h->cache->getGens($gone)['gone']);
     }
 
     public function testChangesCapKeepsExactlyTheNewestRevs(): void {

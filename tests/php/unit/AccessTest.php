@@ -92,6 +92,25 @@ final class AccessTest extends TestCase {
         $this->expectHttp(404, 'not_found', fn () => $this->h->access->forUser($b));
     }
 
+    public function testRevocationHoldsAgainstALateOlderWrite(): void {
+        // Another administration commits first (no bump: the row before the
+        // revocation) but writes the cache after the revocation did.
+        $b = $this->h->boards->addBoard('alice');
+        $this->h->link($b);
+        $this->h->boards->addMember($b, 'bob', 'edit', $this->h->boards->activeLinkOf($b)['id'], 0);
+        $this->h->uid = 'bob';
+        $this->h->access->forUser($b);
+        $older = $this->h->boards->lockBoard($b, false, null, 0);
+        unset($this->h->boards->members[$b]['bob']);
+        $row = $this->h->boards->lockBoard($b, true, 'edit', 0);
+        $this->h->cache->setGens($b, $row['acl_gen'], $row['link_gen'], 0, true, $row['vote_link_gen']);
+        $this->h->cache->setGens($b, $older['acl_gen'], $older['link_gen'], 0, true, $older['vote_link_gen']);
+        $this->assertSame($row['acl_gen'], $this->h->cache->getGens($b)['acl']);
+        $this->h->boards->log = [];
+        $this->expectHttp(404, 'not_found', fn () => $this->h->access->forUser($b));
+        $this->assertContains('findBoardForUser', $this->h->boards->log, 'the old grant no longer counts: full check');
+    }
+
     public function testGoneBoardOnTheFastPath(): void {
         $b = $this->h->boards->addBoard('alice');
         $this->h->access->forUser($b);

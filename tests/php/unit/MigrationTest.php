@@ -17,6 +17,7 @@ use OCA\Knorke\Migration\BackfillItemBytes;
 use OCA\Knorke\Migration\Version000100Date20261011000000;
 use OCA\Knorke\Migration\Version000200Date20261012000000;
 use OCA\Knorke\Migration\Version000300Date20261017000000;
+use OCA\Knorke\Migration\Version000400Date20261025000000;
 use OCA\Knorke\Tests\Support\Fake;
 use OCP\DB\ISchemaWrapper;
 use OCP\IAppConfig;
@@ -27,7 +28,8 @@ use PHPUnit\Framework\TestCase;
  * The schema of SPEC-M0 §3 (Version000100…, unchanged in M1), of SPEC-M1
  * §3.1 (Version000200…) and the M2 data foundation for grouping and locking
  * (Version000300…: knorke_items.group_id/locked_by/locked_name and the index
- * knorke_items_group).
+ * knorke_items_group) and the template suggestions of factory job 182
+ * (Version000400…: the table knorke_templates, app 0.4.0).
  *
  * Two kinds of schema behind the migrations:
  *  - a recording ISchemaWrapper fake (columns, options, indexes, every call):
@@ -129,8 +131,8 @@ final class MigrationTest extends TestCase {
         ]));
     }
 
-    /** Runs the migrations like Nextcloud's executeStep: changeSchema, then postSchemaChange (M1, M2). */
-    private function migrate(bool $m0 = true, bool $m1 = true, bool $m2 = false, ?ISchemaWrapper $schema = null): ISchemaWrapper {
+    /** Runs the migrations like Nextcloud's executeStep: changeSchema, then postSchemaChange (M1, M2, 0.4.0). */
+    private function migrate(bool $m0 = true, bool $m1 = true, bool $m2 = false, ?ISchemaWrapper $schema = null, bool $m3 = false): ISchemaWrapper {
         $schema ??= $this->schema();
         $output = Fake::of(IOutput::class);
         if ($m0) {
@@ -143,6 +145,11 @@ final class MigrationTest extends TestCase {
         }
         if ($m2) {
             $m = new Version000300Date20261017000000();
+            $this->assertSame($schema, $m->changeSchema($output, fn () => $schema, []));
+            $m->postSchemaChange($output, fn () => $schema, []);
+        }
+        if ($m3) {
+            $m = new Version000400Date20261025000000();
             $this->assertSame($schema, $m->changeSchema($output, fn () => $schema, []));
             $m->postSchemaChange($output, fn () => $schema, []);
         }
@@ -507,6 +514,88 @@ final class MigrationTest extends TestCase {
                 'CREATE INDEX knorke_items_group ON oc_knorke_items (board_id, group_id)'] as $want) {
                 $this->assertStringContainsString($want, $q, get_class($p));
             }
+        }
+    }
+
+    // ---- template suggestions (Version000400…, app 0.4.0, factory job 182) -----
+
+    private const M3_COLS = ['id', 'state', 'name', 'note', 'content', 'sketch', 'suggested_by', 'created_at', 'adopted_at'];
+
+    public function testM3TemplatesTableColumnsTypesAndIndex(): void {
+        $this->migrate(m2: true, m3: true);
+        $this->assertSame(['knorke_boards', 'knorke_links', 'knorke_members', 'knorke_items', 'knorke_changes',
+            'knorke_shares', 'knorke_vote_sessions', 'knorke_votes', 'knorke_templates'], array_keys($this->tables), 'one new table');
+        $this->assertSame(self::M3_COLS, $this->cols('knorke_templates'));
+        $this->assertSame(['id'], $this->tables['knorke_templates']['primary']);
+        $this->assertSame(['knorke_tpl_state' => ['cols' => ['state', 'suggested_by'], 'unique' => false]], $this->tables['knorke_templates']['indexes']);
+        $want = [
+            // column => [type, notnull, default, length, autoincrement]
+            'id' => ['bigint', true, null, null, true],
+            'state' => ['string', true, null, 8, null],
+            'name' => ['string', true, null, 255, null],
+            'note' => ['string', false, null, 255, null],
+            'content' => ['text', false, null, null, null],
+            'sketch' => ['text', false, null, null, null],
+            'suggested_by' => ['string', false, null, 64, null],
+            'created_at' => ['bigint', true, 0, null, null],
+            'adopted_at' => ['bigint', false, null, null, null],
+        ];
+        foreach ($want as $col => $w) {
+            $o = $this->tables['knorke_templates']['columns'][$col]['options'];
+            $this->assertSame($w, [$this->tables['knorke_templates']['columns'][$col]['type'], $o['notnull'], $o['default'] ?? null, $o['length'] ?? null, $o['autoincrement'] ?? null], "knorke_templates.$col");
+        }
+    }
+
+    /** On a 0.3.0 schema (an upgrade) the migration creates exactly the one table; nothing else changes. */
+    public function testM3AloneOnAnM2Schema(): void {
+        $this->migrate(m2: true);
+        $before = $this->tables;
+        $this->calls = [];
+        $this->migrate(m0: false, m1: false, m3: true);
+        $this->assertSame(['createTable(knorke_templates)', ...array_map(static fn (string $c): string => "knorke_templates.addColumn($c)", self::M3_COLS),
+            'knorke_templates.setPrimaryKey', 'knorke_templates.addIndex(knorke_tpl_state)'], $this->calls);
+        $after = $this->tables;
+        unset($after['knorke_templates']);
+        $this->assertSame($before, $after, 'nothing else changes');
+        $this->assertSame([], $this->appConfigSets, 'no backfill, no app config');
+    }
+
+    public function testM3IdempotentAndRulesForAllFourMigrations(): void {
+        $this->migrate(m2: true, m3: true);
+        $before = $this->tables;
+        $this->calls = [];
+        $this->migrate(m2: true, m3: true);
+        $this->assertSame($before, $this->tables, 'behind hasTable()');
+        $this->assertSame([], $this->calls, 'a second run of all four migrations changes nothing');
+        $names = $this->assertSchemaRules();
+        $this->assertArrayHasKey('knorke_tpl_state', $names);
+        $this->assertLessThanOrEqual(63, strlen('oc_knorke_templates'));
+    }
+
+    public function testM3RealSchemaOnEveryPlatform(): void {
+        $s = new Schema();
+        $schema = self::realSchema($s);
+        $this->migrate(m2: true, schema: $schema, m3: true);
+        $this->migrate(m2: true, schema: $schema, m3: true);
+        $t = $s->getTable('oc_knorke_templates');
+        $this->assertSame(self::M3_COLS, array_map(static fn ($c): string => $c->getName(), array_values($t->getColumns())));
+        $sql = static fn (AbstractPlatform $p): string => implode(";\n", $p->getCreateTableSQL($t));
+        foreach ([new MySQL80Platform(), new MariaDBPlatform()] as $p) {
+            $q = $sql($p);
+            foreach (['id BIGINT AUTO_INCREMENT NOT NULL', 'state VARCHAR(8) NOT NULL', 'name VARCHAR(255) NOT NULL', 'note VARCHAR(255) DEFAULT NULL',
+                'content LONGTEXT DEFAULT NULL', 'sketch LONGTEXT DEFAULT NULL', 'suggested_by VARCHAR(64) DEFAULT NULL', 'created_at BIGINT DEFAULT 0 NOT NULL',
+                'adopted_at BIGINT DEFAULT NULL', 'INDEX knorke_tpl_state (state, suggested_by)', 'PRIMARY KEY(id)'] as $want) {
+                $this->assertStringContainsString($want, $q, get_class($p));
+            }
+        }
+        $pg = $sql(new PostgreSQLPlatform());
+        foreach (['content TEXT DEFAULT NULL', 'state VARCHAR(8) NOT NULL', 'CREATE INDEX knorke_tpl_state ON oc_knorke_templates (state, suggested_by)'] as $want) {
+            $this->assertStringContainsString($want, $pg);
+        }
+        $this->assertMatchesRegularExpression('/id BIGINT GENERATED BY DEFAULT AS IDENTITY|id BIGSERIAL/', $pg);
+        $lite = $sql(new SqlitePlatform());
+        foreach (['content CLOB DEFAULT NULL', 'id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL', 'CREATE INDEX knorke_tpl_state ON oc_knorke_templates (state, suggested_by)'] as $want) {
+            $this->assertStringContainsString($want, $lite);
         }
     }
 }

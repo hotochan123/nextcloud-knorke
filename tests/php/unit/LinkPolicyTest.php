@@ -45,7 +45,7 @@ final class LinkPolicyTest extends TestCase {
         $asked = [];
         $resolved = 0;
         $looked = [];
-        $user = static fn (string $uid): IUser => Fake::of(IUser::class, ['getUID' => fn (): string => $uid]);
+        $user = static fn (string $uid): IUser => Fake::of(IUser::class, ['getUID' => fn (): string => $uid, 'isEnabled' => fn (): bool => true]);
         $manager = Fake::of(IManager::class, ['shareApiAllowLinks' => function (?IUser $u = null) use (&$asked): bool {
             $asked[] = $u?->getUID();
             return $u?->getUID() !== 'excluded';

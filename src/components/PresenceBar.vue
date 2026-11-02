@@ -49,6 +49,9 @@
 		<div v-if="open"
 			:id="id"
 			class="knorke-popover knorke-presence__popover">
+			<h3 class="knorke-presence__heading">
+				{{ t('knorke', 'Present ({n})', { n: participants.length }) }}
+			</h3>
 			<p class="knorke-popover__hint">
 				{{ hint }}
 			</p>
@@ -90,6 +93,9 @@
  * or the narrow layout (compact): a button "+{n}" [data-knorke-action=
  * participants] opens the list in a popover (with the same participant
  * buttons).
+ * Job 228 (redesign header): at most 4 in the bar (the islands share the
+ * width), and the popover starts with the heading "Present ({n})", n = all
+ * participants.
  *
  * Names and hints (SPEC-M1 §6.12, R18/R19 A-03, T4-25): the buttons of the
  * other participants are toggle buttons (aria-pressed = this tab follows
@@ -104,7 +110,7 @@ import { computed } from 'vue'
 import { n, t } from '../util/l10n.js'
 import { usePopover } from './popover.js'
 
-const MAX_SHOWN = 8
+const MAX_SHOWN = 4
 
 const props = defineProps({
 	participants: { type: Array, default: () => [] },

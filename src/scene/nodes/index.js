@@ -8,6 +8,7 @@
  *   update(ctx, entry, item, abs, fields, lod) → boolean (true = rebuild)
  *   setLod(ctx, entry, item, abs, lod)
  *   setTextHidden(entry, hidden)
+ * (job 195) and optionally setUi(entry, ui) (a mind map: focus and dots of this tab),
  * and optionally (text items) scaleSensitive + levelOf(item, lod, scale):
  * the level the renderer passes as `lod` depends on the scale inside LOD 1.
  * ctx is {Group, Rect, Text, Shape, Line, shadows}; every shape is built
@@ -17,14 +18,20 @@
  * with spec.place(ctx, entry, item, route) instead of place().
  * Unknown types get the placeholder; nodeSpecFor never throws.
  */
+import { ai } from './ai.js'
 import { connector } from './connector.js'
 import { frame } from './frame.js'
+import { ink } from './ink.js'
+import { mindmap } from './mindmap.js'
+import { pad } from './pad.js'
 import { placeholder } from './placeholder.js'
 import { shape } from './shape.js'
 import { sticky } from './sticky.js'
+import { table } from './table.js'
 import { text } from './text.js'
 
-const SPECS = Object.freeze({ sticky, frame, shape, text, connector })
+// job 173: table; job 188: pad; job 195: mindmap; job 267: ai; job 273: pen (ink.js)
+const SPECS = Object.freeze({ sticky, frame, shape, text, connector, table, pad, mindmap, ai, pen: ink })
 
 /**
  * @param {unknown} t item type

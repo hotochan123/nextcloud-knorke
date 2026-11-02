@@ -10,14 +10,14 @@
 		@update:open="(o) => !o && $emit('close')">
 		<div class="knorke-share__tabs" role="tablist" :aria-label="t('knorke', 'Share board')">
 			<NcButton v-if="owner"
-				:variant="tab === 'people' ? 'secondary' : 'tertiary'"
+				variant="tertiary"
 				role="tab"
 				:aria-selected="tab === 'people' ? 'true' : 'false'"
 				data-knorke-share-tab="people"
 				@click="tab = 'people'">
 				{{ t('knorke', 'People') }}
 			</NcButton>
-			<NcButton :variant="tab === 'links' ? 'secondary' : 'tertiary'"
+			<NcButton variant="tertiary"
 				role="tab"
 				:aria-selected="tab === 'links' ? 'true' : 'false'"
 				data-knorke-share-tab="links"
@@ -57,14 +57,22 @@
 				@qr="(role) => { qrOpen[role] = !qrOpen[role] }"
 				@present="(role) => { presenting = role }" />
 		</div>
+		<label v-if="owner && ai && ai.ready" class="knorke-timerdialog__mute knorke-share__ai">
+			<input type="checkbox"
+				:checked="ai.allowed !== false"
+				:disabled="aiBusy"
+				data-knorke-field="ai-allowed"
+				@change="(e) => $emit('ai-allow', e.target.checked)">
+			<span>{{ t('knorke', 'Allow AI on this board') }}</span>
+		</label>
 	</NcDialog>
 	<ConfirmDialog v-if="confirm"
-		:name="confirm.kind === 'rotate' ? t('knorke', 'Create new link?') : t('knorke', 'Set a new password?')"
-		:message="confirm.kind === 'rotate' ? t('knorke', 'The old link and everyone who joined through it lose access.') : t('knorke', 'Everyone who joined through this link will have to enter the password again.')"
-		:confirm-label="confirm.kind === 'rotate' ? t('knorke', 'Create new link') : t('knorke', 'Set password')"
+		:name="question.name"
+		:message="question.message"
+		:confirm-label="question.confirm"
 		:busy="busy"
 		danger
-		data-knorke-dialog="link-confirm"
+		:data-knorke-dialog="confirm.kind === 'renew' ? 'renew-links' : 'link-confirm'"
 		@confirm="onConfirm"
 		@cancel="confirm = null" />
 	<PresentLinkDialog v-if="presenting"
@@ -77,7 +85,8 @@
 /*
  * Share dialog v2 (SPEC-M1 §6.6, stage 2): tabs "People" (SharePeople, owner
  * only) and "Links" (ShareLinks). The root keeps the class knorke-share
- * (M0 E2E cases E03, E09, E16).
+ * (M0 E2E cases E03, E09, E16). Job 228: the tabs look like a segment (one
+ * pill, the chosen tab filled through aria-selected, knorke.css).
  *
  * - (R13) "Links" is ALWAYS the active tab on open, for owners and
  *   moderators; [data-knorke-share-tab=people] opens "People". Moderators see
@@ -112,9 +121,19 @@
  *   this link will have to enter the password again."). While a question or
  *   "Show to the room" is open the share dialog steps aside (one modal at a
  *   time, as in M0) and comes back afterwards; its state lives here.
+ * - Job 248: a save that takes the role "Can facilitate" from a row (removed
+ *   or another role, any kind; share.js droppedModerators) asks "Renew
+ *   links?" ([data-knorke-dialog=renew-links]) when a link is active and
+ *   links are allowed: those people still know the links. Yes renews every
+ *   active link in turn (rotate, as "Create new link"; a failing one does not
+ *   stop the next), Cancel changes nothing. The "People" tab stays open.
  * - Every link change is reported with `links` (and `linksAllowed` after a
  *   403 links_disabled or a lift by route 19/20), so the board view merges
  *   it (Befund F3).
+ * Job 267: for the owner, while AI is ready (prop ai {ready, allowed}),
+ * below the panel the tick "Allow AI on this board"
+ * ([data-knorke-field=ai-allowed]); it emits ai-allow(checked), the view
+ * saves it (route 62) and disables it meanwhile (aiBusy).
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import NcButton from '@nextcloud/vue/components/NcButton'
@@ -126,7 +145,7 @@ import { showError } from '../util/toast.js'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { isLinksDisabled } from './join.js'
 import PresentLinkDialog from './PresentLinkDialog.vue'
-import { dayOf, errorText, isTightening, linkDraft, linkSaveBody, linksAllowedAfter, normalizePolicy, normalizeShares, reprefill, settingsFirst, todayOf, wireShares } from './share.js'
+import { dayOf, droppedModerators, errorText, isTightening, linkDraft, linkSaveBody, linksAllowedAfter, normalizePolicy, normalizeShares, reprefill, settingsFirst, todayOf, wireShares } from './share.js'
 import ShareLinks from './ShareLinks.vue'
 import SharePeople from './SharePeople.vue'
 
@@ -144,9 +163,13 @@ const props = defineProps({
 	linksAllowed: { type: Boolean, default: null },
 	/** board.linkPolicy of the snapshot (owner only, stage 2) */
 	linkPolicy: { type: Object, default: null },
+	/** (job 267) the board's AI {ready, allowed} (BoardSession ui.onAi): the owner's switch while AI is ready */
+	ai: { type: Object, default: null },
+	/** (job 267) the switch is being saved */
+	aiBusy: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['close', 'links'])
+const emit = defineEmits(['close', 'links', 'ai-allow'])
 
 const ROLES = ['edit', 'vote']
 /** 'YYYY-MM-DD': the browser's local day until route 19 answers with linkPolicy.today (R14-04) */
@@ -166,7 +189,7 @@ const drafts = reactive({ edit: linkDraft(links.value.edit, linkPolicy.value, to
 const settingsOpen = reactive({ edit: false, vote: false })
 const qrOpen = reactive({ edit: false, vote: false })
 const linkErrors = reactive({ edit: null, vote: null })
-/** {kind: 'rotate'|'tighten', role, body?} */
+/** {kind: 'rotate'|'tighten'|'renew', role?, body?} */
 const confirm = ref(null)
 /** role whose link is shown to the room, or null */
 const presenting = ref(null)
@@ -176,6 +199,17 @@ let linkChanges = 0
 let disabledSeq = 0
 
 const readOnly = computed(() => !props.owner)
+/** texts of the open question */
+const question = computed(() => {
+	switch (confirm.value?.kind) {
+	case 'rotate':
+		return { name: t('knorke', 'Create new link?'), message: t('knorke', 'The old link and everyone who joined through it lose access.'), confirm: t('knorke', 'Create new link') }
+	case 'renew':
+		return { name: t('knorke', 'Renew links?'), message: t('knorke', 'Removed facilitators still know the links of this board. New links lock them out; guests then need the new links.'), confirm: t('knorke', 'Renew links') }
+	default:
+		return { name: t('knorke', 'Set a new password?'), message: t('knorke', 'Everyone who joined through this link will have to enter the password again.'), confirm: t('knorke', 'Set password') }
+	}
+})
 
 onMounted(load)
 
@@ -280,13 +314,16 @@ async function saveShares() {
 		return
 	}
 	const sent = draft.value
+	const before = stored.value
 	const disabledAtStart = disabledSeq
+	let renew = false
 	busy.value = true
 	peopleError.value = null
 	try {
 		const res = await boardsApi.saveShares(props.boardId, wireShares(sent))
 		apply(res, false)
 		liftLinks(res, disabledAtStart)
+		renew = droppedModerators(before, stored.value).length > 0 && linksAllowed.value && ROLES.some((r) => links.value[r])
 	} catch (e) {
 		if (e instanceof HttpError && e.status === 404) {
 			emit('close')
@@ -295,6 +332,9 @@ async function saveShares() {
 		peopleError.value = errorText(e, { shares: sent })
 	} finally {
 		busy.value = false
+	}
+	if (renew) {
+		ask({ kind: 'renew' })
 	}
 }
 
@@ -387,7 +427,7 @@ function fixPolicy(role) {
 	drafts[role] = d
 }
 
-/** @param {{kind: string, role: string, body?: object}} q question */
+/** @param {{kind: string, role?: string, body?: object}} q question */
 function ask(q) {
 	if (busy.value || readOnly.value) {
 		return
@@ -400,7 +440,13 @@ async function onConfirm() {
 	if (!q) {
 		return
 	}
-	if (q.kind === 'rotate') {
+	if (q.kind === 'renew') {
+		for (const role of ROLES) {
+			if (links.value[role] && linksAllowed.value) {
+				await linkCall(role, () => boardsApi.linkCalls(role).enable(props.boardId, { rotate: true }), (l) => setLink(role, l))
+			}
+		}
+	} else if (q.kind === 'rotate') {
 		await linkCall(q.role, () => boardsApi.linkCalls(q.role).enable(props.boardId, { rotate: true }), (l) => setLink(q.role, l))
 	} else {
 		await postLink(q.role, q.body)

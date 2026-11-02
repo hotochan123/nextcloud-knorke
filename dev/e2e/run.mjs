@@ -64,7 +64,7 @@ if (ARGS.selftest) {
 	process.exit(await selftest())
 }
 if (ARGS.list) {
-	for (const s of SCENARIOS) console.log(`${reportId(s)}\t${s.title}${s.phase === 2 ? '  (Phase 2)' : ''}`)
+	for (const s of SCENARIOS) console.log(`${reportId(s)}\t${s.title}${s.phase === 2 ? '  (Phase 2)' : ''}${s.measure ? '  (Messung, nur mit --only)' : ''}`)
 	process.exit(0)
 }
 const SELECTION = selectScenarios(SCENARIOS, ARGS.only)
@@ -138,7 +138,7 @@ try {
 				try {
 					// R19 (T4-01): Nextcloud's ILimiter state cleared at the start of every case
 					await world.limiterReset()
-					await withTimeout(sc.run(t, world), SCENARIO_TIMEOUT_MS)
+					await withTimeout(sc.run(t, world), sc.timeoutMs ?? SCENARIO_TIMEOUT_MS)
 				} catch (e) {
 					rec.error = String(e?.message || e).split('\n')[0].slice(0, 500)
 				}

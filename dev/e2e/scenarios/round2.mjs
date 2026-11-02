@@ -8,9 +8,10 @@
  *
  * E15 (U9/U10): the guest page keeps Nextcloud's footer hidden (F7) and
  *   shows the instance's imprint and privacy links itself – in the name
- *   dialog, in the guest top bar menu and under the empty state of an
- *   invalid link – and only while theming has them (host bridge
- *   legal-links set|clear).
+ *   dialog, in the top bar's board menu "⋯" (factory job 178: after "Save
+ *   as image (PNG)"; the guest menu [data-knorke=guest-menu] is gone) and
+ *   under the empty state of an invalid link – and only while theming has
+ *   them (host bridge legal-links set|clear).
  * E15/E16 contrast (SPEC-M1 §8.4, M0 leftover SPEC-M0 §16.2): name and
  *   description of the empty guest states – invalid link (E15), link sharing
  *   disabled (E16) – reach ≥ 4.5:1 against the .knorke-public__card
@@ -78,7 +79,7 @@ const footerHidden = (p) => p.evaluate(() => {
 
 export const E15 = {
 	id: 'E15',
-	title: 'Rechtslinks auf der Gastseite (U9/U10): Namensdialog, Gast-Menü, ungültiger Link; ohne theming-URLs nichts; Fußzeile bleibt verborgen; Kontrast des leeren Zustands hell/dunkel ≥ 4,5:1',
+	title: 'Rechtslinks auf der Gastseite (U9/U10): Namensdialog, Board-Menü „⋯“ (Job 178), ungültiger Link; ohne theming-URLs nichts; Fußzeile bleibt verborgen; Kontrast des leeren Zustands hell/dunkel ≥ 4,5:1',
 	async run(t, world) {
 		const board = await world.board('E2E Rechtslinks')
 		const token = await linkToken(board)
@@ -97,13 +98,17 @@ export const E15 = {
 			legalOk(t, await legalLinks(dlg), 'Namensdialog')
 			t.check(await footerHidden(p), 'Nextclouds Fußzeile footer.guest-box bleibt verborgen (F7)')
 
-			t.step('beitreten, Menü der Gast-Kopfleiste')
+			t.step('beitreten, Board-Menü „⋯“ der Gast-Kopfleiste (Job 178)')
 			await field(p, 'guest-name', 'Lena')
 			await action(p, 'guest-join')
 			await waitReady(p, 30000)
-			const menu = p.locator('[data-knorke=guest-menu]').first()
-			t.must(await menu.isVisible().catch(() => false), 'Gast-Kopfleiste: Menü [data-knorke=guest-menu]')
-			await menu.locator('button').first().click()
+			const menu = p.locator('[data-knorke-menu=board]').first()
+			t.must(await menu.isVisible().catch(() => false), 'Gast-Kopfleiste: Board-Menü [data-knorke-menu=board]')
+			t.check((await p.locator('[data-knorke=guest-menu]').count()) === 0, 'Gast-Kopfleiste: kein eigenes Gast-Menü mehr [data-knorke=guest-menu]')
+			await menu.locator('button[aria-haspopup]').first().click()
+			// job 228: the exports stand in "Export ▸", the links in "Legal ▸"
+			t.check(await until(() => p.locator('[data-knorke-submenu=export]:visible').count().then((c) => c === 1), { timeout: 5000 }), 'Board-Menü: „Export ▸“ [data-knorke-submenu=export]')
+			await p.locator('[data-knorke-submenu=legal]:visible').first().click().catch(() => {})
 			const inMenu = await until(async () => {
 				const l = await legalLinks(p)
 				return l.length === 2 ? l : null
@@ -142,7 +147,14 @@ export const E15 = {
 			await world.drop(n)
 			await p.reload({ waitUntil: 'domcontentloaded' })
 			await waitReady(p, 30000)
-			t.check((await p.locator('[data-knorke=guest-menu]').count()) === 0, 'Gast im Board (neu geladen): kein Menü')
+			const again = p.locator('[data-knorke-menu=board]').first()
+			if (t.check(await again.isVisible().catch(() => false), 'Gast im Board (neu geladen): das Board-Menü bleibt (Job 178)')) {
+				await again.locator('button[aria-haspopup]').first().click()
+				t.check(await until(() => p.locator('[data-knorke-submenu=export]:visible').count().then((c) => c === 1), { timeout: 5000 }), 'Gast im Board (neu geladen): „Export ▸“ im Board-Menü')
+				t.check((await p.locator('[data-knorke-legal], [data-knorke-submenu=legal]').count()) === 0, 'Gast im Board (neu geladen): kein „Legal ▸“, keine Rechtslinks im Board-Menü', await legalLinks(p))
+				await p.keyboard.press('Escape')
+			}
+			t.check((await p.locator('[data-knorke=guest-menu]').count()) === 0, 'Gast im Board (neu geladen): kein Gast-Menü')
 		} finally {
 			await bridge('legal-links', 'clear').catch(() => {})
 		}

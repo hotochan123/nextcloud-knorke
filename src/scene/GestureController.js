@@ -16,8 +16,9 @@
  *   one finger lifts → the other keeps panning in the SAME gesture, with its
  *   current position as the new reference.
  * - direct path, for mouse and pen only: the hand tool, the space bar, the
- *   middle button and, in view-only mode (modes view and vote), every plain
- *   drag with the left button or the pen (the scene's wantsPan decides). In
+ *   middle button, the right mouse button (job 156, below) and, in
+ *   view-only mode (modes view and vote), every plain drag with the left
+ *   button or the pen (the scene's wantsPan decides). In
  *   mode vote every left-button or pen press, hand tool and space bar
  *   included, starts the pan only beyond the deferPan threshold (3 px mouse,
  *   10 px pen; see "Taps and the late start" below); the middle button pans
@@ -36,7 +37,8 @@
  *   e.g. trackpad momentum or a free-spinning wheel.
  *
  * The pen goes first (job 134, pen tablets without palm rejection): a pen
- * press is a pointerdown of a pen or a mouse with button 0 or 1 on the
+ * press is a pointerdown of a pen or a mouse with button 0 or 1 (job 168:
+ * and every right press of the pen) on the
  * canvas (not ignoreTarget), whatever it does (pan, drag, marquee, create,
  * connect, transform, a tap in mode vote), until the pointerup or
  * pointercancel of that pointer or a pointermove of it with buttons 0 (a
@@ -79,7 +81,16 @@
  * touch that is not claimed does NOT start the CSS path at once. It stays
  * pending until it moves more than TAP_SLOP_PX from its pointerdown; then
  * the one-finger pan starts and its first frame already covers the whole
- * way since the pointerdown (M0-E11: a 200-px swipe pans 200 / scale). A
+ * way since the pointerdown (M0-E11: a 200-px swipe pans 200 / scale);
+ * onTouchPan() reports exactly that moment, once per such pan (job 142: the
+ * shell's one-time tip; never for a tap, a hold that became a marquee, a
+ * pinch, the finger left after a pinch, a mouse/pen pan or the wheel).
+ * (job 163) Right before that pan, outside view-only mode, claimDrag(pointerId,
+ * p) is asked exactly once, p = the container point of its pointerdown: true
+ * means the input controller drags the selection with it, and the finger
+ * counts as claimed like after a hold (no pan, no onTouchPan, no tap at its
+ * release; a second finger cancels it like any claim); false or no option:
+ * the pan starts as before. A
  * pending finger that lifts within TAP_MS without a second finger is a tap
  * (onTap(e), no gesture, no draw); a second finger turns it into a pinch
  * (the first finger's way so far pans first, as in M0). No double tap. A
@@ -89,6 +100,33 @@
  * release before it is a click (onTap(e); a pen within TAP_MS, like a
  * finger). beforeStart() runs right before any CSS gesture or pan starts,
  * before the camera is read (the scene ends a follow glide there).
+ *
+ * Right-drag (factory job 156): the scene lets every right press (isRightPress;
+ * job 168: the pen's side button too) pan beyond its threshold (wantsPan and
+ * deferPan: DRAG_THRESHOLD_PX for the mouse, TAP_SLOP_PX for the pen), in
+ * every mode; this controller only adds what such a press needs beyond a
+ * deferred left press. Its click (released within the threshold; the pen's
+ * without TAP_MS, however long it was held) reaches onTap(e, 2), so the scene
+ * can tell it from a vote click (a pen's button 0 with bit 2 in buttons
+ * counts as 2). A pointermove of its pointer with the button up (a missed
+ * pointerup) ends it like a pointercancel: no click, a running pan ends
+ * (onDirectEnd). For the mouse that is (buttons & 2) === 0, for the pen only
+ * buttons 0: a side button let go while the tip stays down pans on until the
+ * pen lifts. The mouse's right press is no pen press (fingers stay out
+ * because it is armed or panning), and during a touch gesture it does
+ * nothing; the pen's is one (above), so it ends a touch gesture first.
+ *
+ * Mouse wheel (factory job 154): the option wheel() names the stage, 'auto',
+ * 'zoom' or 'pan' (none: 'pan', the wheel pans as before the job). Per event,
+ * in every stage: Ctrl/⌘ zooms (a trackpad pinch and Ctrl+Shift too), Shift
+ * alone pans sideways, without Ctrl/⌘ an event over ignoreTarget stays with
+ * the browser, and events during a pan, a touch or a pending press are
+ * swallowed. The first event of a wheel gesture without Ctrl/⌘ and without
+ * Shift decides once what its other such events do, until the gesture ends:
+ * pan in stage 'pan' or when its deltaY is 0 (a tilt wheel), else zoom in
+ * stage 'zoom', and in stage 'auto' zoom only when isNotchedWheel(e) says it
+ * comes from a wheel with notches. Zooming computes exactly like Ctrl/⌘ +
+ * wheel (around the pointer, deltaX ignored).
  *
  * The controller is DOM-light on purpose: it only needs addEventListener,
  * getBoundingClientRect and (optionally) setPointerCapture on `el`, so the
@@ -105,6 +143,8 @@ export const WHEEL_ZOOM = 0.0015
 export const WHEEL_END_MS = 120
 /** Pixels per line for deltaMode 1 (DOM_DELTA_LINE). */
 const LINE_PX = 16
+/** One notch of a mouse wheel on macOS in Safari and Chrome: |deltaY| is a whole multiple of it (deltaMode 0). */
+export const MAC_NOTCH_PX = 4.000244140625
 /** A first finger (and a deferred pen press) moving at most this far from its pointerdown is still a tap. */
 export const TAP_SLOP_PX = 10
 /** A tap (finger, deferred pen press) lasts at most this long. */
@@ -113,6 +153,48 @@ export const TAP_MS = 500
 export const LONG_PRESS_MS = 500
 
 const noop = () => {}
+
+/**
+ * (job 168) A right press: the right mouse button (button 2), or a pen with its side button held,
+ * reported as button 2 or as button 0 with bit 2 in buttons (on some systems the tip that lands
+ * while the side button is held).
+ *
+ * @param {{pointerType?:string, button?:number, buttons?:number}} e pointerdown
+ * @return {boolean}
+ */
+export function isRightPress(e) {
+	if (e.pointerType === 'mouse') return e.button === 2
+	return e.pointerType === 'pen' && (e.button === 2 || (e.button === 0 && (e.buttons & 2) !== 0))
+}
+
+/**
+ * Does this wheel event come from a wheel with notches (stage 'auto' zooms) rather
+ * than a trackpad (it pans)? Reads deltaMode before deltaX and deltaY: once those
+ * were read first, Firefox reports pixels. True when one of these holds:
+ * (a) deltaMode is 1 or 2 (Firefox with a wheel);
+ * (b) deltaX is 0 and |deltaY| is a whole multiple ≥ 1 of MAC_NOTCH_PX (tolerance
+ *     1e-6 on the quotient): a notch on macOS in Safari and Chrome;
+ * (c) deltaX is 0 and wheelDeltaY is a whole number ≠ 0, a multiple of 120, and
+ *     |wheelDeltaY| ≠ 3 · |deltaY|: a notch of Chrome and Edge on Windows and Linux
+ *     (a trackpad of Chrome on macOS reports wheelDeltaY = −3 · deltaY).
+ * Chromium gives every wheel event it gets through CDP (Playwright) wheelDeltaY
+ * ±120, whatever its deltaY, so page.mouse.wheel(0, dy) counts as a notch unless
+ * |dy| is 40 (browser tests that pan with the wheel choose the stage 'pan').
+ *
+ * @param {WheelEvent} e wheel event
+ * @return {boolean} a notched wheel
+ */
+export function isNotchedWheel(e) {
+	const mode = e.deltaMode
+	if (mode === 1 || mode === 2) return true
+	if ((Number(e.deltaX) || 0) !== 0) return false
+	const dy = Math.abs(Number(e.deltaY) || 0)
+	const q = dy / MAC_NOTCH_PX
+	const k = Math.round(q)
+	if (k >= 1 && Math.abs(q - k) <= 1e-6) return true
+	const w = e.wheelDeltaY
+	return Number.isInteger(w) && w !== 0 && w % 120 === 0 && Math.abs(w) !== 3 * dy
+}
 
 export class GestureController {
 	#el
@@ -129,15 +211,24 @@ export class GestureController {
 	#gp = []
 	/** reference for the touch gesture: camera plus one point or midpoint + distance */
 	#ref = null
-	/** mouse/pen pan; `last` = pointer position of the previous move @type {null|{id:number, last:{x:number, y:number}}} */
+	/**
+	 * mouse/pen pan; `last` = pointer position of the previous move, `button` = the button of its pointerdown
+	 * (2 for every right press), `type` = its pointerType
+	 * @type {null|{id:number, last:{x:number, y:number}, button:number, type:string}}
+	 */
 	#direct = null
 	/** a first touch below TAP_SLOP_PX: no gesture yet (container px at its pointerdown) @type {null|{id:number, x:number, y:number, t0:number}} */
 	#pendingTouch = null
-	/** a mouse/pen press whose pan waits for its threshold (deferPan) @type {null|{id:number, x:number, y:number, t0:number, slop:number, type:string}} */
+	/**
+	 * a mouse/pen press whose pan waits for its threshold (deferPan)
+	 * @type {null|{id:number, x:number, y:number, t0:number, slop:number, type:string, button:number}}
+	 */
 	#armed = null
-	/** pointers of the running pen presses (pen or mouse, button 0 or 1): fingers are inert meanwhile @type {Set<number>} */
+	/** pointers of the running pen presses (pen or mouse, button 0 or 1; a pen's right press): fingers are inert meanwhile @type {Set<number>} */
 	#pens = new Set()
 	#wheelTimer = null
+	/** (job 154) what the running wheel gesture does without Ctrl/⌘ and Shift: null = not decided yet, true = zoom, false = pan */
+	#wheelZoom = null
 	/** hold timer of the pending first finger (LONG_PRESS_MS), null while none runs */
 	#holdTimer = null
 	#rect = null
@@ -151,8 +242,8 @@ export class GestureController {
 	 * @param {(e:PointerEvent) => boolean} [opts.claimTouch] true when the input controller takes a first touch
 	 * @param {() => void} [opts.cancelClaim] a second finger arrived: the input controller aborts a finger's press like Esc
 	 * @param {(e:PointerEvent) => boolean} [opts.wantsPan] mouse/pen pointerdown that pans, at once or, with
-	 *   deferPan, beyond its threshold (the scene: the hand tool, the space bar, the middle button and, in
-	 *   view-only mode (modes view and vote), every press with the left button or the pen)
+	 *   deferPan, beyond its threshold (the scene: the hand tool, the space bar, the middle button, every right
+	 *   press (isRightPress) and, in view-only mode (modes view and vote), every press with the left button or the pen)
 	 * @param {(e:Event) => boolean} [opts.ignoreTarget] events from overlay controls (editor, chip buttons)
 	 * @param {(cam:CameraState) => void} [opts.onDirect] direct path: new camera
 	 * @param {() => void} [opts.onDirectStart] direct pan started
@@ -160,17 +251,26 @@ export class GestureController {
 	 * @param {(c0:CameraState) => void} [opts.onGestureStart] CSS path started at camera c0
 	 * @param {(c1:CameraState) => void} [opts.onGestureFrame] live camera changed
 	 * @param {(c1:CameraState) => void} [opts.onGestureEnd] gesture over, c1 becomes the confirmed camera
-	 * @param {(e:PointerEvent) => void} [opts.onTap] a tap (finger) or a click/tap of a deferred mouse/pen press, at its pointerup
+	 * @param {(e:PointerEvent, button:(number|undefined)) => void} [opts.onTap] a tap (finger) or a click/tap of
+	 *   a deferred mouse/pen press, at its pointerup; button = the button of the deferred press's pointerdown
+	 *   (2: a right click; none for a finger)
 	 * @param {(e:PointerEvent) => number} [opts.deferPan] mouse/pen pointerdown that wantsPan: threshold in px
 	 *   before the pan starts (0 or none = at once, M0)
 	 * @param {() => void} [opts.beforeStart] right before a CSS gesture or a pan starts (before the camera is read)
 	 * @param {(pointerId:number, p:{x:number, y:number}) => boolean} [opts.longPress] a pending first finger was
 	 *   held still for LONG_PRESS_MS (p = its pointerdown point, container px): true when the input controller
 	 *   takes it (none: no hold timer, a finger held still stays pending, as with an answer false)
+	 * @param {(pointerId:number, p:{x:number, y:number}) => boolean} [opts.claimDrag] (job 163) a pending first
+	 *   finger moved beyond TAP_SLOP_PX (p = its pointerdown point, container px), asked once before its pan
+	 *   starts: true when the input controller takes it (no pan, no onTouchPan, no tap; none: it pans)
+	 * @param {() => void} [opts.onTouchPan] a pending first finger moved beyond TAP_SLOP_PX: its one-finger
+	 *   pan started (once per such pan, right after its first frame)
 	 * @param {() => number} [opts.now] clock in ms (tap duration)
 	 * @param {number} [opts.minScale] zoom range
 	 * @param {number} [opts.maxScale] zoom range
 	 * @param {number} [opts.wheelEndMs] idle time that ends a wheel gesture
+	 * @param {() => string} [opts.wheel] (job 154) the stage 'auto', 'zoom' or 'pan' of the wheel without
+	 *   Ctrl/⌘ (none: 'pan'; any other value pans too)
 	 * @param {(fn:Function, ms:number) => any} [opts.setTimer] timer (tests inject fakes)
 	 * @param {(h:any) => void} [opts.clearTimer] timer
 	 */
@@ -192,10 +292,13 @@ export class GestureController {
 			deferPan: () => 0,
 			beforeStart: noop,
 			longPress: null,
+			claimDrag: null,
+			onTouchPan: noop,
 			now: () => performance.now(),
 			minScale: MIN_SCALE,
 			maxScale: MAX_SCALE,
 			wheelEndMs: WHEEL_END_MS,
+			wheel: () => 'pan',
 			setTimer: (fn, ms) => setTimeout(fn, ms),
 			clearTimer: (h) => clearTimeout(h),
 			...opts,
@@ -275,6 +378,7 @@ export class GestureController {
 		}
 		this.#listeners = []
 		this.#mode = null
+		this.#wheelZoom = null
 		this.#direct = null
 		this.#pendingTouch = null
 		this.#armed = null
@@ -325,6 +429,7 @@ export class GestureController {
 		this.#wheelTimer = null
 		const c = this.#c1
 		this.#mode = null
+		this.#wheelZoom = null
 		this.#gp = []
 		this.#ref = null
 		this.#rect = null
@@ -337,8 +442,10 @@ export class GestureController {
 	}
 
 	#onWheel = (e) => {
-		const zoom = e.ctrlKey || e.metaKey
-		if (!zoom && this.#o.ignoreTarget(e)) {
+		// deltaMode before deltaX/deltaY: Firefox reports pixels once those were read first
+		const deltaMode = e.deltaMode
+		const ctrl = e.ctrlKey || e.metaKey
+		if (!ctrl && this.#o.ignoreTarget(e)) {
 			return // let the text editor scroll
 		}
 		e.preventDefault()
@@ -348,10 +455,12 @@ export class GestureController {
 		if (this.#mode === null) {
 			this.#start('wheel')
 		}
-		const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? (this.#rect?.height || 800) : 1
+		const unit = deltaMode === 1 ? LINE_PX : deltaMode === 2 ? (this.#rect?.height || 800) : 1
 		let dx = (Number(e.deltaX) || 0) * unit
 		let dy = (Number(e.deltaY) || 0) * unit
 		const c = this.#c1
+		// Ctrl/⌘ zooms and Shift pans sideways per event; every other event does what the gesture decided
+		const zoom = ctrl || (!e.shiftKey && this.#wheelZooms(e, dy))
 		if (zoom) {
 			const p = this.#local(e)
 			this.#c1 = zoomCamera(c, p.x, p.y, Math.exp(-dy * WHEEL_ZOOM), this.#o.minScale, this.#o.maxScale)
@@ -370,6 +479,24 @@ export class GestureController {
 		}, this.#o.wheelEndMs)
 	}
 
+	/**
+	 * (job 154) What the running wheel gesture does with its events without Ctrl/⌘
+	 * and Shift, decided at the first such event and kept until the gesture ends: pan
+	 * in stage 'pan' or when deltaY is 0, zoom in stage 'zoom', in stage 'auto' zoom
+	 * for a notched wheel (isNotchedWheel); any other stage pans.
+	 *
+	 * @param {WheelEvent} e the event
+	 * @param {number} dy its deltaY in px
+	 * @return {boolean} true: zoom, false: pan
+	 */
+	#wheelZooms(e, dy) {
+		if (this.#wheelZoom === null) {
+			const stage = this.#o.wheel()
+			this.#wheelZoom = stage !== 'pan' && dy !== 0 && (stage === 'zoom' || (stage === 'auto' && isNotchedWheel(e)))
+		}
+		return this.#wheelZoom
+	}
+
 	#onDown = (e) => {
 		if (e.pointerType === 'touch') {
 			this.#touchDown(e)
@@ -377,7 +504,10 @@ export class GestureController {
 		}
 		// (R38) a mouse or pen press goes first: a waiting finger (a resting palm) gets no hold signal
 		this.#clearHold()
-		const pen = (e.pointerType === 'pen' || e.pointerType === 'mouse') && (e.button === 0 || e.button === 1) && !this.#o.ignoreTarget(e)
+		const right = isRightPress(e)
+		const main = e.button === 0 || e.button === 1
+		// (job 168) every right press of the pen is a pen press too, the mouse's is not
+		const pen = (e.pointerType === 'pen' ? main || right : e.pointerType === 'mouse' && main) && !this.#o.ignoreTarget(e)
 		if (pen) {
 			this.#penDown(e)
 		}
@@ -397,11 +527,12 @@ export class GestureController {
 		if (!pen) this.#capture(e)
 		const p = this.#local(e)
 		const slop = Number(this.#o.deferPan(e))
+		const button = right ? 2 : e.button
 		if (slop > 0) {
-			this.#armed = { id: e.pointerId, x: p.x, y: p.y, t0: this.#o.now(), slop, type: e.pointerType }
+			this.#armed = { id: e.pointerId, x: p.x, y: p.y, t0: this.#o.now(), slop, type: e.pointerType, button }
 			return
 		}
-		this.#beginDirect(e.pointerId, p)
+		this.#beginDirect(e.pointerId, p, button, e.pointerType)
 	}
 
 	/**
@@ -411,7 +542,7 @@ export class GestureController {
 	 * gesture ends with a commit; the fingers leave #touches, so their moves and releases do
 	 * nothing and no later finger pinches with them.
 	 *
-	 * @param {PointerEvent} e pointerdown of a pen or a mouse, button 0 or 1, on the canvas
+	 * @param {PointerEvent} e pointerdown of a pen or a mouse, button 0 or 1, or a pen's right press, on the canvas
 	 */
 	#penDown(e) {
 		this.#pens.add(e.pointerId)
@@ -427,10 +558,12 @@ export class GestureController {
 	/**
 	 * @param {number} id pointer
 	 * @param {{x:number, y:number}} p container point the pan starts from
+	 * @param {number} button the button of its pointerdown (2 for a right press)
+	 * @param {string} type its pointerType
 	 */
-	#beginDirect(id, p) {
+	#beginDirect(id, p, button, type) {
 		this.#o.beforeStart()
-		this.#direct = { id, last: { x: p.x, y: p.y } }
+		this.#direct = { id, last: { x: p.x, y: p.y }, button, type }
 		this.#o.onDirectStart()
 	}
 
@@ -521,6 +654,21 @@ export class GestureController {
 	}
 
 	/**
+	 * (job 163) A pending first finger moved beyond TAP_SLOP_PX: before its pan
+	 * starts the input controller is asked once whether it drags the selection
+	 * (claimDrag, not in view-only mode); then it counts as claimed.
+	 *
+	 * @param {{id:number, x:number, y:number}} pt the pending touch, no longer pending
+	 * @return {boolean} true when the input controller took it (no pan)
+	 */
+	#claimDrag(pt) {
+		if (typeof this.#o.claimDrag !== 'function' || this.#o.viewOnly()) return false
+		if (this.#o.claimDrag(pt.id, { x: pt.x, y: pt.y }) !== true) return false
+		this.#claimed.add(pt.id)
+		return true
+	}
+
+	/**
 	 * The one-finger pan of a pending touch starts: reference = the camera now
 	 * and the finger's pointerdown point, so the first frame covers the whole
 	 * way since the pointerdown.
@@ -585,7 +733,9 @@ export class GestureController {
 				if (Math.hypot(p.x - pt.x, p.y - pt.y) > TAP_SLOP_PX) {
 					this.#pendingTouch = null
 					this.#clearHold()
+					if (this.#claimDrag(pt)) return
 					this.#startTouch(pt)
+					this.#o.onTouchPan()
 				}
 				return
 			}
@@ -598,13 +748,21 @@ export class GestureController {
 			// no button down any more: a pointerup of this pen press was missed
 			this.#pens.delete(e.pointerId)
 		}
+		const r = this.#armed ?? this.#direct
+		if (r?.id === e.pointerId && r.button === 2 && (r.type === 'pen' ? e.buttons === 0 : !(e.buttons & 2))) {
+			// (job 156) the right button is up: a missed pointerup of this right press ends it like a
+			// pointercancel (#onUp: a pointermove is no click, a pan ends); (job 168) the pen's only once
+			// nothing is down (its side button let go on the screen: the pan goes on)
+			this.#onUp(e)
+			return
+		}
 		const a = this.#armed
 		if (a !== null && e.pointerId === a.id) {
 			const p = this.#local(e)
 			if (Math.hypot(p.x - a.x, p.y - a.y) <= a.slop) return
 			// beyond the threshold: the pan starts at the pointerdown point, this move pans the whole way
 			this.#armed = null
-			this.#beginDirect(a.id, a)
+			this.#beginDirect(a.id, a, a.button, a.type)
 		}
 		const d = this.#direct
 		if (d && e.pointerId === d.id) {
@@ -648,9 +806,10 @@ export class GestureController {
 		this.#pens.delete(e.pointerId)
 		const a = this.#armed
 		if (a !== null && e.pointerId === a.id) {
-			// released below its threshold: a click (mouse, any duration) or a tap (pen, within TAP_MS)
+			// released below its threshold: a click (mouse, any duration) or a tap (pen, within TAP_MS;
+			// job 168: a pen's right click, any duration)
 			this.#armed = null
-			if (this.#isTap(e, a, a.slop, a.type !== 'mouse')) this.#o.onTap(e)
+			if (this.#isTap(e, a, a.slop, a.type !== 'mouse' && a.button !== 2)) this.#o.onTap(e, a.button)
 			return
 		}
 		if (this.#direct && e.pointerId === this.#direct.id) {

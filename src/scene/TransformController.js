@@ -13,17 +13,25 @@
  * Rules (§6.3 table):
  * - one note: 8 handles + rotation; corners keep the ratio, Shift releases
  * - one shape: 8 handles + rotation; corners free, Shift keeps the ratio;
- *   Alt resizes from the centre (every type)
+ *   Alt resizes from the centre (every type); (job 240) a shape with the
+ *   tick "1:1" (model/shapes.js squareOn) keeps the ratio, Shift or not
  * - one text item: l/r change the wrap width; corners scale width AND font
  *   size by the same k (font size rounded to an integer in 8..400); the
  *   height is measured by the session when it writes (rule 13)
  * - one frame: 8 handles, no rotation; a drag at the top/left edge moves the
  *   frame's origin, its children stay where they are on the board
  *   (compensated relative positions, keep = true, rule 15)
+ *   (job 199) a frame with lanes stays at least LANE_FRAME_MIN_W wide and
+ *   so high that the lane that changes (the first at the top edge, else
+ *   the last) keeps LANE_MIN_H (model/lanes.js minLaneFrameH); (job 208)
+ *   and so wide that the column that changes (the first at the left edge,
+ *   else the last) keeps COL_MIN_W (minColFrameW)
  * - several items: 4 corners, uniform scaling only, no rotation; frames and
  *   types without resize (placeholders) keep their size and only move
  *   (mapBoxes fixed); text items scale their font size with k
- * - rotation: 45° snaps within 5°, with Shift fixed 15° steps
+ * - rotation: 45° snaps within 5°, with Shift fixed 15° steps; (job 231) it
+ *   turns by the angle the pointer moved around the centre since the press
+ *   (rotationOffset), so the handle at the top right corner does not jump
  * - sizes stay inside TYPES[t].size (else the server says bad)
  * - (M2, SPEC-M1 §1.2 (R12)) step(…, {snap}) snaps the moving edges of the
  *   frame to the candidates (snapResize: the raw offset is corrected before
@@ -49,13 +57,18 @@
  * selection of connectors only has nothing to transform.
  */
 import { rotatedBBox } from '../model/geometry.js'
+import { LANE_FRAME_MIN_W, hasLanes, minColFrameW, minLaneFrameH } from '../model/lanes.js'
 import { fieldValue, typeInfo } from '../model/registry.js'
+import { squareOn } from '../model/shapes.js'
 import { snapResize } from '../model/snap.js'
-import { mapBoxes, resizeFrame, rotateFrame, selectionFrame } from '../model/transform.js'
+import { mapBoxes, resizeFrame, rotateFrame, rotationOffset, selectionFrame } from '../model/transform.js'
 import { TRANSFORM_LIVE_MAX } from '../model/tokens.js'
 import { topLevel } from './Selection.js'
 
 const CORNERS = new Set(['tl', 'tr', 'br', 'bl'])
+/** (job 199) The handles that move the top edge. */
+const TOP_ANCHORS = new Set(['tl', 't', 'tr'])
+const LEFT_ANCHORS = new Set(['tl', 'l', 'bl'])
 /** Font size range of text items (registry rule style.fontSize of `text`). */
 const TEXT_FONT = Object.freeze([8, 400])
 /** Smallest uniform factor, so a frame of fixed items never collapses. */
@@ -191,6 +204,11 @@ export class TransformController {
 				parent: it.parent,
 				fontSize0: info.resize === 'text' ? fieldValue(it, 'style.fontSize') : undefined,
 				storedFont: info.resize === 'text' ? (Number.isFinite(it.style?.fontSize) ? it.style.fontSize : null) : undefined,
+				// (job 240) the tick "1:1" of a shape, as stored at the start
+				square: squareOn(it),
+				// (job 199) a frame with lanes, as stored at the start
+				lanes: hasLanes(it),
+				item: hasLanes(it) ? { ...it } : null,
 			})
 			all.add(id)
 			for (const d of m.descendantsOf(id)) all.add(d)
@@ -208,6 +226,7 @@ export class TransformController {
 		for (const id of conns.keys()) all.add(id)
 		this.#s = {
 			ids, frame0, multi, anchor, p0: { x: pointer.x, y: pointer.y }, items, fixed, kids, all, conns,
+			rotFrom: anchor === 'rot' ? rotationOffset(frame0, pointer) : 0,
 			ub: unionOf(ids.map((id) => items.get(id).abs0)),
 			live: ids.length <= TRANSFORM_LIVE_MAX, last: null,
 			// snapping (R12): several items with one that keeps its size do not snap; a text item only along x
@@ -273,13 +292,13 @@ export class TransformController {
 		if (s.anchor === 'rot') {
 			f1 = s.multi || !s.items.get(s.ids[0]).info.rotatable
 				? { ...f0 }
-				: rotateFrame(f0, pointer, { stepDeg: shift ? 15 : null })
+				: rotateFrame(f0, pointer, { stepDeg: shift ? 15 : null, fromDeg: s.rotFrom })
 		} else if (!s.multi) {
 			const one = s.items.get(s.ids[0])
 			const info = one.info
 			const corner = CORNERS.has(s.anchor)
 			const textCorner = info.resize === 'text' && corner
-			const keepRatio = corner && (textCorner || info.keepRatio !== !!shift)
+			const keepRatio = corner && (textCorner || one.square || info.keepRatio !== !!shift)
 			let [min, max] = info.size
 			if (keepRatio) {
 				const [kMin, kMax] = this.#kRange([s.ids[0]], textCorner)
@@ -287,6 +306,11 @@ export class TransformController {
 				max = kMax * Math.max(f0.w, f0.h)
 			}
 			const opts = { keepRatio, centered: !!alt, min, max }
+			// (job 199) a frame with lanes: the lane that changes keeps LANE_MIN_H, the head room beside it
+			if (one.lanes) {
+				opts.minW = Math.max(LANE_FRAME_MIN_W, minColFrameW(one.item, LEFT_ANCHORS.has(s.anchor) ? 'left' : 'right'))
+				opts.minH = minLaneFrameH(one.item, TOP_ANCHORS.has(s.anchor) ? 'top' : 'bottom')
+			}
 			const d = snapped(opts)
 			f1 = resizeFrame(f0, s.anchor, d.dx, d.dy, opts)
 			guides = d.guides

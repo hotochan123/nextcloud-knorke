@@ -36,7 +36,11 @@ use Psr\Log\LoggerInterface;
  *          clear removes a closed meta.vote (open or none → 409).
  *  apply   the vote ops of one sync request (set semantics, never a delta):
  *          closed/expired sessions answer `closed` (an expired one is closed
- *          here, path a); per op gone / bad (type, scope) / authorize /
+ *          here, path a); a guest in a session with accountsOnly gets
+ *          `denied` for every op still open (job 175, nothing written); per
+ *          op gone / stale (job 216: the op's base b is not the voter's row
+ *          after the earlier ops of the batch; nothing written) / bad (type,
+ *          scope) / authorize /
  *          limit (per item, per person against the state after the earlier
  *          ops of the batch) / ok. Type, scope, perItem and per are checked
  *          only for an increase (R17-K1, R17-K2): n ≤ the voter's current
@@ -84,10 +88,15 @@ class VoteService {
      * The body of route 22 (§4.12.1): per 1–VOTE_PER_MAX (default 5),
      * perItem 1–per (default 1), scope null or a ULID, types a non-empty
      * list of votable types (default ["sticky"], duplicates dropped),
-     * minutes null or 1–VOTE_MINUTES_MAX. A missing key or null takes the
-     * default. Whether scope names a live frame is checked under the lock.
+     * minutes null or 1–VOTE_MINUTES_MAX, live true, false or null (job 149:
+     * moderators see the live count; any other value → 400), accountsOnly
+     * true, false or null (job 175: only accounts vote; any other value →
+     * 400). A missing key or null takes the default. Whether scope names a
+     * live frame is checked under the lock. cfg carries live and
+     * accountsOnly (true) only when they are on, so a session without them
+     * stays as before.
      *
-     * @return array{cfg: array{per: int, perItem: int, scope: ?string, types: list<string>}, minutes: ?int}
+     * @return array{cfg: array{per: int, perItem: int, scope: ?string, types: list<string>, live?: true, accountsOnly?: true}, minutes: ?int}
      * @throws HttpError 400 vote_config
      */
     public static function config(array $body): array {
@@ -127,15 +136,30 @@ class VoteService {
                 throw $bad();
             }
         }
-        return ['cfg' => ['per' => $per, 'perItem' => $perItem, 'scope' => $scope, 'types' => $out], 'minutes' => $minutes];
+        $live = $body['live'] ?? null;
+        if ($live !== null && !is_bool($live)) {
+            throw $bad();
+        }
+        $accountsOnly = $body['accountsOnly'] ?? null;
+        if ($accountsOnly !== null && !is_bool($accountsOnly)) {
+            throw $bad();
+        }
+        $cfg = ['per' => $per, 'perItem' => $perItem, 'scope' => $scope, 'types' => $out];
+        if ($live === true) {
+            $cfg['live'] = true;
+        }
+        if ($accountsOnly === true) {
+            $cfg['accountsOnly'] = true;
+        }
+        return ['cfg' => $cfg, 'minutes' => $minutes];
     }
 
     /**
      * Route 22: opens a session (§4.12.1).
      *
-     * @param array $cfg the raw body {per?, perItem?, scope?, types?, minutes?}
+     * @param array $cfg the raw body {per?, perItem?, scope?, types?, minutes?, live?, accountsOnly?}
      * @return array{title: string, meta: array, metaRev: int}
-     * @throws HttpError 400 vote_config | 404 | 409 vote_open
+     * @throws HttpError 400 vote_config | 404 | 409 vote_open | 409 private_on (job 275)
      */
     public function start(Principal $p, int $board, array $cfg, int $nowMs): array {
         ['cfg' => $c, 'minutes' => $minutes] = self::config($cfg);
@@ -148,6 +172,10 @@ class VoteService {
                 }
                 // Expired, closed by nobody yet: close it and COMMIT that, then 409 (R16).
                 return ['conflict' => 'vote_open', 'write' => $this->closeLocked($board, $open['id'], $nowMs)];
+            }
+            // (job 275) no vote while private writing runs (hidden notes must not be votable)
+            if (PrivateWriting::state(MetaService::decode($this->boards->meta($board)['meta'] ?? null)) !== null) {
+                throw new HttpError(409, 'private_on');
             }
             if ($c['scope'] !== null) {
                 $frame = $this->store->items($board, [$c['scope']])[$c['scope']] ?? null;
@@ -325,6 +353,17 @@ class VoteService {
         if ($open === null) {
             return ['res' => $res, 'sid' => null, 'mine' => null, 'left' => null, 'seq' => null, 'closed' => $closed];
         }
+        if ($open['config']['accountsOnly'] && $p->isGuest) {
+            // Job 175: only accounts vote in this session (the DB row decides,
+            // never the client). Every op still open is denied, after closed;
+            // nothing is written, so no seq and no votes block (a).
+            foreach ($ops as $i => $op) {
+                if ($res[$i] === null) {
+                    $res[$i] = 'denied';
+                }
+            }
+            return ['res' => $res, 'sid' => null, 'mine' => null, 'left' => null, 'seq' => null, 'closed' => $closed];
+        }
 
         $sid = $open['id'];
         $cfg = $open['config'];
@@ -353,6 +392,14 @@ class VoteService {
             }
             if ($item === null || $item['deleted']) {
                 $res[$i] = 'gone';
+                continue;
+            }
+            if (array_key_exists('b', $op) && $op['b'] !== ($cur[$id] ?? 0)) {
+                // Job 216: the client started from another number than the
+                // voter's row (another tab of the same person changed it, or
+                // this op was applied already and comes again): nothing
+                // written; the client recomputes its change on the votes block.
+                $res[$i] = 'stale';
                 continue;
             }
             // R17-K2: only an increase (n above the voter's current row on this
@@ -428,10 +475,14 @@ class VoteService {
      * `vt` the key vt:<board> did not confirm: no open session → null; an
      * expired one is closed (path b) → null (the closed meta.vote comes with
      * the next tick); else vt:<board> is seeded again (also after its TTL or
-     * an epoch rotation) and {sid, voters, vt = seq} returned. No tally:
-     * moderators see only the number of voters (§7.2).
+     * an epoch rotation) and {sid, voters, vt = seq} returned. Without live
+     * moderators see only the number of voters (§7.2). (Job 149) When the
+     * session in the DB has live, `tally` comes too: [[item id, n], …] of
+     * the live items with n > 0, n descending, then id, at most
+     * VOTE_RESULTS_IN_META ([] without votes) – sums per item, never a vote
+     * per voter. The caller asks only for a principal with canModerate().
      *
-     * @return array{sid: int, voters: int, vt: int}|null
+     * @return array{sid: int, voters: int, vt: int, tally?: list<array{0: string, 1: int}>}|null
      */
     public function progress(Principal $p, int $board, int $seenSeq, int $nowMs): ?array {
         $open = $this->store->open($board);
@@ -444,19 +495,24 @@ class VoteService {
         }
         // seq first, then voters: the number is never older than the seq it is sent with.
         $this->cache->setVoteSeq($board, $open['id'], $open['seq']);
-        return ['sid' => $open['id'], 'voters' => $this->store->voters($open['id']), 'vt' => $open['seq']];
+        $out = ['sid' => $open['id'], 'voters' => $this->store->voters($open['id']), 'vt' => $open['seq']];
+        if ($open['config']['live'] === true) {
+            $out['tally'] = array_slice(self::ranked($this->store->tally($open['id'])), 0, Limits::VOTE_RESULTS_IN_META);
+        }
+        return $out;
     }
 
     /**
      * The own votes for snapshot and join (§4.4, R16): {sid, mine, left} of
-     * the open session (live items only), or null without one. The caller
-     * asks only for a principal that may vote.
+     * the open session (live items only), or null without one. (Job 175) A
+     * guest gets null while the session in the DB has accountsOnly. The
+     * caller asks only for a principal that may vote.
      *
      * @return array{sid: int, mine: array<string, int>, left: int}|null
      */
-    public function mine(int $board, string $pid): ?array {
+    public function mine(int $board, string $pid, bool $isGuest): ?array {
         $open = $this->store->open($board);
-        if ($open === null) {
+        if ($open === null || ($isGuest && $open['config']['accountsOnly'])) {
             return null;
         }
         $mine = $this->store->mine($open['id'], $pid);
@@ -526,11 +582,7 @@ class VoteService {
         $voters = $this->store->voters($sid);
         $this->store->close($sid, $tally, $voters, $nowMs);
         $this->store->deleteVotes($sid);
-        $ranked = [];
-        foreach ($tally as $id => $n) {
-            $ranked[] = [(string)$id, $n];
-        }
-        usort($ranked, static fn (array $a, array $b): int => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
+        $ranked = self::ranked($tally);
         $top = array_slice($ranked, 0, Limits::VOTE_RESULTS_IN_META);
         $total = count($ranked);
         return $this->meta->writeLocked($board, static function (array $m) use ($s, $top, $total, $voters, $nowMs): array {
@@ -591,13 +643,39 @@ class VoteService {
         return $session['ends_at'] !== null && $session['ends_at'] <= $nowMs;
     }
 
-    /** meta.vote of an open session (§3.11), keys in the order of the spec. */
+    /**
+     * meta.vote of an open session (§3.11), keys in the order of the spec;
+     * cfg.live (true) after types only with the live count (job 149),
+     * cfg.accountsOnly (true) after that only when only accounts vote (job 175).
+     */
     private static function voteMeta(int $sid, array $cfg, int $startedAt, ?int $endsAt, string $by): array {
+        $c = ['per' => $cfg['per'], 'perItem' => $cfg['perItem'], 'scope' => $cfg['scope'], 'types' => array_values($cfg['types'])];
+        if (($cfg['live'] ?? null) === true) {
+            $c['live'] = true;
+        }
+        if (($cfg['accountsOnly'] ?? null) === true) {
+            $c['accountsOnly'] = true;
+        }
         return [
-            'sid' => $sid, 'state' => 'open',
-            'cfg' => ['per' => $cfg['per'], 'perItem' => $cfg['perItem'], 'scope' => $cfg['scope'], 'types' => array_values($cfg['types'])],
+            'sid' => $sid, 'state' => 'open', 'cfg' => $c,
             'startedAt' => $startedAt, 'endsAt' => $endsAt, 'by' => $by, 'show' => false,
         ];
+    }
+
+    /**
+     * The ranking of a tally (item id → n): [[id, n], …] by n descending,
+     * then id ascending (results on close, the live count of job 149).
+     *
+     * @param array<string, int> $tally
+     * @return list<array{0: string, 1: int}>
+     */
+    private static function ranked(array $tally): array {
+        $ranked = [];
+        foreach ($tally as $id => $n) {
+            $ranked[] = [(string)$id, $n];
+        }
+        usort($ranked, static fn (array $a, array $b): int => [$b[1], $a[0]] <=> [$a[1], $b[0]]);
+        return $ranked;
     }
 
     /** Remaining votes: per − Σ mine (live items), never below 0 (a revived item may overdraw it, R16). */

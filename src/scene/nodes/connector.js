@@ -12,15 +12,21 @@
  * or the item changes (spec.routed).
  *
  * - line: ONE Konva.Shape whose sceneFunc strokes the path (moveTo/lineTo, or
- *   bezierCurveTo for 'curved') with style.stroke, style.strokeWidth (world
+ *   bezierCurveTo for 'curved'; job 261: an elbow route bends with arcTo,
+ *   radius CONNECTOR_CORNER, at most half of the shorter neighbouring piece) with style.stroke, style.strokeWidth (world
  *   units) and the dash pattern of style.dash, then draws the caps SOLID
- *   (setLineDash([]): the dash never runs over a cap). Caps (capSize =
- *   3·strokeWidth + 4) point along ConnGeom.start/end.angle (bezier: end −
- *   last control point, like Konva's Arrow): 'arrow' an open chevron,
- *   'triangle' and 'diamond' filled, 'dot' a filled circle; the line is
- *   shortened under a filled cap so a thick stroke never pokes through it
- * - label (LOD 0 only, when data.label is set): a BOARD_BACKGROUND Rect on
- *   the estimated label box and a centred Konva.Text in it, laid out at the
+ *   (setLineDash([]): the dash never runs over a cap). Caps (job 261,
+ *   design round 3 V6: length L = capSize = 6 + 4·√strokeWidth, half breadth
+ *   CAP_BREADTH·L on each side) point along ConnGeom.start/end.angle (bezier:
+ *   end − last control point, like Konva's Arrow): 'arrow' an open chevron,
+ *   'triangle' filled, 'diamond' filled and 2·L long, 'dot' a filled circle
+ *   of radius 0.4·L centred L/2 behind the tip; the line ends at the base of
+ *   a filled cap (capCut), no gap; (job 204) 'circleOpen' (radius 0.375·L)
+ *   and 'triangleOpen' are only stroked (the open tips of a BPMN message
+ *   flow), the line ends at their back
+ * - label (LOD 0 only, when data.label is set): (job 261) a pill on the
+ *   estimated label box (CONNECTOR_LABEL_FILL, 1 unit CONNECTOR_LABEL_EDGE,
+ *   radius half its height, at most CONNECTOR_LABEL_RADIUS) and a centred Konva.Text in it, laid out at the
  *   box width with automatic height and no ellipsis, so Konva never cuts it
  *   (finding S-1b-01); settleLabelText centres it in the box
  * Every field is read through fieldValue (rule 18: missing or unknown values
@@ -31,26 +37,35 @@
  * only used while the label editor hides the label.
  */
 import { fieldValue } from '../../model/registry.js'
-import { capSize } from '../../model/connectors.js'
+import { CAP_BREADTH, capSize } from '../../model/connectors.js'
 import {
-	BOARD_BACKGROUND, CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_PAD, FONT_FAMILY, LINE_HEIGHT, TEXT_COLOR,
+	CONNECTOR_CORNER, CONNECTOR_LABEL_EDGE, CONNECTOR_LABEL_FILL, CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_PAD, CONNECTOR_LABEL_PAD_X,
+	CONNECTOR_LABEL_RADIUS, FONT_FAMILY, LINE_HEIGHT, TEXT_COLOR, shownLine,
 } from '../../model/tokens.js'
 import { SHAPE_BASE, makeGroup, positive, str } from './common.js'
 import { dashFor } from './shape.js'
 
+/** The caps drawCap draws (ENUMS.caps but none; an unknown cap draws nothing). */
+const CAPS_DRAWN = new Set(['arrow', 'triangle', 'diamond', 'dot', 'circleOpen', 'triangleOpen'])
+
 /**
- * How far the line ends before a cap's tip (so a filled cap covers its end).
+ * How far the line ends before a cap's tip: (job 261) at the base of a filled
+ * cap, at the back of an open one, no gap.
  *
  * @param {string} cap cap name
- * @param {number} size capSize
+ * @param {number} size capSize (the cap's length L)
  * @param {number} sw stroke width
  * @return {number}
  */
 export function capCut(cap, size, sw) {
 	switch (cap) {
 	case 'arrow': return sw / 2
-	case 'triangle': return size * 0.8
-	case 'diamond': return size * 1.2
+	case 'triangle': return size
+	case 'diamond': return size * 2
+	case 'dot': return size * 0.9
+	// job 204: the open tips end the line at their back
+	case 'circleOpen': return size * 0.875
+	case 'triangleOpen': return size
 	default: return 0
 	}
 }
@@ -120,25 +135,38 @@ export function shortened(pts, bezier, cutStart, cutEnd, a0, a1) {
  * @param {string} color stroke color
  */
 export function drawCap(ctx, cap, x, y, angle, size, sw, color) {
-	if (cap !== 'arrow' && cap !== 'triangle' && cap !== 'diamond' && cap !== 'dot') return
+	if (!CAPS_DRAWN.has(cap)) return
 	const ux = Math.cos(angle)
 	const uy = Math.sin(angle)
 	const vx = -uy
 	const vy = ux
+	const b = size * CAP_BREADTH
+	// (job 261) the base of the tip, L behind it
+	const bx = x - ux * size
+	const by = y - uy * size
 	ctx.beginPath()
-	if (cap === 'dot') {
-		ctx.arc(x, y, size * 0.4, 0, Math.PI * 2, false)
+	if (cap === 'dot' || cap === 'circleOpen') {
+		// job 261: centred L/2 behind the tip
+		const r = size * (cap === 'dot' ? 0.4 : 0.375)
+		const cx = x - ux * size / 2
+		const cy = y - uy * size / 2
+		ctx.moveTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r)
+		ctx.arc(cx, cy, r, angle, angle + Math.PI * 2, false)
 	} else if (cap === 'diamond') {
 		ctx.moveTo(x, y)
-		ctx.lineTo(x - ux * size * 0.7 + vx * size * 0.45, y - uy * size * 0.7 + vy * size * 0.45)
-		ctx.lineTo(x - ux * size * 1.4, y - uy * size * 1.4)
-		ctx.lineTo(x - ux * size * 0.7 - vx * size * 0.45, y - uy * size * 0.7 - vy * size * 0.45)
+		ctx.lineTo(bx + vx * b, by + vy * b)
+		ctx.lineTo(x - ux * size * 2, y - uy * size * 2)
+		ctx.lineTo(bx - vx * b, by - vy * b)
 		ctx.closePath()
-	} else {
-		ctx.moveTo(x - ux * size + vx * size * 0.5, y - uy * size + vy * size * 0.5)
+	} else if (cap === 'arrow') {
+		ctx.moveTo(bx + vx * b, by + vy * b)
 		ctx.lineTo(x, y)
-		ctx.lineTo(x - ux * size - vx * size * 0.5, y - uy * size - vy * size * 0.5)
-		if (cap === 'triangle') ctx.closePath()
+		ctx.lineTo(bx - vx * b, by - vy * b)
+	} else {
+		ctx.moveTo(x, y)
+		ctx.lineTo(bx + vx * b, by + vy * b)
+		ctx.lineTo(bx - vx * b, by - vy * b)
+		ctx.closePath()
 	}
 	if (cap === 'arrow') {
 		ctx.setAttr('strokeStyle', color)
@@ -146,10 +174,35 @@ export function drawCap(ctx, cap, x, y, angle, size, sw, color) {
 		ctx.setAttr('lineCap', 'round')
 		ctx.setAttr('lineJoin', 'round')
 		ctx.stroke()
+	} else if (cap === 'circleOpen' || cap === 'triangleOpen') {
+		ctx.setAttr('strokeStyle', color)
+		ctx.setAttr('lineWidth', sw)
+		ctx.setAttr('lineCap', 'butt')
+		ctx.setAttr('lineJoin', 'miter')
+		ctx.stroke()
 	} else {
 		ctx.setAttr('fillStyle', color)
 		ctx.fill()
 	}
+}
+
+/**
+ * (Job 261) Traces a polyline (after moveTo of its first point) with each
+ * inner point rounded by arcTo: radius `corner`, at most half of the
+ * shorter of its two pieces (a piece of length 0 gives a sharp corner).
+ *
+ * @param {object} ctx canvas (Konva) context
+ * @param {number[]} p flat points
+ * @param {number} corner largest radius
+ */
+export function traceRounded(ctx, p, corner) {
+	const n = p.length
+	for (let i = 2; i + 3 < n; i += 2) {
+		const r = Math.min(corner, Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]) / 2, Math.hypot(p[i + 2] - p[i], p[i + 3] - p[i + 1]) / 2)
+		if (r > 0) ctx.arcTo(p[i], p[i + 1], p[i + 2], p[i + 3], r)
+		else ctx.lineTo(p[i], p[i + 1])
+	}
+	if (n >= 4) ctx.lineTo(p[n - 2], p[n - 1])
 }
 
 /**
@@ -174,6 +227,8 @@ export function drawConnector(ctx, shape) {
 	ctx.moveTo(p[0], p[1])
 	if (bezier && p.length === 8) {
 		ctx.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7])
+	} else if (shape.getAttr('rounded') === true) {
+		traceRounded(ctx, p, CONNECTOR_CORNER)
 	} else {
 		for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i], p[i + 1])
 	}
@@ -202,11 +257,13 @@ export function lineAttrs(item, route) {
 	return {
 		pts: g ? g.points : [],
 		bezier: g?.kind === 'bezier',
+		// job 261: elbow bends are rounded
+		rounded: fieldValue(item, 'data.route') === 'elbow',
 		startAngle: g ? g.start.angle : 0,
 		endAngle: g ? g.end.angle : 0,
 		startCap: fieldValue(item, 'style.startCap'),
 		endCap: fieldValue(item, 'style.endCap'),
-		stroke: fieldValue(item, 'style.stroke'),
+		stroke: shownLine(fieldValue(item, 'style.stroke')),
 		strokeWidth: sw,
 		dash: dash ?? [],
 		dashEnabled: dash !== null,
@@ -224,12 +281,13 @@ export function lineAttrs(item, route) {
 export function labelAttrs(item, route) {
 	const l = route.label
 	const pad = CONNECTOR_LABEL_PAD
+	const padX = CONNECTOR_LABEL_PAD_X
 	return {
-		bg: { x: l.x, y: l.y, width: l.w, height: l.h },
+		bg: { x: l.x, y: l.y, width: l.w, height: l.h, cornerRadius: Math.min(l.h / 2, CONNECTOR_LABEL_RADIUS) },
 		text: {
-			x: l.x + pad,
+			x: l.x + padX,
 			y: l.y + pad,
-			width: positive(l.w - 2 * pad),
+			width: positive(l.w - 2 * padX),
 			text: str(fieldValue(item, 'data.label')),
 		},
 	}
@@ -275,8 +333,9 @@ function addLabel(ctx, entry, item, route) {
 	const bg = new ctx.Rect({
 		...SHAPE_BASE,
 		...a.bg,
-		fill: BOARD_BACKGROUND,
-		cornerRadius: 3,
+		fill: CONNECTOR_LABEL_FILL,
+		stroke: CONNECTOR_LABEL_EDGE,
+		strokeWidth: 1,
 		visible: !entry.textHidden,
 	})
 	bg.transformsEnabled('position')

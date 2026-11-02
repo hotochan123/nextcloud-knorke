@@ -334,7 +334,8 @@ test('404 → gone: scene view-only, open editor gets a notice, loop stops', asy
 })
 
 test('delete + undo + redo: inverse revives, redo of a create revives', async () => {
-	const h = await open({ items: [frame(F, { x: 100, y: 100 }), sticky(A, { x: 10, y: 10, parent: F })] })
+	// a server that echoes the own ops: job 155 compares undo and redo with what it stored
+	const h = await openLww(lwwServer([frame(F, { x: 100, y: 100 }), sticky(A, { x: 10, y: 10, parent: F })]))
 	h.scene.callbacks.onIntent({ type: 'delete', ids: [F] })
 	assert.equal(h.model.has(F), false)
 	assert.equal(h.model.get(A).parent, null)
@@ -2105,6 +2106,117 @@ test('M1 create shape: the tool options travel in the put, the editor opens, cre
 	h.s.destroy()
 })
 
+test('job 143 AK5: a new frame opens its title editor; the typed title "Ideen" and the creation are ONE undo step', async () => {
+	const srv = lwwServer([])
+	const h = await openLww(srv)
+	h.scene.callbacks.onIntent({ type: 'create', t: 'frame', at: { x: 0, y: 0 }, rect: null })
+	const id = h.scene.selection[0]
+	assert.equal(h.model.get(id).t, 'frame')
+	assert.deepEqual(h.scene.selection, [id], 'selected alone')
+	assert.deepEqual(h.scene.callsOf('openTextEditor').map((c) => c[1]), [id], 'the title editor at once')
+	h.scene.callbacks.onEditing(id, false)
+	h.scene.callbacks.onIntent({ type: 'text', id, path: 'data.title', value: 'Ideen', before: '', final: true })
+	h.scene.callbacks.onEditing(null, false)
+	await h.clock.advance(150)
+	assert.equal(h.model.get(id).data.title, 'Ideen')
+	assert.equal(srv.live.get(id).data.title, 'Ideen')
+	assert.equal(h.s.undoStack.done.length, 1)
+	h.s.undo()
+	assert.equal(h.model.has(id), false, 'one undo removes the frame with its title')
+	await h.clock.advance(150)
+	assert.equal(srv.live.has(id), false)
+	h.s.destroy()
+})
+
+test('job 143 AK5: a new frame whose title editor closes untouched stays untitled, sends no text op, and one undo removes it', async () => {
+	const srv = lwwServer([])
+	const h = await openLww(srv)
+	h.scene.callbacks.onIntent({ type: 'create', t: 'frame', at: { x: 0, y: 0 }, rect: { x: 0, y: 0, w: 400, h: 300 } })
+	const id = h.scene.selection[0]
+	assert.deepEqual(h.scene.callsOf('openTextEditor').map((c) => c[1]), [id])
+	h.scene.callbacks.onEditing(id, false)
+	// Esc, Enter or a click beside it without typing: the editor sends no final intent (value = start value)
+	h.scene.callbacks.onEditing(null, false)
+	await h.clock.advance(1000)
+	assert.equal(h.model.has(id), true, 'the frame stays (only an empty text item vanishes)')
+	assert.equal(h.model.get(id).data.title, '', 'no stored name like "Frame n"')
+	assert.deepEqual(opsFor(h, id).map((o) => o.o), ['put'], 'no text op')
+	assert.equal(srv.live.get(id).data.title, '')
+	assert.equal(h.s.undoStack.done.length, 1)
+	h.s.undo()
+	assert.equal(h.model.has(id), false, 'one undo removes the frame')
+	await h.clock.advance(150)
+	assert.equal(srv.live.has(id), false)
+	h.s.destroy()
+})
+
+test('job 143 review round 1: a new frame\'s title band comes into view below ui.viewTop before its editor opens; not for a note; no viewTop or a failing one counts as 0', async () => {
+	const h = await open({ items: [], extraUi: { viewTop: () => 123 } })
+	h.scene.callbacks.onIntent({ type: 'create', t: 'frame', at: { x: 0, y: 0 }, rect: null })
+	const id = h.scene.selection[0]
+	const order = h.scene.calls.filter((c) => ['setSelection', 'revealTitle', 'openTextEditor'].includes(c[0])).map((c) => c.slice(0, 3))
+	assert.deepEqual(order, [['setSelection', [id]], ['revealTitle', id, 123], ['openTextEditor', id, {}]], 'selected, band into view, then the editor')
+	h.scene.callbacks.onIntent({ type: 'create', t: 'sticky', at: { x: 0, y: 0 }, rect: null })
+	assert.equal(h.scene.callsOf('revealTitle').length, 1, 'a note opens its editor where it is')
+	h.s.destroy()
+	for (const viewTop of [undefined, () => { throw new Error('no layout') }, () => NaN, () => -5]) {
+		const v = await open({ items: [], extraUi: viewTop ? { viewTop } : {} })
+		const err = console.error
+		console.error = () => {}
+		try {
+			v.scene.callbacks.onIntent({ type: 'create', t: 'frame', at: { x: 0, y: 0 }, rect: null })
+		} finally {
+			console.error = err
+		}
+		assert.deepEqual(v.scene.callsOf('revealTitle').map((c) => c[2]), [0], String(viewTop))
+		assert.equal(v.scene.callsOf('openTextEditor').length, 1, 'the editor opens anyway')
+		v.s.destroy()
+	}
+})
+
+test('job 193 review round 1: a new note pad\'s title band comes into view between ui.viewTop and ui.viewBottom (the bars at the bottom); no viewBottom or a failing one counts as 0', async () => {
+	const h = await open({ items: [], extraUi: { viewTop: () => 123, viewBottom: () => 77 } })
+	h.scene.callbacks.onIntent({ type: 'create', t: 'pad', at: { x: 0, y: 0 }, rect: null })
+	const id = h.scene.selection[0]
+	const order = h.scene.calls.filter((c) => ['setSelection', 'revealTitle', 'openTextEditor'].includes(c[0])).map((c) => c.slice(0, 4))
+	assert.deepEqual(order, [['setSelection', [id]], ['revealTitle', id, 123, 77], ['openTextEditor', id, {}]], 'selected, band into view, then the title editor')
+	h.s.destroy()
+	for (const viewBottom of [undefined, () => { throw new Error('no layout') }, () => NaN, () => -5]) {
+		const v = await open({ items: [], extraUi: viewBottom ? { viewBottom } : {} })
+		const err = console.error
+		console.error = () => {}
+		try {
+			v.scene.callbacks.onIntent({ type: 'create', t: 'pad', at: { x: 0, y: 0 }, rect: null })
+		} finally {
+			console.error = err
+		}
+		assert.deepEqual(v.scene.callsOf('revealTitle').map((c) => c[3]), [0], String(viewBottom))
+		assert.equal(v.scene.callsOf('openTextEditor').length, 1, 'the editor opens anyway')
+		v.s.destroy()
+	}
+})
+
+test('job 143 AK6: "Rename" opens the title editor of the one selected frame; not on a locked frame, a note, two frames or view-only', async () => {
+	const F2 = ID('F2')
+	const h = await open({ items: [frame(F), frame(F2, { x: 2000, lock: { by: 'pidbob0000000001', name: 'Bob' } }), sticky(A, { x: 10, y: 20 })] })
+	h.s.select([F])
+	assert.equal(h.s.renameFrame(), true)
+	assert.deepEqual(h.scene.callsOf('openTextEditor').map((c) => c.slice(1)), [[F, {}]])
+	h.s.select([F2])
+	assert.equal(h.s.renameFrame(), false, 'a locked frame')
+	h.s.select([A])
+	assert.equal(h.s.renameFrame(), false, 'a note')
+	h.s.select([F, F2])
+	assert.equal(h.s.renameFrame(), false, 'two frames')
+	assert.equal(h.scene.callsOf('openTextEditor').length, 1, 'only the first one opened')
+	h.s.destroy()
+	const v = await open({ items: [frame(F)], viewOnly: true })
+	v.s.select([F])
+	assert.equal(v.s.renameFrame(), false, 'view-only')
+	assert.equal(v.scene.callsOf('openTextEditor').length, 0)
+	v.s.destroy()
+})
+
 test('M1 create text: the put carries the measured height; an empty new text item vanishes when its editor closes, merged with its creation', async () => {
 	const h = await open({ items: [] })
 	h.scene.callbacks.onIntent({ type: 'create', t: 'text', at: { x: 10, y: 20 }, rect: null })
@@ -2268,6 +2380,206 @@ test('M1 series entry: Tab in a note editor commits, creates the next note right
 	h.s.undo()
 	assert.equal(h.model.has(c), false)
 	assert.equal(h.model.get(b).data.text, 'two')
+	h.s.destroy()
+})
+
+/** (job 148) The connector a click on "+" of `from` made (data.start on it), else null. */
+const connectorFrom = (h, from) => h.model.ids().find((id) => h.model.get(id).t === 'connector' && h.model.get(id).data?.start?.item === from) ?? null
+/** (job 148) The connect options of a click on "+" with the default connector tool. */
+const CONNECT = Object.freeze({ route: 'straight', endCap: 'arrow' })
+
+test('job 148 AK2 note and shape neighbour without connect (Alt/Option+arrow): beside the source, selected alone, panned into view, no editor and no new-edit marker; a second intent at N goes on from N; text typed later is a step of its own; one undo per neighbour removes it, at the server too', async () => {
+	const srv = lwwServer([sticky(A, { x: 100, y: 100, style: { fill: '#ffd6a5' } }), shape(S1, { x: 100, y: 600 })])
+	const h = await openLww(srv)
+	for (const src of [A, S1]) {
+		const kind = h.model.get(src).t
+		const size = h.model.size
+		h.scene.callbacks.onIntent({ type: 'neighbour', id: src, side: 'r' })
+		const id = h.scene.selection[0]
+		assert.notEqual(id, src)
+		assert.equal(h.model.size, size + 1, `${kind}: one new item, no connector`)
+		const [q, it] = [h.model.get(src), h.model.get(id)]
+		assert.deepEqual([it.t, it.x, it.y, it.w, it.h, it.style.fill, it.data.text], [kind, q.x + q.w + 20, q.y, q.w, q.h, q.style.fill, ''])
+		assert.deepEqual(h.s.selection, [id], `${kind}: selected alone`)
+		const order = h.scene.calls.filter((c) => ['setSelection', 'panIntoView'].includes(c[0])).slice(-2).map((c) => [c[0], c[1]])
+		assert.deepEqual(order, [['setSelection', [id]], ['panIntoView', id]], `${kind}: selected, then panned into view`)
+		assert.equal(h.scene.callsOf('openTextEditor').length, 0, `${kind}: no editor opens`)
+		assert.equal(h.s.newEdit, null, `${kind}: no new-edit marker`)
+		// the next intent goes on from N (the canvas keeps the focus, nothing to end first)
+		h.scene.callbacks.onIntent({ type: 'neighbour', id, side: 'r' })
+		const next = h.scene.selection[0]
+		assert.notEqual(next, id)
+		const nx = h.model.get(next)
+		assert.deepEqual([nx.t, nx.x, nx.y], [kind, it.x + it.w + 20, it.y], `${kind}: the second neighbour lies right of N`)
+		assert.deepEqual(h.s.selection, [next])
+		// later: Enter or a double click opens N's editor (the scene), the text is a step of its own
+		h.scene.callbacks.onEditing(id, false)
+		h.scene.callbacks.onIntent({ type: 'text', id, path: 'data.text', value: 'N', before: '', final: true })
+		h.scene.callbacks.onEditing(null, false)
+		assert.equal(h.s.undoStack.done.length, 3, `${kind}: two neighbours and the text: three steps`)
+		await h.clock.advance(1000)
+		assert.deepEqual([srv.live.get(id)?.data.text, srv.live.get(next)?.data.text], ['N', ''], `${kind}: both at the server, N with its text`)
+		h.s.undo()
+		assert.deepEqual([h.model.get(id).data.text, h.model.has(next)], ['', true], `${kind}: undo takes back the text only`)
+		h.s.undo()
+		assert.deepEqual([h.model.has(id), h.model.has(next)], [true, false], `${kind}: the next undo removes the second neighbour`)
+		h.s.undo()
+		assert.equal(h.model.has(id), false, `${kind}: one undo removes N`)
+		await h.clock.advance(1000)
+		assert.deepEqual([srv.live.has(id), srv.live.has(next)], [false, false], `${kind}: removed at the server too`)
+	}
+	h.s.destroy()
+})
+
+test('job 148 AK3 neighbour with connect: N and a connector A → N (anchors r/l, straight, arrow) in the model, only N selected, no editor; put N before put C in one batch; one undo removes both, locally and at the server; redo brings both back with the same ids and ends', async () => {
+	const srv = lwwServer14([sticky(A, { x: 100, y: 100 })])
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = h.tr.calls.length
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: A, side: 'r', connect: CONNECT })
+	const n = h.scene.selection[0]
+	const c = connectorFrom(h, A)
+	assert.ok(c && n && c !== n, 'a neighbour and a connector')
+	assert.equal(h.model.size, 3)
+	const ends = [{ item: A, ax: 1, ay: 0.5 }, { item: n, ax: 0, ay: 0.5 }]
+	const C = h.model.get(c)
+	assert.deepEqual([C.data.start, C.data.end, C.data.route, C.style.endCap], [...ends, 'straight', 'arrow'])
+	assert.deepEqual([h.model.get(n).t, h.model.get(n).x, h.model.get(n).y], ['sticky', 320, 100])
+	assert.deepEqual(h.s.selection, [n], 'only N is selected')
+	assert.deepEqual(h.scene.selection, [n])
+	assert.equal(h.scene.callsOf('openTextEditor').length, 0)
+	assert.equal(h.s.newEdit, null)
+	await h.clock.advance(1000)
+	const batches = h.tr.calls.slice(before).filter((b) => (b.ops ?? []).length > 0)
+	assert.deepEqual(batches.map((b) => b.ops.map((op) => [op.o, op.id])), [[['put', n], ['put', c]]], 'one batch, put N before put C')
+	assert.ok(srv.log.every(([, res]) => res.every((x) => x === 'ok')), 'every op ok at the server')
+	assert.deepEqual([srv.live.get(c).data.start, srv.live.get(c).data.end], ends, 'the server keeps both bound ends (N came first)')
+	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
+	h.s.undo()
+	assert.deepEqual([h.model.has(n), h.model.has(c)], [false, false], 'undo removes both')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.has(n), srv.live.has(c)], [false, false], 'at the server too')
+	h.s.redo()
+	assert.deepEqual([h.model.get(c)?.data.start, h.model.get(c)?.data.end, h.model.get(n)?.t], [...ends, 'sticky'], 'redo: both back, the same ids and ends')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.get(c)?.data.start, srv.live.get(c)?.data.end, srv.live.get(n)?.t], [...ends, 'sticky'], 'redo reaches the server')
+	assert.ok(srv.log.every(([, res]) => res.every((x) => x === 'ok')))
+	h.s.destroy()
+})
+
+test('job 162 AK3 a click on "+" with a near note X: only a connector A → X in the model (anchors r/l), X selected alone and panned into view, the server gets put C; undo removes only C (also at the server), redo brings the same id back', async () => {
+	const X = ID('X1')
+	const srv = lwwServer14([sticky(A, { x: 0, y: 0 }), sticky(X, { x: 350, y: 0 })])
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = h.tr.calls.length
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: A, side: 'r', connect: CONNECT })
+	const c = connectorFrom(h, A)
+	assert.ok(c, 'a connector from A')
+	assert.equal(h.model.size, 3, 'only the connector came')
+	const ends = [{ item: A, ax: 1, ay: 0.5 }, { item: X, ax: 0, ay: 0.5 }]
+	assert.deepEqual([h.model.get(c).data.start, h.model.get(c).data.end, h.model.get(c).data.route], [...ends, 'straight'])
+	assert.deepEqual([h.model.get(X).x, h.model.get(X).y], [350, 0], 'X stays where it was')
+	assert.deepEqual(h.s.selection, [X], 'X is selected alone')
+	assert.deepEqual(h.scene.selection, [X])
+	const order = h.scene.calls.filter((k) => ['setSelection', 'panIntoView'].includes(k[0])).slice(-2).map((k) => [k[0], k[1]])
+	assert.deepEqual(order, [['setSelection', [X]], ['panIntoView', X]], 'selected, then panned into view')
+	assert.equal(h.scene.callsOf('openTextEditor').length, 0)
+	await h.clock.advance(1000)
+	const batches = h.tr.calls.slice(before).filter((b) => (b.ops ?? []).length > 0)
+	assert.deepEqual(batches.map((b) => b.ops.map((op) => [op.o, op.id, op.t])), [[['put', c, 'connector']]], 'one batch: put C')
+	assert.deepEqual([srv.live.get(c)?.data.start, srv.live.get(c)?.data.end], ends)
+	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
+	h.s.undo()
+	assert.deepEqual([h.model.has(c), h.model.has(A), h.model.has(X)], [false, true, true], 'undo removes only C')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.has(c), srv.live.has(A), srv.live.has(X)], [false, true, true], 'at the server too')
+	h.s.redo()
+	assert.deepEqual([h.model.get(c)?.data.start, h.model.get(c)?.data.end], ends, 'redo: C back with the same id')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.get(c)?.data.start, srv.live.get(c)?.data.end], ends, 'redo reaches the server')
+	assert.ok(srv.log.every(([, res]) => res.every((x) => x === 'ok')), 'every op ok at the server')
+	h.s.destroy()
+})
+
+test('job 162 AK3 "+" r of A puts N at (220, 0); then "+" t of note P at (220, 300) connects P with N: two steps, the first undo removes only P → N, the second N with A → N', async () => {
+	const P = ID('P1')
+	const srv = lwwServer14([sticky(A, { x: 0, y: 0 }), sticky(P, { x: 220, y: 300 })])
+	const h = await openLww(srv)
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: A, side: 'r', connect: CONNECT })
+	const n = h.scene.selection[0]
+	const an = connectorFrom(h, A)
+	assert.deepEqual([h.model.get(n).t, h.model.get(n).x, h.model.get(n).y, h.model.get(an).data.end.item], ['sticky', 220, 0, n])
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: P, side: 't', connect: CONNECT })
+	const pn = connectorFrom(h, P)
+	assert.ok(pn, 'a connector from P')
+	assert.deepEqual([h.model.get(pn).data.start, h.model.get(pn).data.end], [{ item: P, ax: 0.5, ay: 0 }, { item: n, ax: 0.5, ay: 1 }])
+	assert.equal(h.model.size, 5, 'A, P, N and two connectors')
+	assert.deepEqual(h.s.selection, [n], 'N is selected alone')
+	assert.equal(h.s.undoStack.done.length, 2, 'joining N is a step of its own')
+	h.s.undo()
+	assert.deepEqual([h.model.has(pn), h.model.has(n), h.model.has(an)], [false, true, true], 'the first undo removes only P → N')
+	h.s.undo()
+	assert.deepEqual([h.model.has(n), h.model.has(an), h.model.has(A), h.model.has(P)], [false, false, true, true], 'the second removes N with A → N')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.has(pn), srv.live.has(n), srv.live.has(an)], [false, false, false], 'at the server too')
+	h.s.destroy()
+})
+
+test('job 159 AK2 text copy (Alt/Option+arrow at T): K with the text and style of T beside it, selected alone, panned into view, no editor and no new-edit marker; the server gets put K with data.text; undo removes K locally and at the server, redo brings the same id back', async () => {
+	const style = { fontSize: 32, color: '#c0392b', align: 'center' }
+	const srv = lwwServer([textItem(T1, { x: 100, y: 100, w: 300, h: 45, data: { text: 'Hallo' }, style })])
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = h.tr.calls.length
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: T1, side: 'r' })
+	const k = h.scene.selection[0]
+	assert.notEqual(k, T1)
+	assert.equal(h.model.size, 2, 'one new item, no connector')
+	const K = h.model.get(k)
+	assert.deepEqual([K.t, K.x, K.y, K.w, K.h, K.r, K.data.text, K.style], ['text', 420, 100, 300, 45, 0, 'Hallo', style])
+	assert.deepEqual(h.s.selection, [k], 'selected alone')
+	assert.deepEqual(h.scene.selection, [k])
+	const order = h.scene.calls.filter((c) => ['setSelection', 'panIntoView'].includes(c[0])).slice(-2).map((c) => [c[0], c[1]])
+	assert.deepEqual(order, [['setSelection', [k]], ['panIntoView', k]], 'selected, then panned into view')
+	assert.equal(h.scene.callsOf('openTextEditor').length, 0, 'no editor opens')
+	assert.equal(h.s.newEdit, null, 'no new-edit marker')
+	await h.clock.advance(1000)
+	const ops = h.tr.calls.slice(before).flatMap((b) => b.ops ?? [])
+	assert.deepEqual(ops.map((op) => [op.o, op.id, op.t, op.p?.data?.text]), [['put', k, 'text', 'Hallo']], 'one put K with the text')
+	assert.equal(srv.live.get(k)?.data.text, 'Hallo')
+	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
+	h.s.undo()
+	assert.equal(h.model.has(k), false, 'undo removes K')
+	assert.deepEqual(h.s.selection, [])
+	await h.clock.advance(1000)
+	assert.equal(srv.live.has(k), false, 'at the server too')
+	h.s.redo()
+	assert.deepEqual([h.model.get(k)?.t, h.model.get(k)?.data.text, h.model.get(k)?.x], ['text', 'Hallo', 420], 'redo: K back with the same id')
+	await h.clock.advance(1000)
+	assert.equal(srv.live.get(k)?.data.text, 'Hallo', 'redo reaches the server')
+	assert.ok(srv.log.every(([, res]) => res.every((x) => x === 'ok')), 'every op ok at the server')
+	h.s.destroy()
+})
+
+test('job 159 AK2 a row: the intent at K with side r puts a third text at x = K.x + K.w + 20; one step per copy; an empty T and a frame give nothing', async () => {
+	const h = await open({ items: [textItem(T1, { x: 100, y: 100, w: 300, h: 45, data: { text: 'Hallo' } }), textItem(ID('T2'), { x: 100, y: 600, data: { text: '  ' } }), frame(F, { x: 2000, y: 0 })] })
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: T1, side: 'r' })
+	const k = h.scene.selection[0]
+	const K = h.model.get(k)
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: k, side: 'r' })
+	const k2 = h.scene.selection[0]
+	assert.notEqual(k2, k)
+	const K2 = h.model.get(k2)
+	assert.deepEqual([K2.t, K2.x, K2.y, K2.w, K2.data.text], ['text', K.x + K.w + 20, K.y, K.w, 'Hallo'])
+	assert.deepEqual(h.s.selection, [k2], 'the last copy is selected alone')
+	assert.equal(h.scene.callsOf('openTextEditor').length, 0)
+	assert.equal(h.s.undoStack.done.length, 2, 'one step per copy')
+	const n = h.model.size
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: ID('T2'), side: 'r' })
+	h.scene.callbacks.onIntent({ type: 'neighbour', id: F, side: 'r' })
+	assert.equal(h.model.size, n, 'an empty text item and a frame get nothing')
+	assert.deepEqual(h.s.selection, [k2])
 	h.s.destroy()
 })
 
@@ -2496,13 +2808,24 @@ test('M1 duplicate: copies of the selection at +20/+20, selected, one undo step'
 	h.s.destroy()
 })
 
+test('job 260: sel.redesigned only when every selected item is a basic or flowchart shape (BPMN keeps the palette with Black)', async () => {
+	const h = await open({ items: [shape(S1, { x: 0, y: 0 }), shape(B, { x: 300, y: 0, data: { kind: 'bpmnTask', text: '' } }), shape(A, { x: 600, y: 0, data: { kind: 'database', text: '' } })] })
+	h.scene.callbacks.onSelection([S1, A])
+	assert.equal(h.ui.selection.at(-1).redesigned, true, 'rect + database')
+	h.scene.callbacks.onSelection([S1, B])
+	assert.equal(h.ui.selection.at(-1).redesigned, false, 'rect + bpmnTask')
+	h.scene.callbacks.onSelection([B])
+	assert.equal(h.ui.selection.at(-1).redesigned, false, 'bpmnTask')
+	assert.equal(h.ui.selection.at(-1).stroke, '#191b1d', 'the BPMN border shown black')
+})
+
 test('M1 selection v2: types (Set), field intersection, common values or null with the field in mixed, box, canConnect', async () => {
-	const h = await open({ items: [sticky(A, { x: 0, y: 0, style: { fill: '#a8d8f8' } }), shape(S1, { x: 300, y: 0, style: { fill: '#a8d8f8', stroke: '#1a1a1a', strokeWidth: 2 } }), shape(B, { x: 600, y: 0 })] })
+	const h = await open({ items: [sticky(A, { x: 0, y: 0, style: { fill: '#a2d9fe' } }), shape(S1, { x: 300, y: 0, style: { fill: '#a2d9fe', stroke: '#191b1d', strokeWidth: 2 } }), shape(B, { x: 600, y: 0 })] })
 	h.scene.callbacks.onSelection([A, S1])
 	let sel = h.ui.selection.at(-1)
 	assert.deepEqual([...sel.types], ['sticky', 'shape'])
 	assert.deepEqual(sel.fields, ['data.text', 'style.fill', 'style.fontSize'])
-	assert.equal(sel.fill, '#a8d8f8')
+	assert.equal(sel.fill, '#a2d9fe')
 	assert.equal(sel.stroke, null, 'a note has no border')
 	assert.equal(sel.fontSize, null)
 	assert.deepEqual(sel.mixed, [])
@@ -2513,12 +2836,74 @@ test('M1 selection v2: types (Set), field intersection, common values or null wi
 	sel = h.ui.selection.at(-1)
 	assert.equal(sel.fill, null, 'the fills differ')
 	assert.deepEqual(sel.mixed, ['style.fill'])
-	assert.equal(sel.stroke, '#1a1a1a')
+	assert.equal(sel.stroke, '#3d4044', 'job 260: the old default border is shown as the new one')
+	assert.equal(sel.redesigned, true, 'job 260: two rectangles: the border palette with "Default"')
 	assert.equal(sel.kind, 'rect')
 	h.scene.callbacks.onSelection([S1])
 	sel = h.ui.selection.at(-1)
 	assert.deepEqual(sel.box, { x: 300, y: 0, w: 200, h: 120, r: 0 })
 	assert.equal(sel.rotatable, true)
+	h.s.destroy()
+})
+
+test('job 135 (AK2): selection v2 fills – the distinct fills of the unlocked selection in selection order, at most two; equal fills give one entry', async () => {
+	const C = ID(3)
+	const h = await open({ items: [sticky(A, { style: { fill: '#a2d9fe' } }), sticky(B, { x: 300, style: { fill: '#faea89' } }), sticky(C, { x: 600, style: { fill: '#a2d9fe' } }), frame(F, { x: 0, y: 900, style: { fill: '#ff8800' } })] })
+	h.scene.callbacks.onSelection([A, B])
+	let sel = h.ui.selection.at(-1)
+	assert.deepEqual(sel.fills, ['#a2d9fe', '#faea89'])
+	assert.equal(sel.fill, null)
+	assert.deepEqual(sel.mixed, ['style.fill'])
+	h.scene.callbacks.onSelection([B, A])
+	assert.deepEqual(h.ui.selection.at(-1).fills, ['#faea89', '#a2d9fe'], 'selection order')
+	h.scene.callbacks.onSelection([A, C])
+	sel = h.ui.selection.at(-1)
+	assert.deepEqual(sel.fills, ['#a2d9fe'], 'equal fills: one entry')
+	assert.equal(sel.fill, '#a2d9fe')
+	h.scene.callbacks.onSelection([A, B, F])
+	assert.deepEqual(h.ui.selection.at(-1).fills, ['#a2d9fe', '#faea89'], 'at most two')
+	h.s.destroy()
+})
+
+test('job 227 AK3/AK4: old palette colours in selection v2 as their new tones (an old and a new Light blue are one fill), not in boardColors; loading and selecting send no op', async () => {
+	const h = await open({ items: [
+		sticky(A, { x: 0, y: 0, style: { fill: '#a8d8f8' } }),
+		sticky(B, { x: 300, y: 0, style: { fill: '#a2d9fe' } }),
+		shape(S1, { x: 600, y: 0, style: { fill: '#ffc9c9', stroke: '#e03131', strokeWidth: 2, textColor: '#1a1a1a' } }),
+	] })
+	const sent = spyEnqueue(h)
+	h.scene.callbacks.onSelection([A, B])
+	let sel = h.ui.selection.at(-1)
+	assert.equal(sel.fill, '#a2d9fe')
+	assert.deepEqual(sel.fills, ['#a2d9fe'])
+	assert.deepEqual(sel.mixed, [])
+	assert.deepEqual(sel.boardColors, [], 'old palette colours are no custom colours')
+	h.scene.callbacks.onSelection([S1])
+	sel = h.ui.selection.at(-1)
+	assert.deepEqual([sel.fill, sel.stroke, sel.textColor], ['#ffaaa7', '#c43e45', '#191b1d'])
+	h.scene.callbacks.onSelection([A, B, S1])
+	assert.equal(sent.length, 0, 'no op')
+	assert.equal(h.s.model.get(A).style.fill, '#a8d8f8', 'the stored value stays')
+	h.s.destroy()
+})
+
+test('job 135 (AK6): selection v2 boardColors – the custom colours of the whole board (locked items too, not only the selection), again after an own style change', async () => {
+	const C = ID(3)
+	const T = ID('T1')
+	const h = await open({
+		items: [
+			sticky(A, { style: { fill: '#a8d8f8' } }),
+			sticky(B, { x: 300, style: { fill: '#1f3a5f' }, lock: { by: 'pidbob0000000001', name: 'Bob' } }),
+			shape(C, { x: 600, style: { fill: '#ffffff', stroke: '#123456', strokeWidth: 2 } }),
+			textItem(T, { x: 900, style: { fontSize: 24, color: '#123456', align: 'left' } }),
+		],
+	})
+	h.scene.callbacks.onSelection([A])
+	assert.deepEqual(h.ui.selection.at(-1).boardColors, ['#123456', '#1f3a5f'])
+	h.s.setStyle('style.fill', '#ff8800')
+	assert.equal(h.model.get(A).style.fill, '#ff8800')
+	assert.deepEqual(h.ui.selection.at(-1).boardColors, ['#123456', '#1f3a5f', '#ff8800'], 'the report after the own change')
+	assert.deepEqual(h.s.selectionInfo().boardColors, ['#123456', '#1f3a5f', '#ff8800'])
 	h.s.destroy()
 })
 
@@ -2533,7 +2918,7 @@ test('M1 limits: maxItems/maxLabel fall back to 5000/200 (SPEC-M1 §4.8); the sc
 test('M1 tool options and focus: setToolOptions activates the tool with them and reports them; focusCanvas reaches the scene', async () => {
 	const seen = []
 	const h = await open({ items: [], extraUi: { onToolOptions: (x) => seen.push(x) } })
-	assert.deepEqual(seen[0], { shape: { kind: 'rect' }, connector: {} }, 'the scene\'s options at the start')
+	assert.deepEqual(seen[0], { shape: { kind: 'rect' }, connector: {}, sticky: {}, frame: {}, pen: {} }, 'the scene\'s options at the start (job 188: sticky, job 199: frame, job 273: pen)')
 	h.s.setToolOptions('shape', { kind: 'ellipse' })
 	assert.deepEqual(h.scene.callsOf('setTool').at(-1), ['setTool', 'shape', { kind: 'ellipse' }])
 	assert.deepEqual(seen.at(-1).shape, { kind: 'ellipse' })
@@ -2578,11 +2963,13 @@ test('M1 debug API: selection(), handles() in client coordinates, connector(id) 
 	const api = debugApi(h.s)
 	h.scene.callbacks.onSelection([A])
 	assert.deepEqual(api.selection(), [A])
-	h.scene.handleList = [{ name: 'tl', x: 1, y: 2 }]
-	assert.deepEqual(api.handles(), [{ name: 'tl', x: 101, y: 52 }])
+	h.scene.handleList = [{ name: 'tl', x: 1, y: 2, shown: true, size: 10 }]
+	// job 231: shown and size come along
+	assert.deepEqual(api.handles(), [{ name: 'tl', x: 101, y: 52, shown: true, size: 10 }])
 	assert.equal(api.connector(A), null)
-	h.model.geometryOf = (id) => (id === A ? { kind: 'poly', start: { x: 1, y: 2, angle: 0 }, end: { x: 3, y: 4, angle: 0 } } : null)
-	assert.deepEqual(api.connector(A), { start: { x: 1, y: 2 }, end: { x: 3, y: 4 }, kind: 'poly' })
+	h.model.geometryOf = (id) => (id === A ? { kind: 'poly', points: [1, 2, 3, 2, 3, 4], start: { x: 1, y: 2, angle: 0 }, end: { x: 3, y: 4, angle: 0 } } : null)
+	// job 197: the points as well (E78 checks the route around an item)
+	assert.deepEqual(api.connector(A), { start: { x: 1, y: 2 }, end: { x: 3, y: 4 }, kind: 'poly', points: [1, 2, 3, 2, 3, 4] })
 	h.s.destroy()
 })
 
@@ -2748,6 +3135,53 @@ test('M1 1b connect intent: one put with both ends (stored form) and the intent\
 	h.scene.callbacks.onIntent({ type: 'connect', start: { item: A }, end: { item: ID(99) }, route: 'straight', endCap: 'arrow' })
 	await h.clock.advance(1000)
 	assert.ok(h.tr.calls.slice(before).every((c) => !c.ops))
+	h.s.destroy()
+})
+
+test('job 169 AK3 connect intent with selectEnd: connector C locally and at the server, B selected alone (scene and shell), no pan, one undo step; undo removes only C, redo brings the same id back; a free end with selectEnd selects C', async () => {
+	const srv = lwwServer14(twoNotes())
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = h.tr.calls.length
+	h.scene.callbacks.onIntent({ type: 'connect', start: { item: A, ax: 1, ay: 0.5 }, end: { item: B }, route: 'elbow', endCap: 'arrow', selectEnd: true })
+	const c = connectorFrom(h, A)
+	assert.ok(c, 'C stands locally')
+	assert.deepEqual([h.model.get(c).data.start, h.model.get(c).data.end], [{ item: A, ax: 1, ay: 0.5 }, { item: B }])
+	assert.deepEqual(h.scene.selection, [B], 'B is selected in the scene')
+	assert.deepEqual(h.s.selection, [B])
+	assert.deepEqual(h.ui.selection.at(-1).ids, [B], 'the shell gets onSelection [B]')
+	assert.equal(h.scene.callsOf('panIntoView').length, 0, 'no pan')
+	await h.clock.advance(1000)
+	const batches = h.tr.calls.slice(before).filter((b) => (b.ops ?? []).length > 0)
+	assert.deepEqual(batches.map((b) => b.ops.map((op) => [op.o, op.id, op.t])), [[['put', c, 'connector']]], 'one batch: put C')
+	assert.equal(batches[0].ops[0].p.data.selectEnd, undefined, 'selectEnd stays in the client')
+	assert.ok(!('selectEnd' in batches[0].ops[0].p), 'selectEnd stays in the client')
+	assert.deepEqual(srv.live.get(c)?.data.end, { item: B }, 'C at the server')
+	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
+	h.s.undo()
+	assert.deepEqual([h.model.has(c), h.model.has(B)], [false, true], 'undo removes only C')
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.has(c), srv.live.has(B)], [false, true], 'at the server too')
+	h.s.redo()
+	assert.deepEqual(h.model.get(c)?.data.end, { item: B }, 'redo: C back with the same id')
+	await h.clock.advance(1000)
+	assert.deepEqual(srv.live.get(c)?.data.end, { item: B }, 'redo reaches the server')
+	assert.ok(srv.log.every(([, res]) => res.every((x) => x === 'ok')), 'every op ok at the server')
+	// a free end: selectEnd has no item to select, the connector is selected
+	h.scene.callbacks.onIntent({ type: 'connect', start: { item: A, ax: 1, ay: 0.5 }, end: { x: 900, y: 100 }, route: 'elbow', endCap: 'arrow', selectEnd: true })
+	const free = h.model.ids().find((id) => h.model.get(id).t === 'connector' && h.model.get(id).data?.end?.x === 900)
+	assert.ok(free, 'the connector with the free end')
+	assert.deepEqual(h.scene.selection, [free], 'a free end: C is selected')
+	assert.deepEqual(h.ui.selection.at(-1).ids, [free])
+	h.s.destroy()
+})
+
+test('job 169 a locked target is selected too', async () => {
+	const lock = { by: 'pidcarol00000001', name: 'Carol' }
+	const h = await open({ items: [sticky(A, { x: 0, y: 0 }), sticky(B, { x: 400, y: 0, lock })] })
+	h.scene.callbacks.onIntent({ type: 'connect', start: { item: A, ax: 1, ay: 0.5 }, end: { item: B, ax: 0, ay: 0.5 }, route: 'elbow', endCap: 'arrow', selectEnd: true })
+	assert.ok(connectorFrom(h, A), 'the connector to the locked B')
+	assert.deepEqual(h.scene.selection, [B])
 	h.s.destroy()
 })
 
@@ -2925,7 +3359,7 @@ test('M1 1b connector style from the context bar: route, tips, line colour (CONN
 	await h.clock.advance(1000)
 	h.scene.callbacks.onSelection([CN])
 	const info = h.ui.selection.at(-1)
-	assert.deepEqual([info.route, info.startCap, info.endCap, info.stroke, info.strokeWidth, info.dash], ['straight', 'none', 'arrow', '#1a1a1a', 2, 'solid'])
+	assert.deepEqual([info.route, info.startCap, info.endCap, info.stroke, info.strokeWidth, info.dash], ['straight', 'none', 'arrow', '#3d4044', 2, 'solid'], 'job 227: the stored old default #1a1a1a reports as the default line')
 	assert.ok(['data.route', 'data.label', 'style.startCap', 'style.endCap'].every((p) => info.fields.includes(p)))
 	h.s.setStyle('data.route', 'elbow')
 	h.s.setStyle('style.startCap', 'dot')
@@ -2995,7 +3429,7 @@ test('M1 1b copy A + B + their connector, paste on a second board: the copy is c
 	t2.s.destroy()
 })
 
-test('M1 1b retarget onto a target another participant deleted meanwhile: ok, the server stores a free point at its anchor (rule 14); the model converges to it; undo restores the old end', async () => {
+test('M1 1b retarget onto a target another participant deleted meanwhile: ok, the server stores a free point at its anchor (rule 14); the model converges to it; job 155: undo keeps that end (the server changed it) with the toast undo-changed', async () => {
 	const srv = lwwServer14([...twoNotes(), shape(S1, { x: 0, y: 600, w: 200, h: 120 }), connector(CN, { item: A }, { item: S1 })])
 	const h = await openLww(srv)
 	await h.clock.advance(1000)
@@ -3010,7 +3444,9 @@ test('M1 1b retarget onto a target another participant deleted meanwhile: ok, th
 	assert.equal(h.toasts.length, 0, 'ok, no undo failure, no toast')
 	h.s.undo()
 	await h.clock.advance(1000)
-	assert.deepEqual(srv.live.get(CN).data.end, { item: S1 })
+	assert.deepEqual(srv.live.get(CN).data.end, { x: 600, y: 100 }, 'a change of the server counts as someone else\'s')
+	assert.deepEqual(h.infos, ['1 item was skipped because someone else changed it.'])
+	assert.equal(h.s.undoStack.canRedo(), false, 'nothing went out: the step vanishes')
 	assert.equal(itemKey(h.model.get(CN)), itemKey(srv.live.get(CN)))
 	h.s.destroy()
 })
@@ -3510,5 +3946,390 @@ test('M2 data foundation: a server object that only differs in group or lock rea
 	const n = h.model.calls.apply.length
 	h.s.onChanges([sticky(A, { x: 10, y: 20, data: { text: 'hello' }, group: '01JGA0000000000000000000G1', lock: { by: 'pidalice00000001', name: 'Alice Adler' } })], [])
 	assert.equal(h.model.calls.apply.length, n, 'unchanged: nothing to apply')
+	h.s.destroy()
+})
+
+// ---- factory job 139: sort notes by colour --------------------------------------
+
+/**
+ * A session on lwwServer that records ui.onSortLabels.
+ *
+ * @param {object[]} items live items
+ * @param {object} [o] open() options
+ * @return {Promise<object>} harness plus labels (every report) and srv
+ */
+async function openSort(items, o = {}) {
+	const labels = []
+	const srv = lwwServer(items)
+	const h = await openLww(srv, { ...o, extraUi: { onSortLabels: (x) => labels.push(x === null ? null : structuredClone(x)) } })
+	await h.clock.advance(1000)
+	return { ...h, labels, srv }
+}
+
+/** (Job 227) Yellow and Indigo of the one palette: yellow comes first in its order. */
+const SORT_FILL = { blue: '#b9c8fc', yellow: '#faea89' }
+const [N1, N2, N3, N4] = [ID(31), ID(32), ID(33), ID(34)]
+const SF = ID('SF')
+const [K5, K6] = [ID(35), ID(36)]
+
+/** Four loose notes (two colours), a frame with two notes and a locked note. */
+function sortItems() {
+	return [
+		sticky(N1, { x: 0, y: 0, style: { fill: SORT_FILL.blue } }),
+		sticky(N2, { x: 300, y: 0, style: { fill: SORT_FILL.yellow } }),
+		sticky(N3, { x: 600, y: 0, style: { fill: SORT_FILL.blue } }),
+		sticky(N4, { x: 900, y: 0, style: { fill: SORT_FILL.yellow } }),
+		shape(S1, { x: 0, y: 400 }),
+		frame(SF, { x: 2000, y: 0, w: 500, h: 300 }),
+		sticky(K5, { x: 10, y: 10, parent: SF, style: { fill: SORT_FILL.blue } }),
+		sticky(K6, { x: 250, y: 10, parent: SF, style: { fill: SORT_FILL.yellow } }),
+		sticky(T1, { x: 0, y: 800, lock: { by: 'pidbob0000000001', name: 'Bob' } }),
+	]
+}
+
+test('job 139 AK3: sortByColor / sortFrameByColor – one enqueue, one undo step, the selection empty, ui.onSortLabels with the blocks; undo restores at the server; sortable and frameSortable count (0 in mode view and frozen, where the commands do nothing)', async () => {
+	const h = await openSort(sortItems())
+	h.scene.callbacks.onSelection([N1, N2, N3, N4, S1, T1, K5])
+	let info = h.ui.selection.at(-1)
+	assert.equal(info.sortable, 4, 'the loose, unlocked notes (no shape, no locked note, no note in a frame)')
+	assert.equal(info.frameSortable, 0, 'no single frame')
+	const sent = spyEnqueue(h)
+	const steps = h.s.undoStack.done.length
+	assert.equal(h.s.sortByColor(), true)
+	assert.equal(sent.length, 1, 'one enqueue')
+	assert.equal(h.s.undoStack.done.length, steps + 1, 'one undo step')
+	assert.deepEqual(sent[0].map((op) => [op.id, op.p.x, op.p.y]), [[N2, 0, 0], [N4, 220, 0], [N1, 520, 0], [N3, 740, 0]], 'yellow before blue, each block in reading order')
+	assert.deepEqual(h.s.selection, [], 'the selection is empty')
+	assert.deepEqual(h.scene.selection, [], 'in the scene too')
+	assert.deepEqual(h.ui.selection.at(-1).ids, [])
+	assert.deepEqual(h.labels.at(-1), [
+		{ i: 0, color: SORT_FILL.yellow, x: 0, y: 0, w: 420, h: 200, parent: null },
+		{ i: 1, color: SORT_FILL.blue, x: 520, y: 0, w: 420, h: 200, parent: null },
+	])
+	await h.clock.advance(1000)
+	assert.deepEqual([N1, N2, N3, N4].map((id) => h.srv.live.get(id).x), [520, 0, 740, 220], 'at the server')
+	// undo: the fields end, the notes go back at the server
+	h.s.undo()
+	assert.equal(h.labels.at(-1), null)
+	await h.clock.advance(1000)
+	assert.deepEqual([N1, N2, N3, N4].map((id) => h.srv.live.get(id).x), [0, 300, 600, 900])
+	// the frame: frameSortable, its notes, the frame grows; the fields carry the frame
+	h.scene.callbacks.onSelection([SF])
+	info = h.ui.selection.at(-1)
+	assert.equal(info.frameSortable, 2)
+	assert.equal(info.sortable, 0)
+	assert.equal(h.s.sortFrameByColor(), true)
+	assert.equal(sent.length, 3, 'one more enqueue')
+	// two blocks of one note: 60 + 200 + 100 + 200 + 60 wide, 60 + 200 + 60 high
+	assert.deepEqual(sent[2][0], { o: 'patch', id: SF, p: { w: 620, h: 320 } }, 'the frame grows first')
+	assert.deepEqual(sent[2].slice(1).map((op) => [op.id, op.p.x, op.p.y, op.p.parent]), [[K6, 60, 60, SF], [K5, 360, 60, SF]])
+	assert.deepEqual(h.s.selection, [])
+	assert.deepEqual(h.labels.at(-1).map((b) => [b.i, b.color, b.parent]), [[0, SORT_FILL.yellow, SF], [1, SORT_FILL.blue, SF]])
+	// sorted again (nothing moves): no enqueue, no undo step, the fields come anyway
+	const done = h.s.undoStack.done.length
+	h.scene.callbacks.onSelection([SF])
+	assert.equal(h.labels.at(-1), null, 'a selection change ended them')
+	assert.equal(h.s.sortFrameByColor(), true)
+	assert.equal(sent.length, 3)
+	assert.equal(h.s.undoStack.done.length, done)
+	assert.equal(h.labels.at(-1).length, 2)
+	// sortFrameByColor without one frame selected: nothing
+	h.scene.callbacks.onSelection([N1, N2])
+	assert.equal(h.s.sortFrameByColor(), false)
+	// frozen: 0, and the commands do nothing
+	h.s.frozen = true
+	h.scene.callbacks.onSelection([N1, N2, N3])
+	assert.equal(h.ui.selection.at(-1).sortable, 0)
+	assert.equal(h.s.sortByColor(), false)
+	assert.equal(sent.length, 3)
+	h.s.destroy()
+	// mode view: 0, nothing happens although model and sync are there
+	const v = await openSort(sortItems(), { viewOnly: true })
+	v.s.selection = [N1, N2, N3, N4]
+	assert.equal(v.s.selectionInfo().sortable, 0)
+	v.s.selection = [SF]
+	assert.equal(v.s.selectionInfo().frameSortable, 0)
+	const vsent = spyEnqueue(v)
+	assert.equal(v.s.sortFrameByColor(), false)
+	v.s.selection = [N1, N2, N3, N4]
+	assert.equal(v.s.sortByColor(), false)
+	assert.deepEqual(vsent, [])
+	assert.deepEqual(v.labels, [])
+	v.s.destroy()
+})
+
+test('job 139 AK4: nameSortBlock puts a text above the block (its own undo step, the selection stays, the other fields stay); a blank name does nothing; setStyle (a commit), undo, select, setTool and endSortLabels each end the fields; typed names are saved on the way', async () => {
+	const h = await openSort(sortItems())
+	const sort = () => {
+		h.scene.callbacks.onSelection([N1, N2, N3, N4])
+		assert.equal(h.s.sortByColor(), true)
+		assert.equal(h.labels.at(-1).length, 2, 'two fields')
+	}
+	sort()
+	const sent = spyEnqueue(h)
+	const steps = h.s.undoStack.done.length
+	assert.equal(h.s.nameSortBlock(0, '  Ideas '), true)
+	assert.equal(sent.length, 1)
+	const put = sent[0][0]
+	assert.equal(sent[0].length, 1)
+	assert.equal(put.o, 'put')
+	assert.equal(put.t, 'text')
+	// fakeTextHeight: one line of 24 px × 1.2
+	assert.deepEqual({ x: put.p.x, y: put.p.y, w: put.p.w, h: put.p.h, parent: put.p.parent, text: put.p.data.text }, { x: 0, y: -38.8, w: 420, h: 28.8, parent: null, text: 'Ideas' })
+	assert.equal(h.s.undoStack.done.length, steps + 1, 'an undo step of its own')
+	assert.deepEqual(h.s.selection, [], 'the selection stays')
+	assert.deepEqual(h.labels.at(-1).map((b) => b.i), [1], 'the named field goes, the other stays')
+	assert.equal(h.s.nameSortBlock(0, 'again'), false, 'the field is gone')
+	assert.equal(h.s.nameSortBlock(1, '  '), false, 'blank: nothing')
+	assert.equal(sent.length, 1)
+	assert.deepEqual(h.labels.at(-1).map((b) => b.i), [1])
+	await h.clock.advance(1000)
+	assert.equal(h.srv.live.get(put.id)?.data?.text, 'Ideas', 'at the server')
+	// every one of these ends the fields
+	const enders = [
+		['setStyle (another commit)', () => {
+			h.s.selection = [S1]
+			h.s.setStyle('style.fill', '#ffb27a')
+		}],
+		['undo', () => h.s.undo()],
+		['select', () => h.s.select([N1])],
+		['setTool', () => h.s.setTool('sticky')],
+		['endSortLabels', () => h.s.endSortLabels()],
+	]
+	for (const [name, end] of enders) {
+		sort()
+		const n = sent.length
+		end()
+		assert.equal(h.labels.at(-1), null, name + ' ends the fields')
+		assert.equal(h.s.sortLabels, null, name)
+		if (name === 'setTool') {
+			h.s.setTool('select')
+		}
+		if (name === 'setStyle (another commit)') {
+			assert.equal(sent.length, n + 1, 'the style itself went out')
+		}
+	}
+	// a typed but not yet left name is saved when the fields end
+	sort()
+	h.s.sortLabelText(1, 'Later')
+	const n = sent.length
+	h.s.endSortLabels()
+	assert.equal(sent.length, n + 1)
+	assert.equal(sent.at(-1)[0].p.data.text, 'Later')
+	assert.equal(sent.at(-1)[0].p.x, 520, 'above block 1')
+	assert.equal(h.labels.at(-1), null)
+	// the board freezes: the fields end, a typed name is lost
+	sort()
+	h.s.sortLabelText(0, 'Lost')
+	const m = sent.length
+	h.s.onStatus('revoked')
+	assert.equal(h.labels.at(-1), null)
+	assert.equal(sent.length, m, 'nothing sent')
+	h.s.destroy()
+})
+
+test('job 139: sortLabelPlaces gives the open fields in container px from the scene\'s (live) camera; the menu entries sort-colors and sort-frame run the commands without focusing the canvas', async () => {
+	const h = await openSort(sortItems())
+	assert.deepEqual(h.s.sortLabelPlaces(), [], 'no fields')
+	h.scene.callbacks.onSelection([N1, N2, N3, N4])
+	h.scene.callbacks.onIntent({ type: 'contextMenu', id: N1, at: [5, 5] })
+	assert.notEqual(h.s.menu, null)
+	const f = h.scene.callsOf('focusCanvas').length
+	assert.equal(h.s.menuAction('sort-colors'), true)
+	assert.equal(h.s.menu, null)
+	assert.equal(h.scene.callsOf('focusCanvas').length, f, 'the shell decides about the focus')
+	assert.equal(h.labels.at(-1).length, 2)
+	h.scene.camera = { x: -100, y: -50, scale: 2 }
+	assert.deepEqual(h.s.sortLabelPlaces(), [
+		{ i: 0, color: SORT_FILL.yellow, x: 200, y: 100, w: 840 },
+		{ i: 1, color: SORT_FILL.blue, x: 1240, y: 100, w: 840 },
+	])
+	h.scene.liveCamera = () => ({ x: 0, y: 0, scale: 1 })
+	assert.deepEqual(h.s.sortLabelPlaces().map((p) => [p.x, p.y, p.w]), [[0, 0, 420], [520, 0, 420]], 'the live camera of a gesture wins')
+	h.s.nameSortBlock(0, 'A')
+	assert.deepEqual(h.s.sortLabelPlaces().map((p) => p.i), [1])
+	// the frame entry
+	h.scene.callbacks.onSelection([SF])
+	h.scene.callbacks.onIntent({ type: 'contextMenu', id: SF, at: [5, 5] })
+	assert.equal(h.s.menuAction('sort-frame'), true)
+	assert.deepEqual(h.labels.at(-1).map((b) => b.parent), [SF, SF])
+	h.s.destroy()
+	assert.equal(h.labels.at(-1), null, 'destroy ends the fields')
+})
+
+// ---- job 153: elbow connectors by default, swap direction ----
+
+/** What the real scene's connector tool reports before anything is chosen (tests/js/scene/facadeV2.test.mjs). */
+const SCENE_CONNECTOR = Object.freeze({ route: 'elbow', endCap: 'triangle' })
+const W1 = ID('W1')
+const W2 = ID('W2')
+const W3 = ID('W3')
+const W4 = ID('W4')
+/** A connector A → B with these stored tips (a missing key: not stored). */
+const tipped = (id, tips, extra = {}) => connector(id, { item: A }, { item: B }, { style: { stroke: '#1a1a1a', strokeWidth: 2, ...tips }, ...extra })
+/** dot–arrow, arrow–arrow, a locked diamond–arrow, none (not stored)–arrow */
+const tippedFour = () => [
+	...twoNotes(),
+	tipped(W1, { startCap: 'dot', endCap: 'arrow' }),
+	tipped(W2, { startCap: 'arrow', endCap: 'arrow' }),
+	tipped(W3, { startCap: 'diamond', endCap: 'arrow' }, { lock: { by: 'pidcarol00000001', name: 'Carol' } }),
+	tipped(W4, { endCap: 'arrow' }),
+]
+/** @return {object[]} the ops sent since call n */
+const sentSince = (h, n) => h.tr.calls.slice(n).flatMap((b) => b.ops ?? [])
+
+test('job 153 AK2: connectNow with the scene options, connectSelection and a click on "+" each store a put with route elbow, end tip triangle (job 261) and no start tip; a route set in the bar leaves the next connector elbow; nothing is stored in the browser', async () => {
+	const h = await open({ items: [...twoNotes(), connector(CN, { item: A }, { x: 900, y: 900 })] })
+	const tools = (o) => { h.scene.toolOpts = { connector: o } }
+	const check = async (n, what) => {
+		await h.clock.advance(200)
+		const puts = sentSince(h, n).filter((o) => o.o === 'put' && o.t === 'connector')
+		assert.equal(puts.length, 1, what)
+		assert.deepEqual([puts[0].p.data.route, puts[0].p.style.endCap, 'startCap' in puts[0].p.style], ['elbow', 'triangle', false], what)
+	}
+	// the scene's options as the real scene reports them, and none at all (the registry's creation defaults)
+	for (const o of [{ ...SCENE_CONNECTOR }, {}]) {
+		tools(o)
+		let n = h.tr.calls.length
+		h.scene.callbacks.onIntent({ type: 'connect', start: { item: A }, end: { item: B }, ...h.scene.getToolOptions('connector') })
+		await check(n, 'connect intent ' + JSON.stringify(o))
+		n = h.tr.calls.length
+		h.scene.callbacks.onSelection([A, B])
+		assert.notEqual(h.s.connectSelection(), null)
+		await check(n, 'Connect ' + JSON.stringify(o))
+		n = h.tr.calls.length
+		h.scene.callbacks.onIntent({ type: 'neighbour', id: A, side: 'b', connect: h.scene.getToolOptions('connector') })
+		await check(n, 'click on "+" ' + JSON.stringify(o))
+	}
+	// a route and a tip changed in the context bar are no tool setting
+	h.scene.callbacks.onSelection([CN])
+	let n = h.tr.calls.length
+	h.s.setStyle('data.route', 'curved')
+	h.s.setStyle('style.endCap', 'dot')
+	await h.clock.advance(200)
+	assert.deepEqual(sentSince(h, n), [{ o: 'patch', id: CN, p: { 'data.route': 'curved', 'style.endCap': 'dot' } }])
+	assert.deepEqual(h.s.getToolOptions('connector'), {})
+	n = h.tr.calls.length
+	h.scene.callbacks.onSelection([A, B])
+	h.s.connectSelection()
+	await check(n, 'Connect after the bar chose curved/dot')
+	for (const kind of ['local', 'session']) {
+		for (const [k, v] of h.storage.data[kind]) {
+			assert.doesNotMatch(String(v), /curved|elbow|endCap|"route"/, `${kind} ${k}`)
+		}
+	}
+	h.s.destroy()
+})
+
+test('job 153 AK3: a deleted connector without data.route and one with straight come back from undo as they were stored (no elbow)', async () => {
+	const bare = connector(W1, { item: A }, { item: B }, { data: { start: { item: A }, end: { item: B } } })
+	const srv = lwwServer14([...twoNotes(), bare, connector(W2, { item: A }, { item: B })])
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = [itemKey(srv.live.get(W1)), itemKey(srv.live.get(W2))]
+	h.scene.callbacks.onSelection([W1, W2])
+	h.s.deleteSelection()
+	await h.clock.advance(1000)
+	assert.equal(srv.live.has(W1) || srv.live.has(W2), false)
+	h.s.undo()
+	await h.clock.advance(1000)
+	assert.deepEqual([itemKey(srv.live.get(W1)), itemKey(srv.live.get(W2))], before)
+	assert.equal('route' in srv.live.get(W1).data, false)
+	h.s.destroy()
+})
+
+test('job 153 AK4: selection v2 swappable counts the unlocked selected connectors with different tips; 0 in view mode and on a frozen board', async () => {
+	const h = await open({ items: tippedFour() })
+	const swappable = (ids) => {
+		h.scene.callbacks.onSelection(ids)
+		return h.ui.selection.at(-1).swappable
+	}
+	assert.equal(swappable([W1]), 1, 'dot–arrow')
+	assert.equal(swappable([W2]), 0, 'arrow–arrow')
+	assert.equal(swappable([W3]), 0, 'locked')
+	assert.equal(swappable([W4]), 1, 'none (not stored)–arrow')
+	assert.equal(swappable([W1, W2, W3]), 1)
+	assert.equal(swappable([W1, W2, W3, W4]), 2)
+	assert.equal(swappable([A, W1]), 1, 'a note does not count')
+	assert.equal(swappable([A]), 0)
+	h.s.frozen = true
+	assert.equal(h.s.selectionInfo().swappable, 0, 'frozen')
+	h.s.destroy()
+	const v = await open({ items: tippedFour(), viewOnly: true })
+	v.scene.callbacks.onSelection([W1, W4])
+	assert.equal(v.s.selectionInfo().swappable, 0, 'view mode')
+	v.s.destroy()
+})
+
+test('job 153 AK4: swapDirection swaps the tips of dot–arrow and none–arrow in one undo step, both stored; arrow–arrow and the locked one stay; undo restores exactly (the missing tip removed), redo swaps again', async () => {
+	const srv = lwwServer14(tippedFour())
+	const h = await openLww(srv)
+	await h.clock.advance(1000)
+	const before = new Map([W1, W2, W3, W4].map((id) => [id, itemKey(srv.live.get(id))]))
+	h.scene.callbacks.onSelection([W1, W2, W3, W4])
+	const reports = h.ui.selection.length
+	const steps = h.s.undoStack.done.length
+	let n = h.tr.calls.length
+	h.s.swapDirection()
+	assert.equal(h.ui.selection.length, reports + 1, 'the selection is reported after the swap')
+	assert.equal(h.s.undoStack.done.length, steps + 1, 'one undo step')
+	await h.clock.advance(1000)
+	assert.deepEqual(sentSince(h, n), [
+		{ o: 'patch', id: W1, p: { 'style.startCap': 'arrow', 'style.endCap': 'dot' } },
+		{ o: 'patch', id: W4, p: { 'style.startCap': 'arrow', 'style.endCap': 'none' } },
+	])
+	assert.deepEqual([srv.live.get(W1).style.startCap, srv.live.get(W1).style.endCap], ['arrow', 'dot'])
+	assert.deepEqual([srv.live.get(W4).style.startCap, srv.live.get(W4).style.endCap], ['arrow', 'none'])
+	assert.equal(itemKey(srv.live.get(W2)), before.get(W2))
+	assert.equal(itemKey(srv.live.get(W3)), before.get(W3), 'the locked connector stays')
+	assert.deepEqual(srv.live.get(W1).data, tipped(W1, {}).data, 'route, ends and label stay')
+	const now = h.ui.selection.at(-1)
+	assert.equal(now.swappable, 2, 'still two to swap')
+	n = h.tr.calls.length
+	h.s.undo()
+	await h.clock.advance(1000)
+	assert.deepEqual(sentSince(h, n), [
+		{ o: 'patch', id: W1, p: { 'style.startCap': 'dot', 'style.endCap': 'arrow' } },
+		{ o: 'patch', id: W4, p: { 'style.startCap': null, 'style.endCap': 'arrow' } },
+	])
+	for (const id of [W1, W2, W3, W4]) {
+		assert.equal(itemKey(srv.live.get(id)), before.get(id), id)
+	}
+	assert.equal('startCap' in srv.live.get(W4).style, false, 'the missing tip is missing again')
+	h.s.redo()
+	await h.clock.advance(1000)
+	assert.deepEqual([srv.live.get(W1).style.startCap, srv.live.get(W1).style.endCap, srv.live.get(W4).style.startCap, srv.live.get(W4).style.endCap], ['arrow', 'dot', 'arrow', 'none'])
+	h.s.destroy()
+})
+
+test('job 153 AK4/AK6: no ops in view mode or on a frozen board, none for equal tips alone; menuAction(swap-direction) swaps', async () => {
+	const v = await open({ items: tippedFour(), viewOnly: true })
+	v.scene.callbacks.onSelection([W1, W4])
+	let n = v.tr.calls.length
+	v.s.swapDirection()
+	await v.clock.advance(1000)
+	assert.deepEqual(sentSince(v, n), [], 'view mode')
+	v.s.destroy()
+	const h = await open({ items: tippedFour() })
+	h.scene.callbacks.onSelection([W2, W3])
+	n = h.tr.calls.length
+	const steps = h.s.undoStack.done.length
+	h.s.swapDirection()
+	await h.clock.advance(1000)
+	assert.deepEqual(sentSince(h, n), [], 'arrow–arrow and a locked one: nothing')
+	assert.equal(h.s.undoStack.done.length, steps, 'no undo step')
+	assert.deepEqual(h.toasts, [], 'no message')
+	h.scene.callbacks.onSelection([W1])
+	h.s.frozen = true
+	h.s.swapDirection()
+	await h.clock.advance(1000)
+	assert.deepEqual(sentSince(h, n), [], 'frozen')
+	h.s.frozen = false
+	h.scene.callbacks.onIntent({ type: 'contextMenu', id: W1, at: [5, 5] })
+	assert.notEqual(h.s.menu, null)
+	assert.equal(h.s.menuAction('swap-direction'), true)
+	assert.equal(h.s.menu, null)
+	await h.clock.advance(1000)
+	assert.deepEqual(sentSince(h, n), [{ o: 'patch', id: W1, p: { 'style.startCap': 'arrow', 'style.endCap': 'dot' } }])
 	h.s.destroy()
 })

@@ -13,7 +13,9 @@ use OC\RichObjectStrings\Validator;
 use OCA\Knorke\BackgroundJob\ShareNotifyJob;
 use OCA\Knorke\Db\BoardStore;
 use OCA\Knorke\Notification\Notifier;
+use OCA\Knorke\Service\CommentService;
 use OCA\Knorke\Service\GuestsAppWhitelist;
+use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\SharePolicy;
 use OCA\Knorke\Service\ShareService;
 use OCA\Knorke\Tests\Support\AccessHarness;
@@ -45,6 +47,12 @@ use Psr\Log\LoggerInterface;
  * PHPUnit runs as CLI, so notifier() resets SharePolicy before roleFor()
  * like a cron or background-job:worker process; notifier(web: true) keeps
  * the request's answers like the bell.
+ *
+ * Factory job 189 (AK5): comment_mention and comment_reply, sent through
+ * CommentService, shown with the author, the board, the text with @name
+ * (at most 200 characters + "…") and the link to the thread; dropped when
+ * the comment is gone, the mention was taken out, or the account lost its
+ * role on the board.
  */
 final class NotifierTest extends TestCase {
     private const BOARD_URL = 'https://cloud.example/index.php/apps/knorke/b/';
@@ -89,6 +97,8 @@ final class NotifierTest extends TestCase {
                     BoardStore::class => $h->boards,
                     SharePolicy::class => $h->sharePolicy,
                     ShareService::class => $h->shares,
+                    LinkPolicy::class => $h->policy,
+                    CommentService::class => $h->commentService,
                     LoggerInterface::class => $h->logger,
                     GuestsAppWhitelist::WHITELIST => $this->guests ?? throw new class('no ' . $id) extends \RuntimeException implements NotFoundExceptionInterface {
                     },
@@ -200,7 +210,7 @@ final class NotifierTest extends TestCase {
         $this->assertShownFor($n);
         $this->assertContains('forBoard ' . $this->b, $this->h->shareRows->log, 'roleFor ran');
         $this->assertSame([['knorke', 'en'], ['knorke', 'de']], $this->langs, "the recipient's language");
-        $this->assertSame([BoardStore::class, SharePolicy::class, ShareService::class], array_values(array_unique($this->gets)), 'CLI: SharePolicy before roleFor (job 040)');
+        $this->assertSame([BoardStore::class, SharePolicy::class, ShareService::class, LinkPolicy::class], array_values(array_unique($this->gets)), 'CLI: SharePolicy before roleFor (job 040)');
     }
 
     public function testTheWholeEntryLinksToTheBoardNoParameterCarriesALink(): void {
@@ -326,6 +336,23 @@ final class NotifierTest extends TestCase {
         $this->assertSame('', $n->getParsedSubject(), 'nothing filled in');
     }
 
+    /**
+     * Factory job 182 (AK6): the subjects of the template suggestions on a
+     * board and the share subject on a template are neither notification;
+     * nothing of Knorke is read for them.
+     */
+    public function testTemplateSubjectsAndTheShareSubjectDoNotCross(): void {
+        foreach ([['board', 'template_suggested'], ['board', 'template_adopted'], ['board', 'template_rejected'], ['template', 'board_shared']] as [$type, $subject]) {
+            try {
+                $this->notifier()->prepare(self::raw('knorke', 'bob', $type, (string)$this->b, $subject), 'en');
+                $this->fail("UnknownNotificationException expected for $type/$subject");
+            } catch (UnknownNotificationException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        $this->assertSame([], $this->gets, 'no container access');
+    }
+
     public function testUnknownSubjectOrObjectTypeIsNotOurs(): void {
         foreach ([['board', 'other'], ['item', 'board_shared']] as [$type, $subject]) {
             try {
@@ -384,7 +411,7 @@ final class NotifierTest extends TestCase {
         $this->assertSame($text, $notifier->prepare(clone $n, 'en')->getParsedSubject());
         $this->h->groups['knorke-e2e'] = ['carol'];
         $this->assertSame($text, $notifier->prepare(clone $n, 'en')->getParsedSubject(), 'same request: the remembered groups stay');
-        $this->assertSame([BoardStore::class, ShareService::class], array_values(array_unique($this->gets)), 'web: SharePolicy never fetched');
+        $this->assertSame([BoardStore::class, ShareService::class, LinkPolicy::class], array_values(array_unique($this->gets)), 'web: SharePolicy never fetched');
         $this->h->sharePolicy->reset(); // a new request
         $this->assertDropped(clone $n, 'bob left the group, next request', $notifier);
     }
@@ -456,7 +483,7 @@ final class NotifierTest extends TestCase {
             $notifier = $this->notifier();
             $this->assertShownFor($n, notifier: $notifier);
             $this->assertSame([['gast', '/apps/knorke/'], ['gast', '/apps/knorke/']], $this->guests->calls, "$label: asked for English and for German");
-            $this->assertSame([GuestsAppWhitelist::WHITELIST, BoardStore::class, SharePolicy::class, ShareService::class], $this->gets,
+            $this->assertSame([GuestsAppWhitelist::WHITELIST, BoardStore::class, SharePolicy::class, ShareService::class, LinkPolicy::class], $this->gets,
                 "$label: the whitelist fetched once, then as for any account");
             $this->guests->answer = false;
             $this->assertDropped(clone $n, "$label: the answer is not kept", $notifier);
@@ -471,7 +498,7 @@ final class NotifierTest extends TestCase {
         $this->assertSame([GuestsAppWhitelist::WHITELIST], $this->gets);
         $this->guests = new FakeGuestsWhitelist(true);
         $this->assertShownFor($n, notifier: $notifier);
-        $this->assertSame([GuestsAppWhitelist::WHITELIST, GuestsAppWhitelist::WHITELIST, BoardStore::class, SharePolicy::class, ShareService::class], $this->gets,
+        $this->assertSame([GuestsAppWhitelist::WHITELIST, GuestsAppWhitelist::WHITELIST, BoardStore::class, SharePolicy::class, ShareService::class, LinkPolicy::class], $this->gets,
             'the same notifier asks the container again');
         $this->assertCount(2, $this->guests->calls);
     }
@@ -560,5 +587,119 @@ final class NotifierTest extends TestCase {
         $this->assertSame(['Knorke: preparing a share notification failed'], $this->h->warnings);
         $this->assertSame('', $n->getParsedSubject(), 'nothing filled in');
         $this->assertContains('getUserGroups bob', $this->h->groupReads, 'the backend was asked');
+    }
+
+    // ── Factory job 189: comments ───────────────────────────────────────────
+
+    /** The last notification of $subject sent to $uid. */
+    private function sentComment(string $uid, string $subject): INotification {
+        foreach (array_reverse($this->h->sent) as $n) {
+            if ($n->getUser() === $uid && $n->getSubject() === $subject) {
+                return clone $n;
+            }
+        }
+        $this->fail("no $subject for $uid");
+    }
+
+    private function commentAs(string $uid, array $body): array {
+        $this->h->uid = $uid;
+        $p = $this->h->access->forUser($this->b, true)->principal;
+        return $this->h->commentService->create($p, $this->b, $body, '10.0.0.1', 1_760_000_000_000)['thread'];
+    }
+
+    public function testAMentionShowsAuthorBoardTextAndTheLinkToTheThread(): void {
+        $this->h->shareRows->add($this->b, 'user', 'bob', 'view');
+        $t = $this->commentAs('alice', ['text' => 'Please look @"bob" {owner} <b>', 'x' => 1, 'y' => 2]);
+        $n = $this->sentComment('bob', 'comment_mention');
+        $this->assertSame(['comment', $t['id']], [$n->getObjectType(), $n->getObjectId()]);
+        $en = $this->notifier()->prepare(clone $n, 'en');
+        $this->assertSame('{user} mentioned you in a comment on {board}', $en->getRichSubject());
+        $this->assertSame([
+            'user' => ['type' => 'user', 'id' => 'alice', 'name' => 'Alice Display'],
+            'board' => ['type' => 'highlight', 'id' => (string)$this->b, 'name' => 'Workshop Beta'],
+        ], $en->getRichSubjectParameters());
+        $this->assertSame('Alice Display mentioned you in a comment on Workshop Beta', $en->getParsedSubject());
+        $this->assertSame('Please look @Bob Display {owner} <b>', $en->getParsedMessage(), 'the text with @name, as it is');
+        $this->assertSame(self::BOARD_URL . $this->b . '?comment=' . $t['id'], $en->getLink());
+        $this->assertSame(self::ICON, $en->getIcon());
+        $this->assertTrue($en->isValidParsed());
+        $de = $this->notifier()->prepare(clone $n, 'de');
+        $this->assertSame('Alice Display hat dich in einem Kommentar auf Workshop Beta erwähnt', $de->getParsedSubject());
+        $this->assertTrue($de->isValidParsed());
+    }
+
+    public function testAReplyOfAGuestNamesTheGuestAndCutsLongTexts(): void {
+        $this->h->shareRows->add($this->b, 'user', 'carol', 'edit');
+        $t = $this->commentAs('carol', ['text' => 'Root', 'x' => 1, 'y' => 2]);
+        $g = $this->h->access->forGuest($this->h->token($this->b), $this->b, true)->principal;
+        $long = str_repeat('ab', 150);
+        $this->h->commentService->create($g, $this->b, ['text' => $long, 'thread' => $t['id']], '10.0.0.1', 1_760_000_000_000);
+        $n = $this->sentComment('carol', 'comment_reply');
+        $this->assertSame(['comment_thread', $t['id']], [$n->getObjectType(), $n->getObjectId()]);
+        $en = $this->notifier()->prepare(clone $n, 'en');
+        $this->assertSame('Gina (guest) replied in a comment thread on Workshop Beta', $en->getParsedSubject());
+        $this->assertSame('highlight', $en->getRichSubjectParameters()['user']['type'], 'a guest is no account');
+        $this->assertSame(substr($long, 0, 200) . '…', $en->getParsedMessage(), '200 characters and "…"');
+        $this->assertSame(self::BOARD_URL . $this->b . '?comment=' . $t['id'], $en->getLink());
+        $this->assertTrue($en->isValidParsed());
+        $de = $this->notifier()->prepare(clone $n, 'de');
+        $this->assertSame('Gina (Gast) hat in einem Kommentar-Thread auf Workshop Beta geantwortet', $de->getParsedSubject());
+    }
+
+    public function testDroppedWhenTheCommentIsDeletedTheMentionRemovedOrTheAccessLost(): void {
+        $this->h->shareRows->add($this->b, 'user', 'bob', 'view');
+        $this->h->shareRows->add($this->b, 'user', 'dave', 'view');
+        $t = $this->commentAs('alice', ['text' => 'Hi @"bob" @"dave"', 'x' => 1, 'y' => 2]);
+        $bob = $this->sentComment('bob', 'comment_mention');
+        $dave = $this->sentComment('dave', 'comment_mention');
+        $this->notifier()->prepare(clone $bob, 'en');
+        // the mention of dave is taken out by an edit
+        $this->h->uid = 'alice';
+        $p = $this->h->access->forUser($this->b, true)->principal;
+        $this->h->commentService->update($p, $this->b, ['comment' => $t['id'], 'text' => 'Hi @"bob"'], '10.0.0.1', 1_760_000_000_000);
+        $this->assertDropped(clone $dave, 'mention removed');
+        // bob loses his share
+        $this->h->shareRows->rows = [];
+        $this->assertDropped(clone $bob, 'access lost');
+        $this->h->shareRows->add($this->b, 'user', 'bob', 'view');
+        $this->notifier()->prepare(clone $bob, 'en');
+        // the comment is deleted
+        $this->h->commentService->delete($p, $this->b, $t['id'], '10.0.0.1', 1_760_000_000_000);
+        $this->assertDropped(clone $bob, 'comment deleted');
+        // a reply notification whose object is not the reply's thread, a bad id
+        $this->assertDropped(self::raw('knorke', 'bob', 'comment_thread', '5', 'comment_mention'), 'subject and object do not match');
+        $this->assertDropped(self::raw('knorke', 'bob', 'comment', 'x1', 'comment_mention'), 'no comment id');
+    }
+
+    public function testDroppedWhenTheBoardIsDeletedOrTheAppIsOff(): void {
+        $this->h->shareRows->add($this->b, 'user', 'bob', 'view');
+        $this->commentAs('alice', ['text' => 'Hi @"bob"', 'x' => 1, 'y' => 2]);
+        $n = $this->sentComment('bob', 'comment_mention');
+        $this->h->knorkeFor = ['bob' => false];
+        $this->assertDropped(clone $n, 'no app access');
+        $this->h->knorkeFor = [];
+        $this->h->service->delete('alice', $this->b);
+        $this->assertDropped(clone $n, 'board and comments deleted');
+    }
+
+    // ── Job 245: a disabled owner hides its boards ─────────────────────────
+
+    public function testHiddenButKeptWhileTheOwnerIsDisabled(): void {
+        $this->h->shares->save('alice', $this->b, [self::e('user', 'bob')]);
+        $n = $this->sentTo('bob');
+        $this->h->disabledUsers = ['alice'];
+        try {
+            $this->notifier()->prepare(clone $n, 'en');
+            $this->fail('UnknownNotificationException expected');
+        } catch (UnknownNotificationException) {
+            $this->addToAssertionCount(1);
+        }
+        $this->assertSame([], $this->h->warnings, 'no warning: nothing failed');
+        $this->assertFalse($this->h->notifications->notifyUser($this->b, 'alice', 'carol'), 'nothing new is sent');
+        $this->h->hideDisabled = false;
+        $this->assertShownFor($n);
+        $this->h->hideDisabled = true;
+        $this->h->disabledUsers = [];
+        $this->assertShownFor($n, notifier: $this->notifier());
     }
 }

@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { checkFresh } from '../../../build/check-fresh.mjs'
 import { checkBundle } from '../../../build/check-bundle.mjs'
+import { LAZY_IMPORTS, lazyTree } from './bundleTree.mjs'
 import { styleFreshness, styleHash, styleRecord } from '../../../build/style-fresh.mjs'
 
 const A = 'export const a = 1\n'
@@ -133,9 +134,13 @@ test('check-fresh: sourceRoot is honoured, paths outside src/ (also ../src-old/)
 
 test('check-bundle: a stale bundle fails the build check (source saved while vite bundled)', () => {
 	const bundle = {
-		'js/knorke-main.mjs': 'import "./vendor-AbC123.chunk.mjs"',
+		// job 217: with the dynamic import of each lazy part
+		'js/knorke-main.mjs': 'import "./vendor-AbC123.chunk.mjs";()=>import("./emoji-gHi789.chunk.mjs");' + LAZY_IMPORTS,
 		'js/vendor-AbC123.chunk.mjs': 'export const v = 1',
 		'js/canvas-dEf456.chunk.mjs': 'class Rect{};Rect.prototype.className="Rect";',
+		// job 172: the one lazy emoji chunk belongs to the shape of the bundle
+		'js/emoji-gHi789.chunk.mjs': 'const s={emojiIndex:1};export{s as default}',
+		...lazyTree(),
 		'css/knorke-style.css': '.x{}',
 		'src/a.js': A,
 		'src/views/B.vue': SFC,
@@ -151,7 +156,10 @@ test('check-bundle: a stale bundle fails the build check (source saved while vit
 		assert.match(r.lines.join('\n'), /ERROR stale bundle: src\/a\.js/)
 	})
 	const noMap = { ...bundle }
-	delete noMap['js/knorke-main.mjs.map']
+	// job 217: the lazy parts have maps too
+	for (const k of Object.keys(noMap).filter((x) => x.endsWith('.map'))) {
+		delete noMap[k]
+	}
 	withTree(noMap, (dir) => {
 		assert.match(checkBundle(dir).lines.join('\n'), /ERROR no js\/\*\.mjs\.map/)
 	})
@@ -239,9 +247,13 @@ test('A-02 check-fresh CSS: no record, a CSS file without entry, an entry whose 
 
 test('A-02 check-bundle: a stale CSS source fails the build check too', () => {
 	const bundle = {
-		'js/knorke-main.mjs': 'import "./vendor-AbC123.chunk.mjs"',
+		// job 217: with the dynamic import of each lazy part
+		'js/knorke-main.mjs': 'import "./vendor-AbC123.chunk.mjs";()=>import("./emoji-gHi789.chunk.mjs");' + LAZY_IMPORTS,
 		'js/vendor-AbC123.chunk.mjs': 'export const v = 1',
 		'js/canvas-dEf456.chunk.mjs': 'class Rect{};Rect.prototype.className="Rect";',
+		// job 172: the one lazy emoji chunk belongs to the shape of the bundle
+		'js/emoji-gHi789.chunk.mjs': 'const s={emojiIndex:1};export{s as default}',
+		...lazyTree(),
 		'css/knorke-style.css': '.knorke-board{color:red}',
 		'src/a.js': A,
 		'src/views/B.vue': SFC,
@@ -252,7 +264,7 @@ test('A-02 check-bundle: a stale CSS source fails the build check too', () => {
 	withTree(bundle, (dir) => {
 		const r = checkBundle(dir)
 		assert.equal(r.ok, true, r.lines.join('\n'))
-		assert.doesNotMatch(r.lines.join('\n'), /unexpected file/, 'the record is no .mjs: still exactly three bundle files')
+		assert.doesNotMatch(r.lines.join('\n'), /unexpected file/, 'the record is no .mjs: still exactly the bundle files')
 	})
 	withTree({ ...bundle, 'src/styles/knorke.css': '.knorke-board { color: green; }\n' }, (dir) => {
 		const r = checkBundle(dir)

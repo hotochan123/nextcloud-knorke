@@ -360,6 +360,18 @@ test('Esc inside the panel: the focus target is the toggle of the open panel (ar
 	assert.equal(b.doc.activeElement, b.lineToggle)
 })
 
+test('job 144 AK3: Esc on an entry of the filter panel → the count button, its toggle (the panel follows it at the end of the bar, after every other toggle)', () => {
+	const bar = new FakeEl('div', { cls: ['knorke-contextbar'] })
+	bar.append(new FakeEl('button', { attrs: { 'aria-controls': PANEL_ID, 'aria-expanded': 'false', 'data-knorke-action': 'align' } }))
+	bar.append(new FakeEl('button', { attrs: { 'data-knorke-action': 'copy' } }))
+	const count = bar.append(new FakeEl('button', { attrs: { 'aria-controls': PANEL_ID, 'aria-expanded': 'true', 'data-knorke-action': 'filter' } }))
+	const panel = bar.append(new FakeEl('div', { id: PANEL_ID, attrs: { 'data-knorke-panel': 'filter' } }))
+	const entry = panel.append(new FakeEl('button', { attrs: { 'data-knorke-filter': 'sticky' } }))
+	assert.equal(toggleForEscape(bar, entry, PANEL_ID), count, 'from an entry')
+	assert.equal(toggleForEscape(bar, panel, PANEL_ID), count, 'from the panel itself')
+	assert.equal(toggleForEscape(bar, count, PANEL_ID), null, 'Esc on the count button: the focus stays on it')
+})
+
 /**
  * @param {object} b board()
  * @return {() => void} the installed Esc listener's remover (closes like ContextBar.vue)
@@ -506,7 +518,7 @@ const BAR_SRC = readFileSync(new URL('../../../src/components/ContextBar.vue', i
 const BAR_SCRIPT = BAR_SRC.match(/<script setup>([\s\S]*)<\/script>/)?.[1] ?? ''
 
 test('C-1b-02 wiring in ContextBar.vue: installed on the document while the bar is mounted, removed on unmount; the close only sets panel = null', () => {
-	assert.match(BAR_SCRIPT, /import \{ closeOnCanvasEscape, closeOnCanvasPress, toggleForEscape \} from '\.\/panelDismiss\.js'/)
+	assert.match(BAR_SCRIPT, /import \{ CANVAS_SELECTOR, closeOnCanvasEscape, closeOnCanvasPress, toggleForEscape \} from '\.\/panelDismiss\.js'/, 'job 230: CANVAS_SELECTOR too (the focus after an entry of "…" by key)')
 	const mounted = BAR_SCRIPT.match(/onMounted\(\(\) => \{([\s\S]*?)\n\}\)/)?.[1] ?? ''
 	assert.match(mounted, /stopCanvasPress = closeOnCanvasPress\(document, \(\) => \{\s*panel\.value = null\s*\}\)/)
 	assert.doesNotMatch(mounted, /preventDefault|stopPropagation/, 'the close never cancels or stops the press')
@@ -533,7 +545,8 @@ test('Esc wiring in ContextBar.vue: the bar root has ref="bar" and @keydown.esc;
 	assert.ok(root.props.some((p) => p.type === 6 && p.name === 'ref' && p.value?.content === 'bar'))
 	assert.ok(root.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'keydown' && p.modifiers.some((m) => (m.content ?? m) === 'esc')))
 	const onEsc = BAR_SCRIPT.match(/function onEsc\(e\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
-	assert.match(onEsc, /e\.stopPropagation\(\)\s*toggleForEscape\(bar\.value, e\.target, panelId\)\?\.focus\(\)\s*panel\.value = null/)
+	// job 230: the panel "Arrange" (from "…") has no toggle: then "…" takes the focus; either way before the panel closes
+	assert.match(onEsc, /e\.stopPropagation\(\)[\s\S]*const back = toggleForEscape\(bar\.value, e\.target, panelId\) \?\? [\s\S]*\[data-knorke-menu=selection\] button[\s\S]*back\?\.focus\(\)\s*panel\.value = null/)
 	assert.match(BAR_SCRIPT, /const panelId = 'knorke-contextbar-panel'/)
 	assert.equal(PANEL_ID, 'knorke-contextbar-panel')
 })

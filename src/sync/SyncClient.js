@@ -20,16 +20,21 @@
  *                       stays (same seq), failures++ (from 2 on 'offline'),
  *                       backoff; never final, never the 2–10 s of 429/503
  *   404                 'gone', stop
- *   401 (user)          first bridged, 2nd in a row 'logged_out'; a 2xx resets
- *                       (SPEC-M1 §1.2, R21: a Redis restart answers a valid
- *                       session 401 for a moment). The first 401 on /sync
- *                       takes the 0/5xx path below (the batch stays with the
- *                       same seq, failures++, backoff); a second one with no
- *                       2xx in between: 'logged_out', stop. Every 401 counts
- *                       (Nextcloud {message} without `error`, and the 401 the
- *                       transport builds, e.g. after a second 412); other
- *                       errors keep the count. /sync only: a 401 on the
- *                       resync snapshot is 'logged_out' at once (M0 table)
+ *   401 (user)          three bridged, the 4th in a row 'logged_out'; a 2xx
+ *                       resets (SPEC-M1 §1.2, R21, job 164: a Redis restart
+ *                       answers a valid session 401 for a few seconds). The
+ *                       1st, 2nd and 3rd 401 on /sync take the 0/5xx path
+ *                       below (the batch stays with the same seq, failures++,
+ *                       from 2 on 'offline'), but the wait follows the 401
+ *                       count alone: backoff step 1, 2, 3 (1/2/4 s × (1 + 0–20 %)),
+ *                       whatever failures came before; the 4th with no 2xx
+ *                       in between: 'logged_out', stop (7–8.4 s after the
+ *                       first). Every 401 counts (Nextcloud {message} without
+ *                       `error`, the 200 end form not_logged_in, and the 401
+ *                       the transport builds after a second 412); other
+ *                       errors keep the count and wait on the normal ladder.
+ *                       /sync only: a 401 on the resync snapshot is
+ *                       'logged_out' at once (M0 table)
  *   401 (guest)         exactly one re-join per failure streak (_rejoin)
  *   403 link_revoked    guest: exactly one re-join per failure streak (SPEC-M1
  *                       §6.4, R2: the link generation changed – renewed,
@@ -170,6 +175,8 @@ export const BUSY_RETRY_MS = 2000
 export const BUSY_RETRY_MAX_MS = 60000
 /** Protocol marker of a 409 or join answer without `proto` (SPEC-M1 §4.3). */
 export const UNKNOWN_PROTO = '?'
+/** R21 (job 164): 401 answers on /sync bridged before the next one signs out (retries after 1, 2 and 4 s). */
+export const UNAUTHORIZED_RETRIES = 3
 /** U8: consecutive 500 answers before a batch is isolated; failures alone before an op is dropped. */
 export const SERVER_ERROR_TRIES = 3
 /** U8: client-side result code of an op dropped after repeated server errors. */
@@ -316,13 +323,15 @@ export class SyncClient {
 		this.joinTried = false
 		/** slow_down answers in a row (join, snapshot, /sync): the wait doubles. */
 		this.slowStreak = 0
-		/** 401 answers on /sync with no 2xx in between (signed-in, R21): the first is bridged, the second is final. */
+		/** 401 answers on /sync with no 2xx in between (signed-in, R21): UNAUTHORIZED_RETRIES are bridged, the next is final. */
 		this.unauthorizedStreak = 0
 		/** Server protocol of the last 409 or join answer with another protocol (SPEC-M1 §4.3). */
 		this.serverProto = null
 		/** busy (write budget): the in-flight batch waits until then; reads go on. */
 		this.busyUntil = -Infinity
 		this.resyncStreak = 0
+		// job 275: requestResync() asked for a snapshot after the next answer
+		this.resyncWanted = false
 		this.lastResyncAt = -Infinity
 		this.busy = false
 		this.ticks = 0
@@ -386,6 +395,16 @@ export class SyncClient {
 		this.lastLocalAt = this.now()
 		this._wake()
 		return ids
+	}
+
+	/**
+	 * Factory job 275 (private writing): the next answer is followed by a
+	 * resync (a new snapshot), e.g. after the reveal, whose notes changed no
+	 * row the cursor would see again.
+	 */
+	requestResync() {
+		this.resyncWanted = true
+		this.poke()
 	}
 
 	/** User activity: switches to the active cadence, never sends before t0 + activeMs. */
@@ -732,7 +751,8 @@ export class SyncClient {
 			return
 		}
 		const rev = Number.isInteger(res.rev) ? res.rev : null
-		if (res.resync === true || (rev !== null && rev < body.since)) {
+		if (res.resync === true || this.resyncWanted || (rev !== null && rev < body.since)) {
+			this.resyncWanted = false
 			if (res.presence !== undefined) {
 				this.onPresence(res.presence)
 			}
@@ -870,12 +890,13 @@ export class SyncClient {
 		}
 		if (status === 401) {
 			if (this.transport.kind !== 'guest') {
-				if (onSync && this.unauthorizedStreak === 0) {
-					// SPEC-M1 §1.2 (R21): bridge one 401 like a transient failure
-					// (the batch stays in flight, backoff); only a second one with
-					// no 2xx in between signs out
-					this.unauthorizedStreak = 1
-					this._fail()
+				if (onSync && this.unauthorizedStreak < UNAUTHORIZED_RETRIES) {
+					// SPEC-M1 §1.2 (R21, job 164): bridge a 401 like a transient
+					// failure (the batch stays in flight), but wait by the 401
+					// count (1, 2, 4 s), not by the failures before it; only the
+					// next 401 with no 2xx in between signs out
+					this.unauthorizedStreak++
+					this._fail(this.unauthorizedStreak)
 					return
 				}
 				this._final('logged_out')
@@ -1069,13 +1090,17 @@ export class SyncClient {
 		return nextDelay({ failures: Math.max(1, n), more: false }, this.now(), this.intervals, this.rand)
 	}
 
-	/** Transient failure: count, report offline from the second one, back off. */
-	_fail() {
+	/**
+	 * Transient failure: count, report offline from the second one, back off.
+	 *
+	 * @param {number|null} [step] backoff step (1 = backoffMs[0]); null: the failure count
+	 */
+	_fail(step = null) {
 		this.failures++
 		if (this.failures >= 2) {
 			this._setStatus('offline')
 		}
-		const d = nextDelay({ failures: this.failures, more: false }, this.now(), this.intervals, this.rand)
+		const d = nextDelay({ failures: step ?? this.failures, more: false }, this.now(), this.intervals, this.rand)
 		this.waitUntil = this.now() + d
 	}
 

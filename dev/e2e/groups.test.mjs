@@ -58,7 +58,9 @@ test('E42: alice on her own board, bob as an account through the edit link; the 
 	assert.match(src, /\{ button: 'right' \}/, 'a real right click')
 	assert.match(src, /groupOutlines \?\? 0\) === 1/, 'scene().groupOutlines = 1')
 	assert.match(src, /\['bl', 'br', 'tl', 'tr'\]/, 'exactly the four corners')
-	assert.match(src, /getAttribute\('aria-disabled'\)/)
+	// job 230: "Group items" in "…" stays blocked with its reason (knorke-more--blocked, title)
+	assert.match(src, /knorke-more--blocked/)
+	assert.match(src, /barMore\(pa, 'group'\)/)
 	assert.match(src, /editing === B/, 'a double click on B edits B')
 	assert.match(src, /mods: \['Control'\]/, 'the group drag without snapping')
 })
@@ -68,7 +70,9 @@ test('E42@390x844: a touch context with a fine pointer, a CDP tap on a member, U
 	assert.match(src, /Input\.dispatchTouchEvent/)
 	assert.match(src, /ub\.width >= 44 && ub\.height >= 44/)
 	assert.match(src, /ub\.x \+ ub\.width <= vp\.vw && ub\.y \+ ub\.height <= vp\.vh/)
-	assert.match(src, /\[data-knorke-action=ungroup\]'\)\.first\(\)\.tap\(\)/)
+	// job 230: a tap opens "…", a tap on Ungroup dissolves the group
+	assert.match(src, /\.knorke-menus \[data-knorke-action=ungroup\] button/)
+	assert.match(src, /cdpTap\(cdp, Math\.round\(ub\.x \+ ub\.width \/ 2\), Math\.round\(ub\.y \+ ub\.height \/ 2\)\)/)
 })
 
 test('E42: every check label names exactly one owner [S], [C], [B] or [D]; waits only from Node', () => {

@@ -6,7 +6,10 @@
  * Plain Vite build of the scene lab (SPEC-M0 §9.4): no Nextcloud config, Vite
  * and all packages from $ROOT/node_modules (read only; the cache lives in
  * dev/scene-lab/node_modules/.vite-lab). src/util/l10n.js is replaced by an
- * identity stub (allowed by §6.9). Output: dev/scene-lab/dist/.
+ * identity stub (allowed by §6.9). (Factory job 279) A Vue component
+ * (src/util/parts.js loads the shell's lazy parts, imported by the renderer)
+ * is an empty module here: the lab never opens one, and the lab has no Vue
+ * plugin. Output: dev/scene-lab/dist/.
  *
  *   node ../../node_modules/vite/bin/vite.js build --config vite.lab.config.js
  */
@@ -31,6 +34,15 @@ export default {
 		resolveId(source, importer) {
 			if (!importer || !source.endsWith('l10n.js')) return null
 			return resolve(dirname(importer), source) === L10N ? STUB : null
+		},
+	}, {
+		name: 'knorke-lab-vue-stub',
+		enforce: 'pre',
+		resolveId(source) {
+			return source.endsWith('.vue') ? '\0knorke-lab-vue' : null
+		},
+		load(id) {
+			return id === '\0knorke-lab-vue' ? 'export default {}\n' : null
 		},
 	}],
 	build: {

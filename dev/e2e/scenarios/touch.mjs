@@ -28,6 +28,17 @@
  *       click, review B3), a tap beside closes it, A's text unchanged;
  *   (6) shape tool, a finger drag over free canvas → one shape with the
  *       dragged size (±3 px), the tool back on select;
+ *   (6b) (job 142) the one-time tip: no bubble [data-knorke-tip=touch-select]
+ *       and no localStorage knorke.touchTip (E39_TIP_KEY) before the first
+ *       one-finger pan (steps 2–6 only tap and create); the first pan with
+ *       the select tool shows it while the finger is still down, and the pan
+ *       still covers its whole way; the bubble lies fully in the viewport,
+ *       horizontally centred, at most 420 px wide, clear of the toolbar and
+ *       the zoom controls, does not take the focus, its OK button
+ *       [data-knorke-action=touch-tip-ok] is at least 44 × 44 px, and the
+ *       key is '1'; a tap on OK closes it, .knorke-canvas has the focus, the
+ *       key stays '1'; another pan never shows it (a MutationObserver
+ *       watches the whole pan);
  *   (7) (R38, SPEC-M1 §6.3) hold, then drag: navigator.vibrate is replaced
  *       by a counter (window.__vib); alice puts two notes X and Y into a
  *       free area of the phone's view; a finger held still E39_HOLD_MS on
@@ -38,7 +49,21 @@
  *       the ring gone; the same way without the hold (cdpDrag) pans, keeps
  *       {X, Y}, never shows a ring and does not vibrate; with reduced motion
  *       a hold still shows the ring, without animation (animation-name
- *       none), and it goes with the finger.
+ *       none), and it goes with the finger (step 7 never shows the tip);
+ *   (8) (job 142) the page reloaded (the stored guest joins again): the key
+ *       is still '1' and a pan shows no tip.
+ *   (9) (job 190) locked items by the finger's marquee: alice moves X and Y
+ *       into a free area of the phone's view and locks them over the API; the
+ *       phone holds a finger and drags the marquee over X and Y → the
+ *       selection stays empty and the context bar shows only
+ *       [data-knorke-action=select-locked] "Select 2 locked items" (no Copy,
+ *       no count), the bar wholly in the viewport, the button at least
+ *       44 × 44 px; a tap on empty canvas ends the offer (selection empty,
+ *       bar gone); the same marquee again, a tap on the button →
+ *       selection() = {X, Y}, the bar with Copy and the lock badge, without
+ *       Unlock (alice's locks, a guest), .knorke-canvas has the focus; a held
+ *       finger's marquee over empty canvas then empties the selection and
+ *       the bar goes (a tap on empty canvas keeps a selection, SPEC-M1).
  *   Own board, no instance setting: before E09, directly after E38.
  *   Red before H1 at (2) (no new note), green after it; red before R38 at
  *   (7) (no ring, the held finger pans).
@@ -57,7 +82,7 @@ export const E39_VIEWPORT = Object.freeze({ width: 393, height: 873 })
 export const E39_DPR = 2.75
 export const E39_TEXT = 'Finger note H1'
 /** Fill of a new note without a chosen colour: src/model/tokens.js DEFAULT_STICKY_FILL (touch.test.mjs compares). */
-export const E39_DEFAULT_FILL = '#a8d8f8'
+export const E39_DEFAULT_FILL = '#a2d9fe'
 /** Size of the shape drag in screen px (step 6). */
 export const E39_DRAG = Object.freeze({ w: 120, h: 90 })
 /** Step 7: how long the finger is held still (LONG_PRESS_MS = 500 plus room for a slow frame). */
@@ -67,6 +92,10 @@ export const E39_RING_PX = 120
 export const E39_VIBRATE_MS = 20
 /** Step 7: the free area (screen px) that takes P, X, Y and the marquee. */
 export const E39_MARQUEE = Object.freeze({ w: 200, h: 150 })
+/** Steps 6b and 8: the key the session stores when the tip appears (src/util/storage.js keys.touchTip). */
+export const E39_TIP_KEY = 'knorke.touchTip'
+/** Step 6b: widest bubble (px, CSS max-width plus a rounding pixel). */
+export const E39_TIP_MAX_W = 421
 
 /** One finger down, held `hold` ms, up (CDP touch events, like a real finger). */
 async function cdpTap(cdp, x, y, hold = 60) {
@@ -285,6 +314,18 @@ async function steps(t, alice, phone, board, A, token) {
 
 	t.step('(6) Form-Werkzeug: Finger zieht eine Form auf')
 	t.must(await tapTool(p, 'shape'), '[C] Form-Werkzeug per Tipp gewählt (aria-pressed)')
+	// job 229: the shape tool opens the shapes panel, which covers most of a phone's board: a tile arms the
+	// tool, × closes the panel and the tool stays (A is still selected: its docked context bar leaves × free)
+	t.must(await until(() => p.locator('[data-knorke-shapes]').first().isVisible().catch(() => false), { timeout: 3000 }), '[C] das Form-Werkzeug öffnet das Formen-Panel')
+	const centreOf = async (sel) => {
+		const b = await p.locator(sel).first().boundingBox({ timeout: 3000 })
+		return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }
+	}
+	const tile = await centreOf('[data-knorke-shapes] [data-knorke-shape="basic.rect"]')
+	await cdpTap(cdp, tile.x, tile.y)
+	const close = await centreOf('[data-knorke-shapes] [data-knorke-action=shapes-close]')
+	await cdpTap(cdp, close.x, close.y)
+	t.must(await until(async () => (await p.locator('[data-knorke-shapes]').count()) === 0 && (await p.locator('[data-knorke-tool=shape]').first().getAttribute('aria-pressed')) === 'true', { timeout: 3000 }), '[C] Rechteck gewählt, × schließt das Panel, das Form-Werkzeug bleibt')
 	const area = await freeRect(p, E39_DRAG.w, E39_DRAG.h)
 	t.must(area, '[D] freie Fläche für das Aufziehen gefunden')
 	const before6 = await itemMap(p)
@@ -306,7 +347,139 @@ async function steps(t, alice, phone, board, A, token) {
 	const seenShape = await until(async () => (await itemMap(alice.page)).get(S[0].id)?.t === 'shape', { timeout: 8000 })
 	t.check(seenShape, '[C] alice sieht die Form')
 
-	await holdMarquee(t, p, cdp, board)
+	await touchTip(t, p, cdp)
+	const { X, Y } = await holdMarquee(t, p, cdp, board)
+	await reloadNoTip(t, p, cdp)
+	await lockedOffer(t, p, cdp, board, X, Y)
+}
+
+const TIP = '[data-knorke-tip="touch-select"]'
+const TIP_OK = '[data-knorke-action="touch-tip-ok"]'
+
+const tipVisible = (page) => page.locator(TIP).first().isVisible().catch(() => false)
+const tipStored = (page) => page.evaluate((k) => window.localStorage.getItem(k), E39_TIP_KEY)
+
+/** Bounding boxes (client px) of the tip, its OK button, the toolbar, the zoom controls and the canvas; the viewport. */
+async function tipLayout(page) {
+	const box = async (sel) => ((await page.locator(sel).count()) > 0 ? page.locator(sel).first().boundingBox() : null)
+	return {
+		tip: await box(TIP),
+		ok: await box(TIP_OK),
+		toolbar: await box('[data-knorke-toolbar]'),
+		zoom: await box('.knorke-zoom'),
+		canvas: await box(CANVAS),
+		viewport: await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight })),
+	}
+}
+
+const overlaps = (a, b) => !!a && !!b && a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+/** From now on window.__tipSeen records whether the tip appears (MutationObserver on the body). */
+async function watchTip(page) {
+	await page.evaluate((sel) => {
+		window.__tipSeen = !!document.querySelector(sel)
+		window.__tipObs?.disconnect()
+		window.__tipObs = new MutationObserver(() => {
+			if (document.querySelector(sel)) window.__tipSeen = true
+		})
+		window.__tipObs.observe(document.body, { childList: true, subtree: true })
+	}, TIP)
+}
+
+/** @return {Promise<boolean>} the tip appeared since watchTip (the observer stops) */
+const tipSeen = (page) => page.evaluate(() => {
+	window.__tipObs?.disconnect()
+	return window.__tipSeen === true
+})
+
+/** A one-finger pan (no hold) from the lowest free canvas point up by `dy` px (less near the top). */
+async function panUp(page, cdp, dy) {
+	const box = await page.locator(CANVAS).first().boundingBox()
+	const low = await freeRect(page, 40, 40, 24, { bottomUp: true })
+	if (!box || !low) return null
+	const from = { x: low.x + 20, y: low.y + 20 }
+	const to = { x: from.x, y: Math.max(box.y + 20, from.y - dy) }
+	await cdpDrag(cdp, from, to)
+	await sleep(100)
+	return { from, to }
+}
+
+/**
+ * Step (6b) of E39 (header): the one-time tip after the first one-finger pan (job 142).
+ *
+ * @param {object} t test context
+ * @param {import('playwright').Page} p the phone's page
+ * @param {object} cdp CDP session of the phone
+ */
+async function touchTip(t, p, cdp) {
+	t.step('(6b) Einmaliger Tipp nach dem ersten Ein-Finger-Schwenk')
+	if (await toolPressed(p, 'select') !== 'true') await tapTool(p, 'select')
+	t.must(await toolPressed(p, 'select') === 'true', '[C] Auswählen-Werkzeug aktiv')
+	t.check(await p.locator(TIP).count() === 0, '[C] vor dem ersten Schwenk keine Blase (bisher nur Tippen und Aufziehen)')
+	t.check(await tipStored(p) === null, '[C] der Tipp ist in diesem Browser noch nicht gemerkt', await tipStored(p))
+	const box = await p.locator(CANVAS).first().boundingBox()
+	const low = await freeRect(p, 40, 40, 24, { bottomUp: true })
+	t.must(box && low, '[D] freie Stelle für den ersten Schwenk gefunden')
+	const from = { x: low.x + 20, y: low.y + 20 }
+	const dy = Math.round(Math.min(200, from.y - box.y - 20))
+	t.must(dy >= 60, '[D] Platz für den Schwenk nach oben', { from, dy })
+	const mid = { x: from.x, y: from.y - Math.round(dy / 2) }
+	const to = { x: from.x, y: from.y - dy }
+	const cam0 = await K.camera(p)
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: from.x, y: from.y }] })
+	await cdpMoves(cdp, from, mid, 5)
+	t.check(await until(() => tipVisible(p), { timeout: 2000 }), '[C] die Blase erscheint schon während des ersten Schwenks')
+	await cdpMoves(cdp, mid, to, 5)
+	// the finger rests before it lifts: no fling, whose stop would swallow the tap on OK below (no click)
+	await sleep(150)
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+	await sleep(100)
+	const cam1 = await K.camera(p)
+	t.check(Math.abs((cam1.y - cam0.y) * cam0.scale - dy) <= 2 && Math.abs(cam1.x - cam0.x) * cam0.scale <= 2 && cam1.scale === cam0.scale,
+		'[S] die Blase bricht den laufenden Schwenk nicht ab (die Kamera folgt dem ganzen Weg)', { cam0, cam1, dy })
+	const L = await tipLayout(p)
+	const r = (b) => (b ? [b.x, b.y, b.width, b.height].map(Math.round).join(',') : '–')
+	t.note(`Tipp-Blase ${r(L.tip)}, OK ${r(L.ok)}, Werkzeugleiste ${r(L.toolbar)}, Zoom ${r(L.zoom)}, Leinwand ${r(L.canvas)} (x,y,w,h)`)
+	const inView = (r) => !!r && r.x >= 0 && r.y >= 0 && r.x + r.width <= L.viewport.w && r.y + r.height <= L.viewport.h
+	t.check(await tipVisible(p) && inView(L.tip), '[C] die Blase liegt ganz im sichtbaren Bereich', L)
+	t.check(!!L.tip && !!L.toolbar && !!L.zoom && !overlaps(L.tip, L.toolbar) && !overlaps(L.tip, L.zoom), '[C] die Blase überdeckt weder Werkzeugleiste noch Zoom-Steuerung', L)
+	t.check(!!L.tip && !!L.canvas && L.tip.width <= E39_TIP_MAX_W && Math.abs(L.tip.x + L.tip.width / 2 - (L.canvas.x + L.canvas.width / 2)) <= 1,
+		'[C] die Blase steht waagrecht mittig, höchstens 420 px breit', L)
+	t.check(!!L.ok && L.ok.width >= 44 && L.ok.height >= 44, '[C] der OK-Knopf ist mindestens 44 × 44 px groß', L.ok)
+	t.check(!(await p.evaluate((sel) => !!document.activeElement?.closest(sel), TIP)), '[C] die Blase nimmt beim Erscheinen nicht den Fokus')
+	t.check(await tipStored(p) === '1', '[C] der Tipp ist schon beim Erscheinen gemerkt', await tipStored(p))
+	await p.locator(TIP_OK).first().tap()
+	t.check(await until(async () => (await p.locator(TIP).count()) === 0, { timeout: 2000 }), '[C] Tippen auf OK schließt die Blase')
+	const focus = await p.evaluate(() => ({ canvas: document.activeElement?.matches('.knorke-canvas') === true, tag: document.activeElement?.tagName ?? null, cls: document.activeElement?.className ?? null }))
+	t.check(focus.canvas, '[C] nach OK hat die Leinwand (.knorke-canvas) den Fokus', focus)
+	t.check(await tipStored(p) === '1', '[C] localStorage knorke.touchTip bleibt "1"', await tipStored(p))
+	await watchTip(p)
+	const again = await panUp(p, cdp, 80)
+	t.must(again, '[D] freie Stelle für den zweiten Schwenk gefunden')
+	t.check(!(await tipSeen(p)) && (await p.locator(TIP).count()) === 0, '[C] ein weiterer Schwenk zeigt keine Blase', again)
+}
+
+/**
+ * Step (8) of E39 (header): after a reload the tip never comes back (job 142).
+ *
+ * @param {object} t test context
+ * @param {import('playwright').Page} p the phone's page
+ * @param {object} cdp CDP session of the phone (it stays attached across the reload)
+ */
+async function reloadNoTip(t, p, cdp) {
+	t.step('(8) Neu laden: der Tipp kommt nicht wieder')
+	await p.reload({ waitUntil: 'domcontentloaded' })
+	await waitReady(p, 30000)
+	t.check(await tipStored(p) === '1', '[C] der gemerkte Tipp übersteht das Neuladen', await tipStored(p))
+	if (await toolPressed(p, 'select') !== 'true') await tapTool(p, 'select')
+	t.must(await toolPressed(p, 'select') === 'true', '[C] Auswählen-Werkzeug aktiv nach dem Neuladen')
+	await watchTip(p)
+	const cam0 = await K.camera(p)
+	const pan = await panUp(p, cdp, 120)
+	t.must(pan, '[D] freie Stelle für den Schwenk nach dem Neuladen gefunden')
+	const cam1 = await K.camera(p)
+	t.check(Math.abs(cam1.y - cam0.y) * cam0.scale > 20, '[S] der Finger schwenkt nach dem Neuladen', { cam0, cam1, pan })
+	t.check(!(await tipSeen(p)) && (await p.locator(TIP).count()) === 0, '[C] ein Schwenk nach dem Neuladen zeigt keine Blase')
 }
 
 /**
@@ -316,11 +489,17 @@ async function steps(t, alice, phone, board, A, token) {
  * @param {import('playwright').Page} p the phone's page
  * @param {object} cdp CDP session of the phone
  * @param {string} board board id
+ * @return {Promise<{X: string, Y: string}>} the two notes alice put there (step 9 locks them)
  */
 async function holdMarquee(t, p, cdp, board) {
 	t.step('(7) Halten, dann Ziehen: Auswahlrahmen per Finger mit Ring und Vibration')
 	if (await toolPressed(p, 'select') !== 'true') await tapTool(p, 'select')
 	t.must(await toolPressed(p, 'select') === 'true', '[C] Auswählen-Werkzeug aktiv')
+	// job 229: with the tool bar at the top left the free areas lie elsewhere; nothing selected, so no "+" of
+	// the shape from step 6 lies under the finger
+	await p.locator(CANVAS).first().focus()
+	await p.keyboard.press('Escape')
+	t.must(await until(async () => ((await K.selection(p)) || []).length === 0, { timeout: 2000 }), '[D] nichts ist ausgewählt (kein „+“ unter dem Finger)', await K.selection(p))
 	await p.evaluate(() => {
 		window.__vib = []
 		navigator.vibrate = (pattern) => {
@@ -399,6 +578,7 @@ async function holdMarquee(t, p, cdp, board) {
 	t.check(Array.isArray(sel2) && sel2.length === 2 && sel2.includes(X) && sel2.includes(Y), '[S] der Schwenk lässt die Auswahl {X, Y} stehen', sel2)
 	t.check(seenDuring === false && (await p.locator(RING).count()) === 0, '[S] während und nach dem Schwenk gibt es keinen Ring', { seenDuring })
 	t.check(JSON.stringify(await vib()) === JSON.stringify([E39_VIBRATE_MS]), '[S] der Schwenk vibriert nicht', await vib())
+	t.check(await p.locator(TIP).count() === 0, '[C] auch nach den Schwenks von Schritt 7 keine Blase (job 142)')
 
 	t.step('(7c) Reduzierte Bewegung: der Ring erscheint ohne Einblendung')
 	await p.emulateMedia({ reducedMotion: 'reduce' })
@@ -416,4 +596,139 @@ async function holdMarquee(t, p, cdp, board) {
 	} finally {
 		await p.emulateMedia({ reducedMotion: null })
 	}
+	return { X, Y }
+}
+
+const OFFER = '[data-knorke-action="select-locked"]'
+const BAR = '.knorke-contextbar'
+
+/**
+ * A held finger's marquee from `a` to `b` (CDP touch: held E39_HOLD_MS, 10 moves, lifted). The finger
+ * rests before it lifts: no fling, whose stop would swallow the next tap (no click), as in step (6b).
+ */
+async function cdpHoldDrag(cdp, a, b) {
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: a.x, y: a.y }] })
+	await sleep(E39_HOLD_MS)
+	await cdpMoves(cdp, a, b)
+	await sleep(150)
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+}
+
+/** The context bar: whether it shows, its box, its actions, the count, the offer button's box and text. */
+async function barInfo(page) {
+	return page.evaluate(([bar, offer]) => {
+		const el = document.querySelector(bar)
+		if (!el) return null
+		const box = (e) => {
+			if (!e) return null
+			const r = e.getBoundingClientRect()
+			return { x: r.x, y: r.y, width: r.width, height: r.height }
+		}
+		const visible = getComputedStyle(el).visibility !== 'hidden'
+		const btn = el.querySelector(offer)
+		return {
+			visible,
+			box: box(el),
+			actions: [...el.querySelectorAll('[data-knorke-action]')].map((e) => e.getAttribute('data-knorke-action')),
+			// job 230: copy, unlock … are entries of "…"
+			more: !!el.querySelector('[data-knorke-menu=selection]'),
+			count: el.querySelector('.knorke-contextbar__count, [data-knorke-action="filter"]')?.textContent?.trim() ?? null,
+			badge: !!el.querySelector('[data-knorke-lock-badge]'),
+			offer: btn ? { box: box(btn), text: btn.textContent.replace(/\s+/g, ' ').trim() } : null,
+			viewport: { w: window.innerWidth, h: window.innerHeight },
+		}
+	}, [BAR, OFFER])
+}
+
+/** @return {boolean} the box lies wholly in the viewport */
+const inViewport = (b, vp) => !!b && b.x >= 0 && b.y >= 0 && b.x + b.width <= vp.w && b.y + b.height <= vp.h
+
+/**
+ * Step (9) of E39 (header): locked items by the finger's marquee (job 190).
+ *
+ * @param {object} t test context
+ * @param {import('playwright').Page} p the phone's page
+ * @param {object} cdp CDP session of the phone
+ * @param {string} board board id
+ * @param {string} X a note of step 7
+ * @param {string} Y the other one
+ */
+async function lockedOffer(t, p, cdp, board, X, Y) {
+	t.step('(9) Gesperrte Objekte per Finger-Rahmen: nur „Select 2 locked items“, ein Tipp wählt sie aus')
+	if (await toolPressed(p, 'select') !== 'true') await tapTool(p, 'select')
+	t.must(await toolPressed(p, 'select') === 'true', '[C] Auswählen-Werkzeug aktiv')
+	t.must(Array.isArray(await K.selection(p)) && (await K.selection(p)).length === 0, '[D] nach dem Neuladen ist nichts ausgewählt', await K.selection(p))
+	const area = await clearArea(p, cdp, E39_MARQUEE.w, E39_MARQUEE.h)
+	t.must(area, '[D] freie Fläche für den Rahmen gefunden', { canvas: await p.locator(CANVAS).first().boundingBox(), camera: await K.camera(p) })
+	// X and Y into the area (as in step 7), then alice locks them
+	const cam = await K.camera(p)
+	const o = await K.w2s(p, cam.x, cam.y)
+	const toWorld = (cx, cy) => ({ x: Math.round(cam.x + (cx - o.x) / cam.scale), y: Math.round(cam.y + (cy - o.y) / cam.scale) })
+	const wx = toWorld(area.x + area.w * 0.3, area.y + area.h * 0.3)
+	const wy = toWorld(area.x + area.w * 0.6, area.y + area.h * 0.3)
+	const lock = { by: 'e39', name: 'E39' }
+	const res = await seedOps('alice', board, [
+		{ o: 'patch', id: X, p: { x: wx.x, y: wx.y, parent: null } },
+		{ o: 'patch', id: Y, p: { x: wy.x, y: wy.y, parent: null } },
+		{ o: 'patch', id: X, p: { lock } },
+		{ o: 'patch', id: Y, p: { lock } },
+	])
+	t.must(res.every((r) => r === 'ok'), '[B] alice verschiebt und sperrt X und Y über die API', res)
+	const here = await until(async () => {
+		const m = await itemMap(p)
+		return [X, Y].every((id) => m.get(id)?.lock?.by && Math.abs(m.get(id).x - (id === X ? wx.x : wy.x)) < 1) ? m : null
+	}, { timeout: 8000 })
+	t.must(here, '[C] X und Y sind beim Handy gesperrt an ihrem neuen Platz')
+	const P = { x: area.x + 12, y: area.y + 12 }
+	const Q = { x: area.x + area.w - 12, y: area.y + area.h - 12 }
+	const within = (r) => !!r && r.x > P.x + 2 && r.y > P.y + 2 && r.x + r.w < Q.x - 2 && r.y + r.h < Q.y - 2
+	const rx = await K.rect(p, X)
+	const ry = await K.rect(p, Y)
+	t.must(within(rx) && within(ry), '[D] X und Y liegen ganz zwischen P und dem Zielpunkt', { rx, ry, P, Q })
+	t.must(await onCanvas(p, [[P.x, P.y], [Q.x, Q.y]]), '[D] P und der Zielpunkt liegen auf freier Leinwand', { P, Q })
+
+	await cdpHoldDrag(cdp, P, Q)
+	const b1 = await until(async () => {
+		const b = await barInfo(p)
+		return b && b.visible && b.offer ? b : null
+	}, { timeout: 3000 })
+	t.check((await K.selection(p))?.length === 0, '[S] der Finger-Rahmen über nur Gesperrtes lässt die Auswahl leer', await K.selection(p))
+	t.must(b1, '[C] die Kontextleiste erscheint ohne Auswahl mit dem Knopf', await barInfo(p))
+	const r = (b) => [b.x, b.y, b.width, b.height].map(Math.round).join(',')
+	t.note(`Leiste ${r(b1.box)}, Knopf ${r(b1.offer.box)} (x,y,w,h), Viewport ${b1.viewport.w}×${b1.viewport.h}`)
+	t.check(b1.offer.text === 'Select 2 locked items', '[C] der Knopf heißt „Select 2 locked items“', b1.offer)
+	t.check(JSON.stringify(b1.actions) === JSON.stringify(['select-locked']) && b1.count === null, '[C] die Leiste zeigt nur diesen Knopf (kein Kopieren, keine Anzahl)', b1)
+	t.check(inViewport(b1.box, b1.viewport) && inViewport(b1.offer.box, b1.viewport), '[C] Leiste und Knopf liegen ganz im Viewport', b1)
+	t.check(b1.offer.box.width >= 44 && b1.offer.box.height >= 44, '[C] der Knopf ist mindestens 44 × 44 px groß', b1.offer.box)
+
+	// a tap on empty canvas ends the offer
+	const spot = await freeRect(p, 40, 40)
+	t.must(spot, '[D] freie Stelle für den Tipp gefunden')
+	await cdpTap(cdp, spot.x + 20, spot.y + 20)
+	t.check(await until(async () => (await p.locator(BAR).count()) === 0, { timeout: 2000 }), '[C] ein Tipp auf leere Fläche: die Leiste mit dem Knopf ist weg')
+	t.check((await K.selection(p))?.length === 0, '[S] die Auswahl bleibt leer', await K.selection(p))
+
+	// again, then the button
+	await cdpHoldDrag(cdp, P, Q)
+	t.must(await until(async () => (await barInfo(p))?.offer ?? null, { timeout: 3000 }), '[C] der Knopf ist nach dem zweiten Rahmen wieder da', await barInfo(p))
+	await p.locator(OFFER).first().tap()
+	const sel = await until(async () => {
+		const s = await K.selection(p)
+		return Array.isArray(s) && s.length === 2 && s.includes(X) && s.includes(Y) ? s : null
+	}, { timeout: 3000 })
+	t.check(sel, '[S] Tipp auf den Knopf: genau X und Y sind ausgewählt', await K.selection(p))
+	const b2 = await until(async () => {
+		const b = await barInfo(p)
+		return b && b.visible && b.more ? b : null
+	}, { timeout: 3000 })
+	t.check(!!b2 && b2.badge && b2.more && !b2.actions.includes('select-locked'), '[C] die Leiste zeigt „…“ (mit Kopieren) und das Sperr-Etikett, ohne den Knopf (Job 230)', b2 ?? await barInfo(p))
+	const focus = await p.evaluate(() => document.activeElement?.matches('.knorke-canvas') === true)
+	t.check(focus, '[C] danach hat die Leinwand den Fokus (wie nach Sperren)')
+
+	// a held finger's marquee over empty canvas empties the selection
+	const empty = await freeRect(p, E39_MARQUEE.w, E39_MARQUEE.h)
+	t.must(empty, '[D] freie Fläche für den leeren Rahmen gefunden')
+	await cdpHoldDrag(cdp, { x: empty.x + 12, y: empty.y + 12 }, { x: empty.x + empty.w - 12, y: empty.y + empty.h - 12 })
+	t.check(await until(async () => (await K.selection(p))?.length === 0, { timeout: 2000 }), '[S] ein Finger-Rahmen über leere Fläche leert die Auswahl', await K.selection(p))
+	t.check(await until(async () => (await p.locator(BAR).count()) === 0, { timeout: 2000 }), '[C] die Leiste ist weg')
 }

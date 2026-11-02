@@ -41,6 +41,16 @@ export function builtInText({ vote = false } = {}) {
 		: t('knorke', 'Everyone on this board sees your name, your cursor and everything you add or change. The board is stored on this Nextcloud server.')
 }
 
+/**
+ * (Job 267) The built-in notice before the first AI task (an admin text
+ * replaces it: AiNotice, route 58).
+ *
+ * @return {string}
+ */
+export function aiNoticeText() {
+	return t('knorke', 'The text of the selected items and frame titles is sent to the AI provider your administrator set up. Names, votes, comments and reactions are not sent. Check the result before you rely on it.')
+}
+
 /** @return {string} what guests of a board open by link see (badge title, account card) */
 export function explainText() {
 	return t('knorke', 'Guests can join this board through a link without an account. They see the display names and cursors of everyone on the board and all of its content.')

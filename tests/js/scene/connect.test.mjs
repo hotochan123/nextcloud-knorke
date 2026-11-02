@@ -88,6 +88,38 @@ describe('tool L', () => {
 		assert.equal(h.scene.stats().connecting, null)
 	})
 
+	test('job 153 AK1: with the default tool options a drag with L gives connect elbow/arrow, and the preview is elbow already (axis-parallel segments)', () => {
+		h = setupScene(notes())
+		h.scene.setTool('connector')
+		rcalls.length = 0
+		drag(200, 200, 650, 450)
+		assert.deepEqual(h.intents('connect'), [{ type: 'connect', start: { item: A }, end: { x: 650, y: 450 }, route: 'elbow', endCap: 'triangle' }])
+		const shown = rcalls.filter((c) => c[0] === 'setConnectPreview' && c[1] !== null).map((c) => c[1])
+		const pts = shown.at(-1).points
+		assert.ok(pts.length >= 6, 'more than one segment: ' + pts.join(','))
+		for (let i = 2; i < pts.length; i += 2) {
+			assert.ok(pts[i] === pts[i - 2] || pts[i + 1] === pts[i - 1], `segment ${i / 2} axis-parallel: ${pts.join(',')}`)
+		}
+	})
+
+	test('job 197 AK9: the elbow preview runs around a note between the start item and the target', () => {
+		const D = '01JA0000000000000000000004'
+		h = setupScene([...notes(), note(D, { x: 350, y: 100 })])
+		h.scene.setTool('connector')
+		rcalls.length = 0
+		drag(200, 200, 700, 200)
+		assert.deepEqual(h.intents('connect'), [{ type: 'connect', start: { item: A }, end: { item: B }, route: 'elbow', endCap: 'triangle' }])
+		const pts = rcalls.filter((c) => c[0] === 'setConnectPreview' && c[1] !== null).at(-1)[1].points
+		assert.ok(pts.length > 4, 'not the straight line through the note: ' + pts.join(','))
+		for (let i = 0; i + 3 < pts.length; i += 2) {
+			const [x0, y0, x1, y1] = pts.slice(i, i + 4)
+			const through = y0 === y1
+				? y0 > 100 && y0 < 300 && Math.max(x0, x1) > 350 && Math.min(x0, x1) < 550
+				: x0 > 350 && x0 < 550 && Math.max(y0, y1) > 100 && Math.min(y0, y1) < 300
+			assert.equal(through, false, `segment ${i / 2} runs through the note: ${pts.join(',')}`)
+		}
+	})
+
 	test('snapping: an anchor ≤ SNAP_PX (inside or beside the item), else auto inside, else a free point on the 0.01 grid', () => {
 		h = setupScene(notes())
 		const endOf = (x, y) => {
@@ -105,7 +137,7 @@ describe('tool L', () => {
 		h = setupScene(notes())
 		h.scene.setTool('connector')
 		drag(450, 450, 650, 250, { ctrlKey: true })
-		assert.deepEqual(h.intents('connect')[0], { type: 'connect', start: { x: 450, y: 450 }, end: { x: 650, y: 250 }, route: 'straight', endCap: 'arrow' })
+		assert.deepEqual(h.intents('connect')[0], { type: 'connect', start: { x: 450, y: 450 }, end: { x: 650, y: 250 }, route: 'elbow', endCap: 'triangle' })
 		h.scene.setTool('connector')
 		h.pointer('pointerdown', 200, 200)
 		h.pointer('pointermove', 650, 250)
@@ -143,9 +175,10 @@ describe('"+" handles and end handles', () => {
 		h = setupScene(notes())
 		h.scene.setSelection([A])
 		const plus = h.scene.handles().filter((x) => x.name.startsWith('plus-'))
-		assert.deepEqual(plus.map((x) => [x.name, x.x, x.y]), [['plus-t', 200, 56], ['plus-r', 344, 200], ['plus-b', 200, 344], ['plus-l', 56, 200]])
-		drag(344, 200, 650, 250)
-		assert.deepEqual(h.intents('connect'), [{ type: 'connect', start: { item: A, ax: 1, ay: 0.5 }, end: { item: B }, route: 'straight', endCap: 'arrow' }])
+		// (job 231) on the selection frame, which lies 4 px outside the box (job 140)
+		assert.deepEqual(plus.map((x) => [x.name, x.x, x.y]), [['plus-t', 200, 96], ['plus-r', 304, 200], ['plus-b', 200, 304], ['plus-l', 96, 200]])
+		drag(304, 200, 650, 250)
+		assert.deepEqual(h.intents('connect'), [{ type: 'connect', start: { item: A, ax: 1, ay: 0.5 }, end: { item: B }, route: 'elbow', endCap: 'triangle' }])
 		assert.deepEqual(h.intents('transform'), [], 'no transform from a "+" handle')
 	})
 
@@ -153,7 +186,7 @@ describe('"+" handles and end handles', () => {
 		h = setupScene([shapeItem(A, { x: 100, y: 100, w: 200, h: 200, data: { kind: 'triangle', text: '' } }), note(B, { x: 600, y: 100 })])
 		h.scene.setSelection([A])
 		const r = h.scene.handles().find((x) => x.name === 'plus-r')
-		assert.deepEqual([r.x, r.y], [250 + 44, 200], 'triangle right anchor (0.75, 0.5)')
+		assert.deepEqual([r.x, r.y], [250 + 4, 200], 'triangle right anchor (0.75, 0.5), 4 px out on its normal (job 231)')
 		h.scene.setSelection([A, B])
 		assert.equal(h.scene.handles().filter((x) => x.name.startsWith('plus-')).length, 0)
 	})
@@ -164,7 +197,7 @@ describe('"+" handles and end handles', () => {
 			on: { onIntent: (i) => { if (i.type === 'retarget') active.push(h.scene.isActive(C1)) } },
 		})
 		h.scene.setSelection([C1])
-		assert.deepEqual(h.scene.handles(), [{ name: 'start', x: 300, y: 200 }, { name: 'end', x: 600, y: 200 }])
+		assert.deepEqual(h.scene.handles().map((x) => [x.name, x.x, x.y]), [['start', 300, 200], ['end', 600, 200]])
 		h.pointer('pointerdown', 600, 200)
 		h.pointer('pointermove', 400, 400)
 		h.frame()
@@ -308,8 +341,8 @@ describe('label, transform, remote previews, queries', () => {
 		assert.equal(ta?.getAttribute('data-knorke-editor-kind'), 'label')
 		assert.equal(ta.maxLength, 200)
 		h.frame()
-		// empty editor: LABEL_EDITOR_MIN_W = 4 · 16 + 2 · 4 = 72 wide, centred at labelAt.x 450
-		assert.match(ta.style.getPropertyValue('transform'), /^translate\(414px, 186\.4px\)/)
+		// empty editor: LABEL_EDITOR_MIN_W = 4 · 15 + 2 · 9 = 78 wide (job 261), centred at labelAt.x 450
+		assert.match(ta.style.getPropertyValue('transform'), /^translate\(411px, 186px\)/)
 		ta.value = 'ja'
 		dispatch(ta, 'input', {})
 		h.key('Enter', { target: ta })
@@ -328,7 +361,7 @@ describe('label, transform, remote previews, queries', () => {
 		h = setupScene([note(A, { x: 100, y: 100 }), conn(C2, { x: 100, y: 400 }, { x: 300, y: 400 })])
 		h.scene.setSelection([A, C2])
 		const br = h.scene.handles().find((x) => x.name === 'br')
-		assert.deepEqual([br.x, br.y], [300, 400], 'the frame includes the route box')
+		assert.deepEqual([br.x, br.y], [304, 404], 'the frame includes the route box (and the gap of job 140)')
 		h.pointer('pointerdown', br.x, br.y)
 		h.pointer('pointermove', br.x + 30, br.y + 30)
 		h.frame()

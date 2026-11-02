@@ -101,7 +101,7 @@ test('R22 P7-07 http.js: 403/404 without the app body are proxy blocks (fromApp 
 		assert.equal(e.fromApp, true)
 		assert.equal(isProxyBlock(e), false, e.code)
 	}
-	assert.equal(isProxyBlock(await wire(401, JSON.stringify({ message: 'Current user is not logged in' }), 'application/json')), false, 'Nextcloud 401 is not a proxy block: one is bridged, the second in a row is logged_out (R21)')
+	assert.equal(isProxyBlock(await wire(401, JSON.stringify({ message: 'Current user is not logged in' }), 'application/json')), false, 'Nextcloud 401 is not a proxy block: three are bridged, the fourth in a row is logged_out (R21, job 164)')
 	assert.equal(isProxyBlock(await wire(429, HTML)), false)
 	assert.equal(isProxyBlock(await wire(503, HTML)), false)
 	assert.equal(isProxyBlock(new HttpError(0, 'network')), false)

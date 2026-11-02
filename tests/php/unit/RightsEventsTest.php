@@ -16,7 +16,9 @@ use OCA\Knorke\BackgroundJob\CleanupJob;
 use OCA\Knorke\Listener\GroupListener;
 use OCA\Knorke\Listener\TeamListener;
 use OCA\Knorke\Listener\UserDeletedListener;
+use OCA\Knorke\Listener\UserEnabledListener;
 use OCA\Knorke\Notification\Notifier;
+use OCA\Knorke\Reference\BoardReferenceProvider;
 use OCA\Knorke\Search\BoardSearchProvider;
 use OCA\Knorke\Service\Limits;
 use OCA\Knorke\Service\ShareService;
@@ -24,6 +26,7 @@ use OCA\Knorke\Tests\Support\AccessHarness;
 use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\FakeItemStore;
 use OCA\Knorke\Tests\Support\SyncHarness;
+use OCA\Knorke\Tests\Support\TemplateHarness;
 use OCA\Knorke\Tests\Support\VoteHarness;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -32,6 +35,7 @@ use OCP\Group\Events\GroupDeletedEvent;
 use OCP\Group\Events\UserRemovedEvent;
 use OCP\IGroup;
 use OCP\IUser;
+use OCP\User\Events\UserChangedEvent;
 use OCP\User\Events\UserDeletedEvent;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -72,6 +76,8 @@ final class RightsEventsTest extends TestCase {
         $seen = [];
         $search = [];
         $notifiers = [];
+        $references = [];
+        $services = [];
         $order = [];
         $context = Fake::of(IRegistrationContext::class, [
             'registerEventListener' => function (string $event, string $listener, int $priority = 0) use (&$seen, &$order): void {
@@ -86,11 +92,23 @@ final class RightsEventsTest extends TestCase {
                 $notifiers[] = $class;
                 $order[] = 'notifier';
             },
+            'registerReferenceProvider' => function (string $class) use (&$references, &$order): void {
+                $references[] = $class;
+                $order[] = 'reference';
+            },
+            'registerService' => function (string $name, callable $factory, bool $shared = true) use (&$services, &$order): void {
+                $services[] = [$name, $factory, $shared];
+                $order[] = 'service';
+            },
         ]);
         // App::__construct needs the server; register() only names classes.
         (new \ReflectionClass(Application::class))->newInstanceWithoutConstructor()->register($context);
         $this->assertSame([
             [UserDeletedEvent::class, UserDeletedListener::class],
+            // factory job 267: the end of an AI task
+            ['OCP\TaskProcessing\Events\TaskSuccessfulEvent', 'OCA\Knorke\Listener\AiTaskListener'],
+            ['OCP\TaskProcessing\Events\TaskFailedEvent', 'OCA\Knorke\Listener\AiTaskListener'],
+            [UserChangedEvent::class, UserEnabledListener::class],
             [UserRemovedEvent::class, GroupListener::class],
             [GroupDeletedEvent::class, GroupListener::class],
             ['OCA\Circles\Events\MembershipsRemovedEvent', TeamListener::class],
@@ -101,7 +119,15 @@ final class RightsEventsTest extends TestCase {
         $this->assertSame('OCA\Knorke\Search\BoardSearchProvider', BoardSearchProvider::class);
         $this->assertSame([Notifier::class], $notifiers, 'share notifications (M2): exactly one notifier, by class name');
         $this->assertSame('OCA\Knorke\Notification\Notifier', Notifier::class);
-        $this->assertSame(['listener', 'listener', 'listener', 'listener', 'listener', 'listener', 'search', 'notifier'], $order, 'the notifier after the search provider');
+        $this->assertSame([BoardReferenceProvider::class], $references, 'link previews (M2, job 157): exactly one reference provider, by class name');
+        $this->assertSame('OCA\Knorke\Reference\BoardReferenceProvider', BoardReferenceProvider::class);
+        $this->assertCount(1, $services, 'one factory, nothing else is registered as a service');
+        [$name, $factory, $shared] = $services[0];
+        $this->assertSame(BoardReferenceProvider::class, $name, 'the factory is registered under the class name of the reference provider');
+        $this->assertInstanceOf(\Closure::class, $factory, 'a closure: Closure::fromCallable() loads no class at registration');
+        $this->assertFalse($shared, 'not shared: every build of the provider asks for the session account again');
+        $this->assertSame(['listener', 'listener', 'listener', 'listener', 'listener', 'listener', 'listener', 'listener', 'listener', 'search', 'notifier', 'reference', 'service'], $order,
+            'the notifier after the search provider, then the reference provider and its factory');
         $this->assertSame('OCA\Circles\Events\DestroyingCircleEvent', TeamListener::DESTROYING_CIRCLE, 'R14-03: by class-name string');
         $src = (string)file_get_contents(dirname(__DIR__, 3) . '/lib/Listener/TeamListener.php');
         $this->assertStringNotContainsString('use OCA\Circles', $src, 'no Circles import: a disabled Circles app loads nothing');
@@ -236,7 +262,7 @@ final class RightsEventsTest extends TestCase {
         $b = $this->h->boards->addBoard('carol');
         $this->h->shareRows->add($b, 'user', 'dora', 'edit');
         $this->h->shareRows->add($b, 'group', 'dora', 'edit');
-        (new UserDeletedListener($this->h->service, (new VoteHarness())->votes, $this->h->access, $this->logger(), (new SyncHarness())->sync))->handle(new UserDeletedEvent(Fake::of(IUser::class, ['getUID' => fn () => 'dora'])));
+        (new UserDeletedListener($this->h->service, (new VoteHarness())->votes, $this->h->access, $this->logger(), (new SyncHarness())->sync, (new TemplateHarness())->store))->handle(new UserDeletedEvent(Fake::of(IUser::class, ['getUID' => fn () => 'dora'])));
         $this->assertSame(['group:dora=edit'], $this->h->shareRows->of($b), 'only kind user');
         $this->assertSame(2, $this->acl($b));
     }

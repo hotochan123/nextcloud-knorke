@@ -13,10 +13,12 @@ use OCP\IDBConnection;
 /**
  * A real SQL database for unit tests: IDBConnection (Fake) over an
  * in-memory SQLite PDO with the Knorke tables the vote path touches
- * (boards with meta, items, changes, vote sessions, votes, links; columns as in
- * the migrations). The stores' raw SQL runs unchanged (*PREFIX* → oc_), so
- * VoteStore, BoardStore::lockBoard/meta/writeMeta and the ItemStore write
- * path are tested against a real engine, not a hand-written imitation.
+ * (boards with meta, items, changes, vote sessions, votes, links; columns as
+ * in the migrations) and the templates of factory job 182. The stores' raw
+ * SQL runs unchanged (*PREFIX* → oc_), so VoteStore,
+ * BoardStore::lockBoard/meta/writeMeta, the ItemStore write path and
+ * TemplateStore are tested against a real engine, not a hand-written
+ * imitation.
  *
  * Transactions nest like Nextcloud's connection (SAVEPOINT inside a
  * transaction); inTransaction() follows them. $log records begin, commit
@@ -68,6 +70,11 @@ final class SqliteDb {
         'CREATE TABLE oc_knorke_links (id INTEGER PRIMARY KEY AUTOINCREMENT, board_id BIGINT NOT NULL, token VARCHAR(32) NOT NULL,'
         . ' role VARCHAR(16) NOT NULL, created_by VARCHAR(64) NOT NULL, created_at BIGINT NOT NULL DEFAULT 0, revoked_at BIGINT NULL,'
         . ' password_hash VARCHAR(255) NULL, expires_at BIGINT NULL)',
+        // factory job 182: template suggestions (Version000400…)
+        'CREATE TABLE oc_knorke_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, state VARCHAR(8) NOT NULL, name VARCHAR(255) NOT NULL,'
+        . ' note VARCHAR(255) NULL, content CLOB NULL, sketch CLOB NULL, suggested_by VARCHAR(64) NULL, created_at BIGINT NOT NULL DEFAULT 0,'
+        . ' adopted_at BIGINT NULL)',
+        'CREATE INDEX knorke_tpl_state ON oc_knorke_templates (state, suggested_by)',
     ];
 
     public function __construct() {

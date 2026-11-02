@@ -32,6 +32,14 @@ final class HttpErrorTest extends TestCase {
         'vote_closed', 'timer_state', 'slow_down',
         // M2 privacy notice (route 27)
         'text_too_long', 'invalid_url', 'unknown_language', 'too_many_languages',
+        // template suggestions (routes 28–34, factory job 182)
+        'suggestion_limit',
+        // comments (routes 35–43, factory job 189)
+        'comment_empty', 'comment_too_long', 'thread_resolved', 'comments_full',
+        // tags (routes 44 and 45, factory job 191)
+        'tag_limit', 'tag_exists', 'tag_gone',
+        // own shape libraries (routes 46–54, factory job 203)
+        'library_limit',
     ];
 
     public function testEveryCodeHasAnEnglishMessage(): void {

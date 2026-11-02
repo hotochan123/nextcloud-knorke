@@ -16,7 +16,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { SceneModel } from '../../../src/model/SceneModel.js'
 import { routeConnector } from '../../../src/model/connectors.js'
-import { FRAME_TITLE_BAND, FRAME_TITLE_SIZE, SHADOW } from '../../../src/model/tokens.js'
+import { FRAME_TITLE_BAND, FRAME_TITLE_SIZE } from '../../../src/model/tokens.js'
 
 const frame = (id, x, y, w = 800, h = 600, z = 'a0', extra = {}) =>
 	({ id, t: 'frame', x, y, w, h, r: 0, z, parent: null, data: { title: id }, style: { fill: '#ffffff' }, ...extra })
@@ -266,6 +266,26 @@ describe('hitTest', () => {
 		assert.equal(m.hitTest(20, 300, 0, { edgeWorld: 40 }), 'F')
 	})
 
+	test('(job 252) tabWidth: above the frame only the tab (plus the tolerance) hits; null: nothing above it; without it the whole band', () => {
+		const tab = { tabWidth: () => 200 }
+		assert.equal(m.hitTest(100, -20, 0, tab), 'F', 'on the tab')
+		assert.equal(m.hitTest(203, -20, 4, tab), 'F', 'within the tolerance right of the tab')
+		assert.equal(m.hitTest(-3, -20, 4, tab), 'F', 'within the tolerance left of the tab')
+		assert.equal(m.hitTest(205, -20, 4, tab), null, 'beyond the tolerance')
+		assert.equal(m.hitTest(400, -20, 4, tab), null, 'beside the tab: canvas')
+		assert.equal(m.hitTest(100, -FRAME_TITLE_BAND - 3, 4, tab), 'F', 'the tolerance above the tab')
+		assert.equal(m.hitTest(100, -FRAME_TITLE_BAND - 5, 4, tab), null, 'above the tab')
+		assert.equal(m.hitTest(790, -20, 0, { tabWidth: () => 5000 }), 'F', 'a tab wider than the frame: up to its right edge')
+		assert.equal(m.hitTest(805, -20, 0, { tabWidth: () => 5000 }), null, 'not beyond the frame')
+		for (const none of [null, 0, -1, NaN, Infinity, undefined]) {
+			const o = { tabWidth: () => none }
+			assert.equal(m.hitTest(100, -20, 0, o), null, `no tab (${none}): nothing above the frame`)
+			assert.equal(m.hitTest(3, 300, 0, o), 'F', `the edge band still (${none})`)
+		}
+		assert.equal(m.hitTest(400, -20), 'F', 'without tabWidth: the whole band')
+		assert.equal(m.hitTest(400, -20, 0, { tabWidth: 'nope' }), 'F', 'not a function: the whole band')
+	})
+
 	test('topmost item first: note over frame', () => {
 		assert.equal(m.hitTest(150, 150), 'S')
 		assert.equal(m.hitTest(105, 105), 'S')
@@ -354,7 +374,8 @@ describe('queries', () => {
 	})
 
 	test('index padding: note shadow, frame title band; placeholder none', () => {
-		const pad = SHADOW.blur * 1.5 + Math.abs(SHADOW.y)
+		// job 259: the far shadow (x 0, y 5, blur 14): 3 sigma + 5 = 26
+		const pad = 26
 		assert.deepEqual(m.bboxOf('T'), { minX: 2000 - pad, minY: 2000 - pad, maxX: 2200 + pad, maxY: 2200 + pad })
 		const f = m.bboxOf('F')
 		assert.ok(f.minY <= -FRAME_TITLE_SIZE * 1.5)
@@ -401,7 +422,7 @@ describe('v2: hit mode shape (SHAPES[kind].hit)', () => {
 		const m = new SceneModel()
 		m.load([
 			shape('O', 0, 0, 'ellipse', { style: { fillOpacity: 0 } }),
-			shape('U', 300, 0, 'hexagon'),
+			shape('U', 300, 0, 'heptagon'),
 			shape('R', 600, 0, 'triangle', { r: 180 }),
 		])
 		assert.equal(m.hitTest(100, 50), 'O')
@@ -410,6 +431,62 @@ describe('v2: hit mode shape (SHAPES[kind].hit)', () => {
 		assert.equal(m.hitTest(700, 90), 'R')
 		assert.equal(m.hitTest(795, 95), null)
 		assert.equal(m.hitTest(610, 10), 'R', 'the base is at the top now')
+	})
+
+	test('(job 170) option hollow: a shape with fillOpacity 0 hits only in its border band, the point goes on to the item below', () => {
+		const m = new SceneModel()
+		m.load([
+			note('N', 60, 20, null, 'a1', { w: 80, h: 60 }),
+			shape('O', 0, 0, 'ellipse', { style: { fillOpacity: 0, strokeWidth: 4 } }),
+			shape('F', 300, 0, 'rect', { style: { fillOpacity: 25, strokeWidth: 4 } }),
+			shape('P', 600, 0, 'rect', { style: { strokeWidth: 4 } }),
+			shape('Q', 900, 0, 'rect', { w: 20, h: 20, style: { fillOpacity: 0, strokeWidth: 4 } }),
+		])
+		const hollow = { hollow: true }
+		// band = edge 8 + tol + half the stroke 2: the empty inside is the ellipse with half-axes 90, 40 (tol 0)
+		assert.equal(m.hitTest(100, 50, 0, hollow), 'N', 'the middle of O: the note below')
+		assert.equal(m.hitTest(30, 50, 0, hollow), null, 'inside O beside the note: empty canvas')
+		assert.equal(m.hitTest(5, 50, 0, hollow), 'O', 'in the border band')
+		assert.equal(m.hitTest(-3, 50, 4, hollow), 'O', 'outside the outline: the tolerance as before')
+		assert.equal(m.hitTest(15, 50, 0, hollow), null, '15 in: past the band of 10')
+		assert.equal(m.hitTest(12, 50, 4, hollow), 'O', 'the tolerance widens the band (14)')
+		assert.equal(m.hitTest(12, 50, 0, { hollow: true, edgeWorld: 4 }), null, 'edgeWorld narrows it (6)')
+		assert.equal(m.hitTest(100, 50), 'O', 'without the option the inside hits as before')
+		assert.equal(m.hitTest(30, 50), 'O')
+		assert.equal(m.hitTest(400, 50, 0, hollow), 'F', 'fillOpacity 25: filled')
+		assert.equal(m.hitTest(700, 50, 0, hollow), 'P', 'no fillOpacity: the default 100')
+		assert.equal(m.hitTest(910, 10, 0, hollow), 'Q', 'w at most twice the band: no empty inside')
+	})
+
+	test('(job 177) option textRect with hollow: the text zone (the block grown by the tolerance) hits the shape, the empty inside beside it does not', () => {
+		const m = new SceneModel()
+		m.load([
+			note('N', 60, 20, null, 'a1', { w: 80, h: 60 }),
+			shape('O', 0, 0, 'rect', { style: { fillOpacity: 0, strokeWidth: 4 } }),
+			shape('R', 300, 0, 'rect', { r: 180, style: { fillOpacity: 0, strokeWidth: 4 } }),
+		])
+		const asked = []
+		const blocks = { O: { x: 70, y: 40, w: 60, h: 20 }, R: { x: 20, y: 20, w: 40, h: 20 } }
+		const textRect = (id) => {
+			asked.push(id)
+			return blocks[id] ?? null
+		}
+		const opts = { hollow: true, textRect }
+		assert.equal(m.hitTest(100, 50, 0, opts), 'O', 'in the zone: the shape, over the note below')
+		assert.equal(m.hitTest(133, 50, 4, opts), 'O', 'the tolerance grows the block (130 + 4)')
+		assert.equal(m.hitTest(136, 50, 4, opts), 'N', 'past the zone: the note below')
+		assert.equal(m.hitTest(40, 50, 0, opts), null, 'the empty inside beside the zone: empty canvas')
+		assert.equal(m.hitTest(100, 50, 0, { hollow: true }), 'N', 'without textRect the zone does not hit')
+		assert.equal(m.hitTest(100, 50, 0, { textRect }), 'O', 'without hollow the whole inside hits as before')
+		// R rotated by 180° around its centre (400, 50): its block lies at (440, 60)–(480, 80) in the world
+		assert.equal(m.hitTest(460, 70, 0, opts), 'R', 'the block in the rotated coordinates of R')
+		assert.equal(m.hitTest(340, 30, 0, opts), null, 'where the block would lie unrotated: empty canvas')
+		asked.length = 0
+		assert.equal(m.hitTest(5, 50, 0, opts), 'O', 'the border band')
+		assert.equal(m.hitTest(100, 50, 0, { textRect }), 'O')
+		assert.deepEqual(asked, [], 'asked only for a point in the empty inside, only with hollow')
+		blocks.O = { x: NaN, y: 40, w: 60, h: 20 }
+		assert.equal(m.hitTest(100, 50, 0, opts), 'N', 'an invalid block is none')
 	})
 })
 
@@ -429,11 +506,13 @@ describe('v2: rbush padding from the registry (pad)', () => {
 		const m = new SceneModel()
 		const conn = { id: 'L', t: 'connector', x: 0, y: 0, w: 0, h: 0, r: 0, z: 'a9', parent: null, data: { start: { x: 10, y: 10 }, end: { x: 90, y: 90 } }, style: {} }
 		m.load([conn])
-		// capSize(2) = 10, + 1
-		assert.deepEqual(m.bboxOf('L'), { minX: -1, minY: -1, maxX: 101, maxY: 101 })
+		// capSize(2) = 6 + 4·√2 (job 261), + 1
+		const d = 6 + 4 * Math.SQRT2 + 1
+		const a = m.bboxOf('L')
+		assert.ok([a.minX - (10 - d), a.minY - (10 - d), a.maxX - (90 + d), a.maxY - (90 + d)].every((v) => Math.abs(v) < 1e-9), JSON.stringify(a))
 		m.apply({ upserts: [{ ...conn, data: { ...conn.data, label: 'x'.repeat(30) } }] })
 		const b = m.bboxOf('L')
-		assert.ok(b.minX < -1 && b.maxX > 101, 'a wide label widens the entry')
+		assert.ok(b.minX < 10 - d && b.maxX > 90 + d, 'a wide label widens the entry')
 	})
 })
 
@@ -542,8 +621,8 @@ describe('v2: connector index (round 1b)', () => {
 		assert.equal(m.hitTest(260, 105, 4), C1, 'with tolerance')
 		const l = m.routeOf(C1).label
 		assert.equal(m.hitTest(l.x + 1, l.y + 1, 0), C1, 'label box')
-		// capSize(4) = 16 → radius 8 around the end point (400, 100), which also lies on N2
-		assert.equal(m.hitTest(395, 106, 0), C1, 'the connector lies above its target (z) and its cap hits')
+		// capSize(4) = 14 (job 261) → radius 7 around the end point (400, 100), which also lies on N2
+		assert.equal(m.hitTest(396, 105, 0), C1, 'the connector lies above its target (z) and its cap hits')
 		assert.equal(m.hitTest(380, 160, 0), null, 'empty canvas between the notes')
 		assert.equal(m.hitTest(260, 102, 0, { accept: (id) => id !== C1 }), null, 'accept filters')
 		assert.equal(m.hitTest(100, 100, 0, { accept: (id) => id !== C1 }), N1)

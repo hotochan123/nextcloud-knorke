@@ -14,6 +14,19 @@
 		<p class="knorke-dialog__message">
 			{{ voteForm ? t('knorke', 'Your votes are anonymous.') : t('knorke', 'Choose a name. Others on this board will see it next to your cursor.') }}
 		</p>
+		<div v-if="accountsOnlyVote" class="knorke-dialog__accounts" data-knorke="accounts-vote">
+			<p class="knorke-dialog__accounts-text">
+				{{ t('knorke', 'Only signed-in accounts can vote right now.') }}
+			</p>
+			<NcButton type="button"
+				variant="secondary"
+				class="knorke-dialog__signin"
+				:disabled="busy"
+				data-knorke-action="guest-signin"
+				@click="signIn">
+				{{ t('knorke', 'Sign in') }}
+			</NcButton>
+		</div>
 		<div ref="notice" class="knorke-dialog__privacy" data-knorke="privacy-notice">
 			<p id="knorke-guest-privacy-text"
 				ref="noticeTextEl"
@@ -93,6 +106,13 @@
  * - The voting-link form (intro "Your votes are anonymous.", name optional:
  *   empty → "Guest") only with FEATURES.voting (R13); without it the voting
  *   link gets the form of the edit link (name required, E28 stage 2).
+ *
+ * (Job 184) accountsOnlyVote: a vote for accounts only runs (linkInfo of the
+ * page, never with a password field). Under the intro the block
+ * [data-knorke=accounts-vote] says so, with "Sign in"
+ * ([data-knorke-action=guest-signin], type button: Enter in the name field
+ * still joins as a guest) that emits `signin`. "Join" stays the primary
+ * submit button and the name field keeps the first focus.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import NcButton from '@nextcloud/vue/components/NcButton'
@@ -120,9 +140,11 @@ const props = defineProps({
 	linkRole: { type: String, default: 'edit' },
 	/** M2: initial state `privacy` ({text, url}) */
 	privacy: { type: Object, default: null },
+	/** job 184: a vote for signed-in accounts only runs (page state) */
+	accountsOnlyVote: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['join'])
+const emit = defineEmits(['join', 'signin'])
 
 const name = ref(props.initialName)
 const password = ref('')
@@ -184,6 +206,13 @@ function submit() {
 	}
 	if (n !== '') {
 		emit('join', n, props.needsPassword ? password.value : null)
+	}
+}
+
+/** (Job 184) "Sign in": PublicApp opens the Nextcloud login. */
+function signIn() {
+	if (!props.busy) {
+		emit('signin')
 	}
 }
 </script>

@@ -17,8 +17,13 @@ use OCA\Knorke\Db\ItemStore;
  * Kinds of field rules: text (plain text after cleaning, ≤ n code points),
  * color (^#[0-9a-fA-F]{6}\z, stored lower-case), int (whole number in
  * bounds), enum (a string of the list, strictly), endpoint (a connector end,
- * Connectors::endpoint). Reserved for later and not used in M1: points,
- * bool, number — a rule without a checker refuses every value. `size` bounds
+ * Connectors::endpoint), (factory job 191) tags (a list of 1–n different
+ * ids in ULID form: the tags of a note, data.tags; an empty list deletes the
+ * field like every empty value), (factory job 203) image (a list of pieces
+ * whose concatenation is a picture, ShapeImage::join: a shape's data.img),
+ * (factory job 273) points (a flat list x0, y0, x1, y1, … of 2–n finite
+ * numbers with |v| ≤ 1e7, even length: a pen stroke's data.points).
+ * Reserved for later: bool, number — a rule without a checker refuses every value. `size` bounds
  * w and h. Fields not listed (unknown fields under data/style) are kept and
  * only checked generically (OpValidator).
  *
@@ -33,12 +38,32 @@ use OCA\Knorke\Db\ItemStore;
  * them, they are neither bindable nor votable.
  */
 final class ItemRegistry {
-    private const SHAPE_KINDS = ['rect', 'roundRect', 'ellipse', 'diamond', 'triangle', 'arrowRight'];
+    /** Shape kinds; job 201 adds the flowchart kinds and the symbols (icon…), job 203 image, job 204 the BPMN kinds (bpmn…). */
+    private const SHAPE_KINDS = [
+        'rect', 'roundRect', 'ellipse', 'diamond', 'triangle', 'arrowRight',
+        'terminal', 'parallelogram', 'document', 'database', 'subprocess', 'hexagon', 'manualInput', 'trapezoid', 'delay', 'offPage',
+        'iconPerson', 'iconPeople', 'iconPlace', 'iconClock', 'iconWarning', 'iconInfo', 'iconQuestion', 'iconDone', 'iconError', 'iconStar', 'iconHeart', 'iconIdea', 'iconFlag', 'iconCalendar', 'iconMail', 'iconPhone', 'iconHome', 'iconSettings', 'iconLock', 'iconCloud',
+        // job 203: an own shape, its picture in data.img (ShapeImage)
+        'image',
+        // job 204: BPMN 2.0, events, tasks, gateways and data
+        'bpmnStart', 'bpmnStartMessage', 'bpmnStartTimer', 'bpmnIntermediate', 'bpmnIntermediateMessage', 'bpmnIntermediateTimer', 'bpmnEnd', 'bpmnEndMessage', 'bpmnEndError', 'bpmnEndTerminate',
+        'bpmnTask', 'bpmnUserTask', 'bpmnServiceTask', 'bpmnManualTask', 'bpmnScriptTask', 'bpmnRuleTask', 'bpmnSendTask', 'bpmnReceiveTask', 'bpmnSubprocess', 'bpmnCallActivity',
+        'bpmnExclusive', 'bpmnParallel', 'bpmnInclusive', 'bpmnEventGateway', 'bpmnDataObject', 'bpmnDataInput', 'bpmnDataOutput', 'bpmnDataStore',
+    ];
     private const DASHES = ['solid', 'dashed', 'dotted'];
     private const ALIGNS = ['left', 'center', 'right'];
     private const VALIGNS = ['top', 'middle', 'bottom'];
     private const ROUTES = ['straight', 'elbow', 'curved'];
-    private const CAPS = ['none', 'arrow', 'triangle', 'dot', 'diamond'];
+    /** Connector tips; job 204 adds the open circle and the open triangle of a BPMN message flow. */
+    private const CAPS = ['none', 'arrow', 'triangle', 'dot', 'diamond', 'circleOpen', 'triangleOpen'];
+    /** style.header of a table (job 173), style.headerCol (job 265). */
+    private const HEADERS = ['on', 'off'];
+    /** style.layout of a mind map (job 195). */
+    private const MIND_LAYOUTS = ['both', 'right', 'org', 'tree'];
+    /** data.kind of a pen stroke (job 273): a pen line or a see-through highlighter stroke. */
+    private const PEN_KINDS = ['pen', 'marker'];
+    /** Most numbers in a stroke's data.points (job 273): 500 points of x and y. */
+    public const POINTS_MAX = 1000;
 
     /** The root fields a type with placement none never has (rule 12). */
     private const BOX_FIELDS = ['x', 'y', 'w', 'h', 'r', 'parent'];
@@ -48,7 +73,9 @@ final class ItemRegistry {
             'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => true,
             'size' => [20, 2000], 'textPath' => 'data.text', 'bindable' => true, 'votable' => true, 'placement' => 'box',
             'required' => [],
-            'fields' => ['data.text' => ['text', 6000], 'style.fill' => ['color'], 'style.fontSize' => ['int', 8, 200]],
+            // job 191: data.tags, the ids of the board's tags (meta.tags) in the order they were ticked
+            'fields' => ['data.text' => ['text', 6000], 'style.fill' => ['color'], 'style.fontSize' => ['int', 8, 200],
+                'data.tags' => ['tags', Limits::TAGS_PER_NOTE]],
         ],
         'frame' => [
             'layer' => 'back', 'container' => true, 'childOf' => [], 'rotatable' => false,
@@ -63,7 +90,11 @@ final class ItemRegistry {
             'fields' => ['data.kind' => ['enum', self::SHAPE_KINDS], 'data.text' => ['text', 6000],
                 'style.fill' => ['color'], 'style.fillOpacity' => ['int', 0, 100], 'style.stroke' => ['color'],
                 'style.strokeWidth' => ['int', 0, 24], 'style.dash' => ['enum', self::DASHES], 'style.textColor' => ['color'],
-                'style.fontSize' => ['int', 8, 200], 'style.align' => ['enum', self::ALIGNS], 'style.valign' => ['enum', self::VALIGNS]],
+                'style.fontSize' => ['int', 8, 200], 'style.align' => ['enum', self::ALIGNS], 'style.valign' => ['enum', self::VALIGNS],
+                // job 203: the picture of an own shape (kind image)
+                'data.img' => ['image', ShapeImage::MAX],
+                // job 240: the tick "1:1" of "Arrange", the on/off list of style.header
+                'style.square' => ['enum', self::HEADERS]],
         ],
         'text' => [
             'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => true,
@@ -79,6 +110,53 @@ final class ItemRegistry {
             'fields' => ['data.start' => ['endpoint'], 'data.end' => ['endpoint'], 'data.route' => ['enum', self::ROUTES],
                 'data.label' => ['text', Limits::MAX_LABEL], 'style.stroke' => ['color'], 'style.strokeWidth' => ['int', 1, 24],
                 'style.dash' => ['enum', self::DASHES], 'style.startCap' => ['enum', self::CAPS], 'style.endCap' => ['enum', self::CAPS]],
+        ],
+        // Job 173: data.cols, data.rows and data.cells carry no typed rule (a typed
+        // leaf refuses every path below it); Tables::check judges their form on the
+        // stored result under the lock (SyncService).
+        'table' => [
+            'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => false,
+            'size' => [20, 100000], 'textPath' => null, 'bindable' => true, 'votable' => false, 'placement' => 'box',
+            'required' => ['data.cols', 'data.rows'],
+            'fields' => ['style.stroke' => ['color'], 'style.textColor' => ['color'], 'style.headerFill' => ['color'],
+                'style.header' => ['enum', self::HEADERS], 'style.headerCol' => ['enum', self::HEADERS]],
+        ],
+        // Job 188: a note pad, a pile of blank notes. The client takes notes off it
+        // as ordinary sticky puts; the pad itself gets no reactions (Reactions:
+        // notes only), no votes and no connector ends.
+        'pad' => [
+            'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => false,
+            'size' => [20, 2000], 'textPath' => 'data.title', 'bindable' => false, 'votable' => false, 'placement' => 'box',
+            'required' => [],
+            'fields' => ['data.title' => ['text', 200], 'style.fill' => ['color']],
+        ],
+        // Job 195: a mind map. data.nodes and data.texts carry no typed rule (a typed
+        // leaf refuses every path below it); Mindmaps::check judges their form on
+        // the stored result under the lock (SyncService). No votes, reactions,
+        // tags or connector ends.
+        'mindmap' => [
+            'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => false,
+            'size' => [20, 100000], 'textPath' => null, 'bindable' => false, 'votable' => false, 'placement' => 'box',
+            'required' => ['data.nodes'],
+            'fields' => ['style.layout' => ['enum', self::MIND_LAYOUTS]],
+        ],
+        // Job 267: an AI summary card. data.md is the AI's Markdown, data.title the frame
+        // the summary is about; no text path: nobody edits it (no editor, no text lease).
+        'ai' => [
+            'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => false,
+            'size' => [20, 20000], 'textPath' => null, 'bindable' => true, 'votable' => false, 'placement' => 'box',
+            'required' => [],
+            'fields' => ['data.md' => ['text', 12000], 'data.title' => ['text', 200]],
+        ],
+        // Job 273: a freehand stroke of the pen or the highlighter. data.points holds its
+        // points (x0, y0, x1, y1, …) relative to the item's x/y; the box is their hull
+        // plus half the stroke width. No text, votes, reactions or connector ends.
+        'pen' => [
+            'layer' => 'content', 'container' => false, 'childOf' => ['frame'], 'rotatable' => false,
+            'size' => [0, 100000], 'textPath' => null, 'bindable' => false, 'votable' => false, 'placement' => 'box',
+            'required' => ['data.points'],
+            'fields' => ['data.kind' => ['enum', self::PEN_KINDS], 'data.points' => ['points', self::POINTS_MAX],
+                'style.stroke' => ['color'], 'style.strokeWidth' => ['int', 1, 64]],
         ],
     ];
 
@@ -346,6 +424,10 @@ final class ItemRegistry {
      *  - endpoint: one of the three end forms, normalized
      *    (Connectors::endpoint: ax/ay checked as sent, then q(v, 10000);
      *    item a ULID; free ends as sent, never -0)
+     *  - tags (job 191): a JSON list of 1–$rule[1] strings in ULID form, each
+     *    once, kept in its order (whether an id names a tag of meta.tags is
+     *    the client's business: ids of deleted tags stay until the note's
+     *    tags are written again)
      *
      * @param array{0: string, 1?: mixed, 2?: int} $rule
      * @return array{0: bool, 1: mixed} [ok, normalized value]
@@ -367,8 +449,35 @@ final class ItemRegistry {
             case 'endpoint':
                 $ep = Connectors::endpoint($v);
                 return $ep === null ? [false, null] : [true, $ep];
+            case 'tags':
+                if (!is_array($v) || $v === [] || !array_is_list($v) || count($v) > $rule[1]) {
+                    return [false, null];
+                }
+                $seen = [];
+                foreach ($v as $id) {
+                    if (!is_string($id) || preg_match(OpValidator::ULID_RE, $id) !== 1 || isset($seen[$id])) {
+                        return [false, null];
+                    }
+                    $seen[$id] = true;
+                }
+                return [true, $v];
+            case 'image':
+                // job 203: pieces whose concatenation is a picture (ShapeImage)
+                $uri = ShapeImage::join($v);
+                return $uri !== null && strlen($uri) <= $rule[1] ? [true, $v] : [false, null];
+            case 'points':
+                // job 273: x0, y0, x1, y1, … of a pen stroke, stored as sent
+                if (!is_array($v) || !array_is_list($v) || count($v) < 2 || count($v) > $rule[1] || count($v) % 2 !== 0) {
+                    return [false, null];
+                }
+                foreach ($v as $n) {
+                    if ((!is_int($n) && !is_float($n)) || !is_finite((float)$n) || abs((float)$n) > Limits::NUM_ABS_MAX) {
+                        return [false, null];
+                    }
+                }
+                return [true, $v];
             default:
-                // points, bool, number: reserved, no checker yet → every value is refused.
+                // bool, number: reserved, no checker yet → every value is refused.
                 return [false, null];
         }
     }

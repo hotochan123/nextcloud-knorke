@@ -27,7 +27,7 @@ test('U9 httpUrl: javascript:, data:, relative, spaces and control characters ne
 	assert.equal(httpUrl(' https://example.org/a?b=1#c '), 'https://example.org/a?b=1#c')
 })
 
-test('U9 guest page: the Nextcloud footer stays hidden (F7); the legal links are in the name dialog, the guest top bar menu and the empty states', () => {
+test('U9 guest page: the Nextcloud footer stays hidden (F7); the legal links are in the name dialog, the top bar\'s board menu (job 178) and the empty states', () => {
 	const css = read('src/styles/knorke.css')
 	assert.match(css, /body#body-public \.guest-box \{\s*display: none;/)
 	const dialog = read('src/components/GuestNameDialog.vue')
@@ -36,9 +36,13 @@ test('U9 guest page: the Nextcloud footer stays hidden (F7); the legal links are
 	assert.match(pub, /:legal="legal"[\s\S]*@join="onName"/, 'name dialog gets the links')
 	assert.match(pub, /<LegalLinks class="knorke-public__legal" :legal="legal" \/>/, 'empty states')
 	assert.match(pub, /mode="guest"[\s\S]*:legal="legal"/, 'board view (top bar)')
+	// job 178: the guest menu went into the board menu (behaviour: tests/js/shell/boardMenu.test.mjs)
 	const bar = read('src/components/TopBar.vue')
-	assert.match(bar, /<NcActions v-if="isGuest && legalItems\.length > 0"/)
-	assert.match(bar, /<NcActionLink v-for="l in legalItems"[\s\S]*target="_blank"/)
+	assert.match(bar, /boardMenuItems\(\{ ready: props\.ready, (?:[a-zA-Z]+: !?props\.[a-zA-Z]+, )*guest: props\.isGuest, legal: props\.legal, shortcuts: !props\.narrow \}\)/)
+	// job 228: the account page gets the links too (PageController), App.vue hands them on
+	assert.match(read('src/App.vue'), /mode="user"[\s\S]*:legal="state\.legal \|\| null"/)
+	assert.match(read('src/components/ModerationMenu.vue'), /<NcActionLink v-if="e\.kind === 'link'"\s+:href="e\.href"\s+target="_blank"/)
+	assert.doesNotMatch(bar, /guest-menu/)
 	const links = read('src/components/LegalLinks.vue')
 	assert.match(links, /target="_blank"\s+rel="noopener noreferrer"/)
 	assert.doesNotMatch(links, /v-html/)

@@ -15,16 +15,22 @@
  * only, refusal, empty, image, the stored copy only with clipboard text,
  * and "no secure context → no entry". The board menu's count line follows
  * the local model at the moment the menu is reported (menu.items).
+ * Job 141 (AK6): the toast paste-blocked in German names the key from the
+ * one formatter (Strg+V, ⌘V on a Mac).
+ * Job 144 (AK4): the entries only-<kind> filter the selection, close the
+ * menu and give the canvas the focus.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { register, unregister } from '@nextcloud/l10n'
 import { copyPayload } from '../../../src/board/actions.js'
 import { BoardSession } from '../../../src/board/BoardSession.js'
 import { CLIP_KEY, canReadClipboard, clipboardItemsData, clipboardReader, encodeClip } from '../../../src/board/clipboard.js'
 import { debugApi } from '../../../src/board/debug.js'
-import { menuCount, menuEntries } from '../../../src/components/contextbar.js'
+import { menuEntries } from '../../../src/components/contextbar.js'
 import { FakeClock } from '../sync/fakeClock.mjs'
-import { FakeModel, FakeScene, ID, frame, memoryStorage, sticky } from './fakes.mjs'
+import { FakeModel, FakeScene, ID, frame, memoryStorage, shape, sticky } from './fakes.mjs'
 
 const A = ID(1)
 const B = ID(2)
@@ -181,25 +187,24 @@ const focusCount = (h) => h.scene.callsOf('focusCanvas').length
 test('T4-02: intent contextMenu in mode edit → ui.onContextMenu({id, at, seq, items}); W = screenToWorld(at) taken at once; a new intent moves the open menu', async () => {
 	const h = await open()
 	rightClick(h, A, [10.4, 20.6])
-	assert.deepEqual(lastMenu(h), { id: A, at: [10.4, 20.6], seq: 1, items: 3, grid: false, gridSnap: true, unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
+	assert.deepEqual(lastMenu(h), { id: A, at: [10.4, 20.6], seq: 1, items: 3, grid: false, gridSnap: true, cursors: true, wheel: 'auto', unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
 	assert.deepEqual(h.s.menu.world, { x: 120.8, y: 91.2 }, 'W from the scene at the moment of the intent')
 	assert.deepEqual(h.s.menu.ids, [A])
 	// a new intent (keyboard, same selection) moves the open menu
 	h.scene.callbacks.onIntent({ type: 'contextMenu', id: A, at: [300, 200] })
-	assert.deepEqual(lastMenu(h), { id: A, at: [300, 200], seq: 2, items: 3, grid: false, gridSnap: true, unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
+	assert.deepEqual(lastMenu(h), { id: A, at: [300, 200], seq: 2, items: 3, grid: false, gridSnap: true, cursors: true, wheel: 'auto', unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
 	assert.equal(h.ui.menu.filter((m) => m === null).length, 0, 'moved, not closed')
 	// empty canvas
 	rightClick(h, null, [640, 400])
 	assert.equal(h.ui.menu.at(-2), null, 'the selection change closed the old menu first')
-	assert.deepEqual(lastMenu(h), { id: null, at: [640, 400], seq: 3, items: 3, grid: false, gridSnap: true, unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
+	assert.deepEqual(lastMenu(h), { id: null, at: [640, 400], seq: 3, items: 3, grid: false, gridSnap: true, cursors: true, wheel: 'auto', unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
 	h.s.destroy()
 })
 
-test('board menu count: menu.items is the local model size when the menu is reported; a change while it is open keeps it; a new right click after a local delete or a server remove reports the new count', async () => {
+test('board menu count (job 230: no line shows it any more, the payload keeps it): menu.items is the local model size when the menu is reported; a change while it is open keeps it; a new right click after a local delete or a server remove reports the new count', async () => {
 	const h = await open()
 	rightClick(h, null, [10, 10])
 	assert.equal(lastMenu(h).items, 3)
-	assert.equal(menuCount(lastMenu(h).id, lastMenu(h).items), '3 items on this board')
 	// a local delete, then a new right click
 	h.s.closeMenu()
 	h.s.deleteIds([A])
@@ -216,13 +221,11 @@ test('board menu count: menu.items is the local model size when the menu is repo
 	// a new intent brings the current count
 	rightClick(h, null, [20, 20])
 	assert.equal(lastMenu(h).items, 1)
-	assert.equal(menuCount(lastMenu(h).id, lastMenu(h).items), '1 item on this board')
 	h.s.destroy()
 	// an empty board
 	const e = await open({ items: [] })
 	rightClick(e, null, [0, 0])
 	assert.equal(lastMenu(e).items, 0)
-	assert.equal(menuCount(lastMenu(e).id, lastMenu(e).items), '0 items on this board')
 	e.s.destroy()
 })
 
@@ -308,7 +311,7 @@ test('T4-02: entries on items act on the selection the scene set; each closes th
 	// duplicate on a multi-selection: two copies, one undo step
 	h.scene.callbacks.onSelection([A, B])
 	h.scene.callbacks.onIntent({ type: 'contextMenu', id: B, at: [5, 5] })
-	assert.deepEqual(menuEntries(h.s.selectionInfo(), B), ['cut', 'copy', 'duplicate', 'delete', 'front', 'back', 'connect', 'group', 'lock', 'zoom-selection'], 'job 023: lock for two unlocked notes; job 026: group')
+	assert.deepEqual(menuEntries(h.s.selectionInfo(), B), ['cut', 'copy', 'duplicate', 'front', 'back', 'connect', 'sort-colors', 'group', 'frame-around', 'lock', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv', 'delete'], 'job 023: lock for two unlocked notes; job 026: group; job 139: sort-colors for two loose notes; job 230: the groups of "…", delete last')
 	let f = focusCount(h)
 	assert.equal(h.s.menuAction('duplicate'), true)
 	assert.equal(h.s.menu, null)
@@ -341,7 +344,7 @@ test('T4-02: entries on items act on the selection the scene set; each closes th
 	assert.equal(focusCount(h), f + 1)
 	ops = await opsAfter(h, n)
 	assert.ok(ops.some((o) => o.o === 'put' && o.p?.data?.start?.item === A && o.p?.data?.end?.item === B), 'connector A → B')
-	// zoom-selection (like Shift+2)
+	// zoom-selection (like Shift+2; job 230: no longer listed, the session still runs it)
 	rightClick(h, A, [1, 1])
 	const cams = h.scene.callsOf('setCamera').length
 	h.s.menuAction('zoom-selection')
@@ -366,6 +369,31 @@ test('T4-02: entries on items act on the selection the scene set; each closes th
 	const size = h.model.size
 	assert.equal(h.s.menuAction('duplicate'), false)
 	assert.equal(h.model.size, size)
+	h.s.destroy()
+})
+
+test('job 144 AK4: menuAction(\'only-shape\') leaves only S1 and S2 selected, closes the menu and gives the canvas the focus; no op, no undo step; afterwards no only- entry', async () => {
+	const S1 = ID('S1')
+	const S2 = ID('S2')
+	const h = await open({ items: [sticky(A, { z: 'a1' }), sticky(B, { x: 400, z: 'a2' }), shape(S1, { x: 800, z: 'a3' }), shape(S2, { x: 1200, z: 'a4' })] })
+	const n = h.tr.calls.length
+	h.scene.callbacks.onSelection([A, S1, B, S2])
+	h.scene.callbacks.onIntent({ type: 'contextMenu', id: S1, at: [5, 5] })
+	const list = menuEntries(h.s.selectionInfo(), S1)
+	// job 230: the chip of the bar narrows the selection; the menu lists no only- entry, the session still runs it
+	assert.deepEqual(list.slice(list.indexOf('export-png')), ['export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv', 'delete'])
+	assert.equal(h.s.selectionInfo().kinds.length, 2, 'the chip offers notes and shapes')
+	const f = focusCount(h)
+	assert.equal(h.s.menuAction('only-shape'), true)
+	assert.equal(h.s.menu, null)
+	assert.equal(lastMenu(h), null, 'the menu closed')
+	assert.deepEqual(h.s.selection, [S1, S2])
+	assert.deepEqual(h.ui.selection.at(-1).ids, [S1, S2])
+	assert.equal(focusCount(h), f + 1, 'focus back to the canvas')
+	assert.deepEqual(await opsAfter(h, n), [], 'no op')
+	assert.equal(h.s.undoStack.canUndo(), false, 'no undo step')
+	rightClick(h, S1, [5, 5])
+	assert.ok(!menuEntries(h.s.selectionInfo(), S1).some((e) => e.startsWith('only-')), 'shapes only: nothing to filter')
 	h.s.destroy()
 })
 
@@ -421,9 +449,9 @@ test('T4-03 clipboardReader / canReadClipboard: only in a secure context with na
 	assert.equal(canReadClipboard(winWith(undefined)), false)
 	assert.equal(canReadClipboard(null), false)
 	assert.equal(canReadClipboard({ get isSecureContext() { throw new Error('x') } }), false)
-	// "kein Secure Context → Eintrag fehlt"
-	assert.deepEqual(menuEntries(null, null, { canPaste: canReadClipboard(winWith(cb, { secure: false })) }), ['note-here', 'select-all', 'fit'])
-	assert.deepEqual(menuEntries(null, null, { canPaste: canReadClipboard(winWith(cb)) }), ['paste-here', 'note-here', 'select-all', 'fit'])
+	// job 230: the board menu no longer lists "Paste here" (Ctrl/⌘+V), whatever the browser allows
+	assert.deepEqual(menuEntries(null, null, { canPaste: canReadClipboard(winWith(cb)) }), [])
+	assert.deepEqual(menuEntries(null, null, { canPaste: true, grid: false }), ['grid'])
 })
 
 test('T4-03 clipboardItemsData: the first text/html and text/plain, other types count as files; Firefox\'s wrapped HTML is kept', async () => {
@@ -508,6 +536,24 @@ test('T4-03 paste-here: refused (NotAllowedError, sync or async), empty or faile
 	assert.equal(h.model.size, 0)
 	assert.deepEqual(h.toasts.map((x) => x[1]), ['paste-blocked'])
 	h.s.destroy()
+})
+
+test('job 141 AK6: the toast paste-blocked in German takes the key from the formatter – Strg+V off Apple, ⌘V on a Mac', async () => {
+	const de = JSON.parse(readFileSync(new URL('../../../l10n/de.json', import.meta.url), 'utf8')).translations
+	const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+	register('knorke', de)
+	try {
+		for (const [platform, key] of [['Win32', 'Strg+V'], ['MacIntel', '⌘V']]) {
+			const h = await open({ items: [], win: winWith(fakeClipboard(() => Promise.reject(denied)), { platform }) })
+			rightClick(h, null, [0, 0])
+			h.s.menuAction('paste-here')
+			await h.clock.advance(0)
+			assert.deepEqual(h.toasts, [[`Füge stattdessen mit ${key} ein: Der Browser hat das Lesen der Zwischenablage nicht erlaubt.`, 'paste-blocked']], platform)
+			h.s.destroy()
+		}
+	} finally {
+		unregister('knorke')
+	}
 })
 
 test('T4-03 paste-here: the stored copy only with text from the clipboard (same text, < 10 min); without text it never steps in', async () => {

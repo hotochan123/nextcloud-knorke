@@ -79,14 +79,6 @@
 							</template>
 							{{ t('knorke', 'Show QR code') }}
 						</NcButton>
-						<NcButton variant="tertiary"
-							data-knorke-action="link-present"
-							@click="$emit('present', role)">
-							<template #icon>
-								<NcIconSvgWrapper :path="icons.present" />
-							</template>
-							{{ t('knorke', 'Show to the room') }}
-						</NcButton>
 						<template v-if="!readOnly">
 							<NcButton variant="tertiary"
 								:disabled="busy"
@@ -155,6 +147,32 @@
 					{{ errors[role].text }}
 				</p>
 			</section>
+			<section v-if="loaded"
+				class="knorke-share__room"
+				data-knorke-share-room>
+				<h3 class="knorke-link__heading">
+					{{ t('knorke', 'Show to the room') }}
+				</h3>
+				<p class="knorke-link__explain">
+					{{ t('knorke', 'Show a link large as a QR code so everyone in the room can join.') }}
+				</p>
+				<div v-if="activeRoles.length > 0" class="knorke-share__row knorke-share__row--actions">
+					<NcButton v-for="role in activeRoles"
+						:key="role"
+						variant="secondary"
+						data-knorke-action="link-present"
+						:data-knorke-present="role"
+						@click="$emit('present', role)">
+						<template #icon>
+							<NcIconSvgWrapper :path="icons.present" />
+						</template>
+						{{ role === 'vote' ? t('knorke', 'Voting link') : t('knorke', 'Edit link') }}
+					</NcButton>
+				</div>
+				<p v-else class="knorke-share__off">
+					{{ t('knorke', 'Turn on a link first.') }}
+				</p>
+			</section>
 		</template>
 	</div>
 </template>
@@ -173,6 +191,12 @@
  * ([data-knorke-action=link-rotate], asked first) and the settings
  * (LinkSettings: password, expiry, save).
  *
+ * Job 228 (redesign, docs/redesign/ P1 share): "Show to the room" is the
+ * third section [data-knorke-share-room] after the link sections, with one
+ * button per active link ([data-knorke-action=link-present],
+ * [data-knorke-present=edit|vote], named like its section), or "Turn on a
+ * link first."; not in the view of a disabled link sharing.
+ *
  * readOnly (moderators, R13 exactly): no link-toggle, link-rotate,
  * link-settings-save, link-password, link-expiry; only copy, link-qr and
  * link-present.
@@ -190,6 +214,7 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import { isApplePlatform } from '../util/device.js'
 import { FEATURES } from '../util/features.js'
 import { t } from '../util/l10n.js'
 import { showInfo } from '../util/toast.js'
@@ -197,7 +222,7 @@ import { copyText } from './copyText.js'
 import { icons } from './icons.js'
 import LinkSettings from './LinkSettings.vue'
 import QrCode from './QrCode.vue'
-import { linkMeetsPolicy, settingsFirst } from './share.js'
+import { copyPrompt, linkMeetsPolicy, settingsFirst } from './share.js'
 
 const props = defineProps({
 	/** {edit: Link|null, vote: Link|null} */
@@ -227,6 +252,8 @@ defineEmits(['toggle', 'rotate', 'save', 'remove-password', 'update:draft', 'fix
 const roles = computed(() => (FEATURES.voting ? ['edit', 'vote'] : ['edit']))
 /** 'disabled' (U12: no create/renew; a kept link can be turned off) or 'on'. Moderators never see it. */
 const view = computed(() => (!props.readOnly && props.linksAllowed === false ? 'disabled' : 'on'))
+/** (Job 228) The roles with a link, in section order: one "Show to the room" button each. */
+const activeRoles = computed(() => roles.value.filter((r) => !!props.links[r]))
 const urlFields = reactive({ edit: null, vote: null })
 const copied = ref(null)
 
@@ -255,6 +282,6 @@ async function copy(role) {
 	}
 	urlFields[role]?.focus()
 	urlFields[role]?.select()
-	showInfo(t('knorke', 'Link selected. Press Ctrl+C to copy it.'))
+	showInfo(copyPrompt(isApplePlatform()))
 }
 </script>

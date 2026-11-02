@@ -9,8 +9,11 @@ namespace OCA\Knorke\Tests\Integration;
 
 use OCA\Knorke\Db\VoteStore;
 use OCA\Knorke\Service\OrphanReconciler;
+use OCA\Knorke\Service\ShapeLibStore;
+use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\IntegrationCase;
 use OCP\IAppConfig;
+use OCP\IUser;
 use OCP\Server;
 
 /**
@@ -29,6 +32,7 @@ use OCP\Server;
  * (saved and restored).
  */
 final class OrphansIntegrationTest extends IntegrationCase {
+    private const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     private OrphanReconciler $r;
     private string $ghost;
     private string $ghostGroup;
@@ -60,6 +64,12 @@ final class OrphansIntegrationTest extends IntegrationCase {
         $vote = 'INSERT INTO *PREFIX*knorke_votes (session_id, voter, item_id, n, ts) VALUES (?, ?, ?, ?, ?)';
         $this->db->executeStatement($vote, [$this->id['S'], $this->access->pid($this->id['U'], 'u:' . $this->ghost), self::ulid(1), 1, $now]);
         $this->db->executeStatement($vote, [$this->id['S'], $this->access->pid($this->id['U'], 'u:alice'), self::ulid(1), 1, $now]);
+        // (job 247) a pending template suggestion and an own shape library of the ghost
+        $this->db->executeStatement('INSERT INTO *PREFIX*knorke_templates (state, name, note, content, sketch, suggested_by, created_at, adopted_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+            ['pending', 'Ghost template', 'note', '{}', '[]', $this->ghost, $now]);
+        $ghost = $this->ghost;
+        Server::get(ShapeLibStore::class)->create(Fake::of(IUser::class, ['getUID' => fn (): string => $ghost]),
+            ['name' => 'Ghost library', 'entries' => [['name' => 'x', 'img' => self::PNG, 'w' => 64, 'h' => 32]]], $now);
     }
 
     private function one(string $sql, array $params): int {
@@ -82,17 +92,17 @@ final class OrphansIntegrationTest extends IntegrationCase {
         $this->assertContains($this->ghostGroup, $found['groups']);
         $this->assertNotContains($this->uid, $found['users'], 'an existing account is no orphan');
         $this->assertNotContains('knorke-e2e', $found['groups']);
-        $this->assertSame(['user-shares' => 1, 'group-shares' => 1, 'link-members' => 1, 'open-votes' => 1, 'owned-boards' => 1], $this->mine(), self::dbKind());
+        $this->assertSame(['user-shares' => 1, 'group-shares' => 1, 'link-members' => 1, 'open-votes' => 1, 'owned-boards' => 1, 'shape-libraries' => 1, 'template-suggestions' => 1], $this->mine(), self::dbKind());
         $acl = [$this->acl($this->id['U']), $this->acl($this->id['G'])];
         $dry = $this->r->reconcile(true);
         $this->assertSame(0, $dry['failed']);
-        $this->assertSame(['user-shares' => 1, 'group-shares' => 1, 'link-members' => 1, 'open-votes' => 1, 'owned-boards' => 1], $this->mine(), 'the dry run changed nothing');
+        $this->assertSame(['user-shares' => 1, 'group-shares' => 1, 'link-members' => 1, 'open-votes' => 1, 'owned-boards' => 1, 'shape-libraries' => 1, 'template-suggestions' => 1], $this->mine(), 'the dry run changed nothing');
         foreach ($dry['counts'] as $kind => $n) {
             $this->assertGreaterThanOrEqual(1, $n, "$kind includes the test's own orphan");
         }
         $real = $this->r->reconcile(false);
         $this->assertSame([$dry['counts'], 0], [$real['counts'], $real['failed']], 'the real run reports the numbers of the dry run');
-        $this->assertSame(['user-shares' => 0, 'group-shares' => 0, 'link-members' => 0, 'open-votes' => 0, 'owned-boards' => 0], $this->mine());
+        $this->assertSame(['user-shares' => 0, 'group-shares' => 0, 'link-members' => 0, 'open-votes' => 0, 'owned-boards' => 0, 'shape-libraries' => 0, 'template-suggestions' => 0], $this->mine());
         $this->assertSame(0, $this->one('SELECT COUNT(*) FROM *PREFIX*knorke_boards WHERE id = ?', [$this->id['O']]), 'the ghost\'s board is deleted');
         $this->assertSame([1, 1, 1], [
             $this->one('SELECT COUNT(*) FROM *PREFIX*knorke_shares WHERE board_id = ? AND recipient = ?', [$this->id['U'], 'bob']),
@@ -113,16 +123,16 @@ final class OrphansIntegrationTest extends IntegrationCase {
         [$code, $out, $err] = $this->occ(['knorke:orphans', '--dry-run']);
         $this->assertSame(0, $code, $out . $err);
         $lines = explode("\n", rtrim($out, "\n"));
-        $this->assertCount(6, $lines, $out);
+        $this->assertCount(8, $lines, $out);
         foreach (OrphanReconciler::KINDS as $i => $kind) {
             $this->assertMatchesRegularExpression('/^' . $kind . ': [1-9][0-9]*$/', $lines[$i], 'the line of ' . $kind . ' (at least the test\'s own orphan)');
         }
-        $this->assertSame('Dry run: nothing was changed.', $lines[5]);
+        $this->assertSame('Dry run: nothing was changed.', $lines[7]);
         $this->assertSame(1, $this->mine()['owned-boards'], 'unchanged');
         [$code, $out2] = $this->occ(['knorke:orphans']);
-        $this->assertSame([0, implode("\n", array_slice($lines, 0, 5)) . "\n"], [$code, $out2], 'the same five lines without the dry-run line');
+        $this->assertSame([0, implode("\n", array_slice($lines, 0, 7)) . "\n"], [$code, $out2], 'the same seven lines without the dry-run line');
         [$code, $out3] = $this->occ(['knorke:orphans']);
-        $this->assertSame([0, "user-shares: 0\ngroup-shares: 0\nlink-members: 0\nopen-votes: 0\nowned-boards: 0\n"], [$code, $out3]);
+        $this->assertSame([0, "user-shares: 0\ngroup-shares: 0\nlink-members: 0\nopen-votes: 0\nowned-boards: 0\nshape-libraries: 0\ntemplate-suggestions: 0\n"], [$code, $out3]);
         [$code] = $this->occ(['knorke:orphans', '--nope']);
         $this->assertNotSame(0, $code, 'unknown option: Symfony refuses');
         [$code, $out] = $this->occ(['list', 'knorke']);

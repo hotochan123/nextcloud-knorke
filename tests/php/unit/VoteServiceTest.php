@@ -66,7 +66,7 @@ final class VoteServiceTest extends TestCase {
         $this->assertSame(3, VoteService::config(['per' => 3.0, 'perItem' => null, 'minutes' => null])['cfg']['per']);
         foreach ([
             ['per' => 0], ['per' => 100], ['per' => '5'], ['per' => 2.5], ['perItem' => 0], ['per' => 2, 'perItem' => 3],
-            ['scope' => 'frame'], ['scope' => 7], ['types' => []], ['types' => ['frame']], ['types' => ['connector']], ['types' => ['pen']],
+            ['scope' => 'frame'], ['scope' => 7], ['types' => []], ['types' => ['frame']], ['types' => ['connector']], ['types' => ['brush']],
             ['types' => 'sticky'], ['types' => [1]], ['types' => ['a' => 'sticky']], ['minutes' => 0], ['minutes' => 1441], ['minutes' => '10'], ['minutes' => true],
         ] as $body) {
             $this->expectHttp(400, 'vote_config', static fn () => VoteService::config($body));
@@ -126,6 +126,129 @@ final class VoteServiceTest extends TestCase {
         $this->assertNotSame($sid, $this->start($b, [], $later));
     }
 
+    public function testLiveOptionJob149(): void {
+        // config: live true, false, null or missing; anything else → 400 vote_config.
+        $today = ['per' => 5, 'perItem' => 1, 'scope' => null, 'types' => ['sticky']];
+        $this->assertSame(['cfg' => $today + ['live' => true], 'minutes' => null], VoteService::config(['live' => true]));
+        foreach ([[], ['live' => false], ['live' => null]] as $body) {
+            $this->assertSame(['cfg' => $today, 'minutes' => null], VoteService::config($body), 'without live: cfg exactly as before ' . json_encode($body));
+        }
+        foreach (['yes', 1, 0, 'true', [], [true]] as $v) {
+            $this->expectHttp(400, 'vote_config', static fn () => VoteService::config(['live' => $v]));
+        }
+        // start with live: meta.vote.cfg.live and the stored config with "live":true after types.
+        $b = $this->h->board(2);
+        $out = $this->h->votes->start(H::user(), $b, ['per' => 3, 'live' => true], $this->h->now);
+        $sid = $out['meta']['vote']['sid'];
+        $this->assertSame(['per' => 3, 'perItem' => 1, 'scope' => null, 'types' => ['sticky'], 'live' => true], $out['meta']['vote']['cfg']);
+        $this->assertTrue($out['meta']['vote']['cfg']['live']);
+        $this->assertSame('{"per":3,"perItem":1,"scope":null,"types":["sticky"],"live":true}', $this->h->session($sid)['config']);
+        $this->assertTrue($this->h->store->find($b, $sid)['config']['live']);
+        // extend keeps it (also when meta.vote has to be rebuilt from the session row), end keeps it.
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'extend', 5, $this->h->now)['meta']['vote']['cfg']['live']);
+        $this->h->sql->pdo->exec("UPDATE oc_knorke_boards SET meta = '{}' WHERE id = " . $b);
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'extend', 5, $this->h->now)['meta']['vote']['cfg']['live'], 'voteMeta takes live from the session');
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'end', null, $this->h->now)['meta']['vote']['cfg']['live']);
+        $this->assertSame('closed', $this->h->meta($b)['vote']['state']);
+        $this->assertTrue($this->h->meta($b)['vote']['cfg']['live']);
+        // Without live: meta.vote.cfg, the stored config and the session as before.
+        $b2 = $this->h->board(2);
+        $out = $this->h->votes->start(H::user(), $b2, ['live' => false], $this->h->now);
+        $this->assertSame($today, $out['meta']['vote']['cfg']);
+        $this->assertSame('{"per":5,"perItem":1,"scope":null,"types":["sticky"]}', $this->h->session($out['meta']['vote']['sid'])['config']);
+        $this->assertFalse($this->h->store->find($b2, $out['meta']['vote']['sid'])['config']['live']);
+        $this->assertSame($today, $this->h->votes->update(H::user(), $b2, 'end', null, $this->h->now)['meta']['vote']['cfg']);
+        // A stored "live" that is not literally true does not count.
+        $this->h->sql->pdo->exec("INSERT INTO oc_knorke_vote_sessions (board_id, state, config, started_by, started_at, ends_at) VALUES (4243, 'closed', '{\"live\":1}', 'u:x', 0, NULL)");
+        $this->assertFalse($this->h->store->find(4243, (int)$this->h->sql->one('SELECT MAX(id) FROM *PREFIX*knorke_vote_sessions'))['config']['live']);
+        // Route 23 still knows exactly these actions (live cannot be switched during a session).
+        $this->assertSame(['end', 'extend', 'show', 'hide', 'clear'], VoteService::ACTIONS);
+        $this->expectHttp(400, 'bad_request', fn () => $this->h->votes->update(H::user(), $b, 'live', null, $this->h->now));
+    }
+
+    public function testAccountsOnlyOptionJob175(): void {
+        // config: accountsOnly true, false, null or missing; anything else → 400 vote_config.
+        $today = ['per' => 5, 'perItem' => 1, 'scope' => null, 'types' => ['sticky']];
+        $this->assertSame(['cfg' => $today + ['accountsOnly' => true], 'minutes' => null], VoteService::config(['accountsOnly' => true]));
+        foreach ([[], ['accountsOnly' => false], ['accountsOnly' => null]] as $body) {
+            $this->assertSame(['cfg' => $today, 'minutes' => null], VoteService::config($body), 'without accountsOnly: cfg exactly as before ' . json_encode($body));
+            $this->assertSame(['cfg' => $today + ['live' => true], 'minutes' => null], VoteService::config($body + ['live' => true]), 'with live, still as before ' . json_encode($body));
+        }
+        foreach (['yes', 1, 0, 'true', [], [true]] as $v) {
+            $this->expectHttp(400, 'vote_config', static fn () => VoteService::config(['accountsOnly' => $v]));
+        }
+        // Both options: accountsOnly after live.
+        $this->assertSame(['per', 'perItem', 'scope', 'types', 'live', 'accountsOnly'], array_keys(VoteService::config(['accountsOnly' => true, 'live' => true])['cfg']));
+        // start with the option: meta.vote.cfg.accountsOnly and "accountsOnly":true in the stored config.
+        $b = $this->h->board(2);
+        $out = $this->h->votes->start(H::user(), $b, ['per' => 3, 'accountsOnly' => true], $this->h->now);
+        $sid = $out['meta']['vote']['sid'];
+        $this->assertSame(['per' => 3, 'perItem' => 1, 'scope' => null, 'types' => ['sticky'], 'accountsOnly' => true], $out['meta']['vote']['cfg']);
+        $this->assertTrue($out['meta']['vote']['cfg']['accountsOnly']);
+        $this->assertSame('{"per":3,"perItem":1,"scope":null,"types":["sticky"],"accountsOnly":true}', $this->h->session($sid)['config']);
+        $this->assertTrue($this->h->store->find($b, $sid)['config']['accountsOnly']);
+        $this->assertFalse($this->h->store->find($b, $sid)['config']['live']);
+        // mine: a guest gets nothing in this session, an account its votes.
+        $this->assertNull($this->h->votes->mine($b, H::guest()->pid, true));
+        $this->assertSame(['sid' => $sid, 'mine' => [], 'left' => 3], $this->h->votes->mine($b, H::user('vic', Role::Vote)->pid, false));
+        // extend keeps it (also when meta.vote is rebuilt from the session row), end keeps it.
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'extend', 5, $this->h->now)['meta']['vote']['cfg']['accountsOnly']);
+        $this->h->sql->pdo->exec("UPDATE oc_knorke_boards SET meta = '{}' WHERE id = " . $b);
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'extend', 5, $this->h->now)['meta']['vote']['cfg']['accountsOnly'], 'voteMeta takes accountsOnly from the session');
+        $this->assertSame('{"per":3,"perItem":1,"scope":null,"types":["sticky"],"accountsOnly":true}', $this->h->session($sid)['config'], 'extend never changes the stored config');
+        $this->assertTrue($this->h->votes->update(H::user(), $b, 'end', null, $this->h->now)['meta']['vote']['cfg']['accountsOnly']);
+        $this->assertSame('closed', $this->h->meta($b)['vote']['state']);
+        $this->assertTrue($this->h->meta($b)['vote']['cfg']['accountsOnly']);
+        // Both options: stored and in meta with accountsOnly after live.
+        $b3 = $this->h->board(2);
+        $out = $this->h->votes->start(H::user(), $b3, ['live' => true, 'accountsOnly' => true], $this->h->now);
+        $this->assertSame(['per' => 5, 'perItem' => 1, 'scope' => null, 'types' => ['sticky'], 'live' => true, 'accountsOnly' => true], $out['meta']['vote']['cfg']);
+        $this->assertSame('{"per":5,"perItem":1,"scope":null,"types":["sticky"],"live":true,"accountsOnly":true}', $this->h->session($out['meta']['vote']['sid'])['config']);
+        // Without the option: meta.vote.cfg, the stored config and the session as before, also with live.
+        $b2 = $this->h->board(2);
+        $out = $this->h->votes->start(H::user(), $b2, ['accountsOnly' => false, 'live' => true], $this->h->now);
+        $sid2 = $out['meta']['vote']['sid'];
+        $this->assertSame($today + ['live' => true], $out['meta']['vote']['cfg']);
+        $this->assertSame('{"per":5,"perItem":1,"scope":null,"types":["sticky"],"live":true}', $this->h->session($sid2)['config']);
+        $this->assertFalse($this->h->store->find($b2, $sid2)['config']['accountsOnly']);
+        $this->assertSame(['sid' => $sid2, 'mine' => [], 'left' => 5], $this->h->votes->mine($b2, H::guest()->pid, true), 'a guest gets its votes without the option');
+        $this->assertSame($today + ['live' => true], $this->h->votes->update(H::user(), $b2, 'extend', 5, $this->h->now)['meta']['vote']['cfg'], 'extend cannot switch it on');
+        $this->assertSame($today + ['live' => true], $this->h->votes->update(H::user(), $b2, 'end', null, $this->h->now)['meta']['vote']['cfg']);
+        // A stored "accountsOnly" that is not literally true does not count.
+        $this->h->sql->pdo->exec("INSERT INTO oc_knorke_vote_sessions (board_id, state, config, started_by, started_at, ends_at) VALUES (4244, 'closed', '{\"accountsOnly\":1}', 'u:x', 0, NULL)");
+        $this->assertFalse($this->h->store->find(4244, (int)$this->h->sql->one('SELECT MAX(id) FROM *PREFIX*knorke_vote_sessions'))['config']['accountsOnly']);
+        // Route 23 has no action for it.
+        $this->expectHttp(400, 'bad_request', fn () => $this->h->votes->update(H::user(), $b, 'accountsOnly', null, $this->h->now));
+    }
+
+    public function testAccountsOnlyDeniesGuestVoteOpsJob175(): void {
+        // Order of the results: bad (shape), closed, then denied (accounts only); nothing written.
+        $b = $this->h->board(3);
+        $old = $this->start($b);
+        $this->h->votes->update(H::user(), $b, 'end', null, $this->h->now);
+        $sid = $this->start($b, ['accountsOnly' => true]);
+        $this->h->log = [];
+        foreach ([H::guest('gVOTE0000000', Role::Vote), H::guest('gEDIT0000000', Role::Edit)] as $g) {
+            $out = $this->apply($b, [['o' => 'vote', 's' => $sid, 'id' => 'x', 'n' => 1], H::vote($old, 1, 1), H::vote($sid, 1, 1), H::vote($sid, 2, 0)], $g);
+            $this->assertSame(['res' => ['bad', 'closed', 'denied', 'denied'], 'sid' => null, 'mine' => null, 'left' => null], $out, $g->role->value);
+        }
+        $this->assertSame(0, $this->h->voteRows($sid));
+        $this->assertSame(0, (int)$this->h->session($sid)['seq'], 'no seq');
+        $this->assertSame([], $this->h->log, 'no vt: and no rev');
+        // A guest with a role that cannot vote: denied before the lock (as before).
+        $this->assertSame(['denied'], $this->apply($b, [H::vote($sid, 1, 1)], H::guest('gVIEW0000000', Role::View))['res']);
+        // Accounts vote as before: owner, share, link.
+        foreach ([H::user(), H::user('ed', Role::Edit), H::user('lin', Role::Edit, false, 'link')] as $acc) {
+            $out = $this->apply($b, [H::vote($sid, 1, 1)], $acc);
+            $this->assertSame(['ok'], $out['res'], $acc->origin);
+            $this->assertSame([H::ulid(1) => 1], $out['mine']);
+        }
+        $this->assertSame(3, $this->h->voteRows($sid));
+        // Closed: the guest's op gets closed, not denied.
+        $this->h->votes->update(H::user(), $b, 'end', null, $this->h->now);
+        $this->assertSame(['closed'], $this->apply($b, [H::vote($sid, 1, 1)], H::guest())['res']);
+    }
+
     // ── votes ──────────────────────────────────────────────────────────────
 
     public function testSetSemanticsRepetitionAndShape(): void {
@@ -150,6 +273,45 @@ final class VoteServiceTest extends TestCase {
         $this->assertSame(3, (int)$this->h->session($sid)['seq'], 'one seq per effective batch');
         $this->assertSame($rev, $this->h->rev($b), 'votes never raise the board rev');
         $this->assertSame(['sid' => $sid, 'seq' => 3], $this->h->cache->getVoteSeq($b));
+        $this->assertTrue($this->h->allOutsideTransactions());
+    }
+
+    public function testBaseAnswersStaleJob216(): void {
+        // Job 216: two tabs of the same person (same pid) vote from the same
+        // state; the op that names an old base b answers stale instead of
+        // overwriting the other tab's vote. Without b: set semantics as before.
+        $b = $this->h->sql->addBoard();
+        for ($i = 1; $i <= 3; $i++) {
+            $this->h->sql->addItem($b, H::ulid($i), 'sticky');
+        }
+        $this->h->sql->addItem($b, H::ulid(4), 'shape');
+        $this->h->sql->addItem($b, H::ulid(5), 'sticky', null, true);
+        $sid = $this->start($b, ['per' => 5, 'perItem' => 3]);
+        $vic = H::user('vic', Role::Vote);
+        $based = static fn (int $item, int $n, int $base): array => H::vote($sid, $item, $n) + ['b' => $base];
+        $this->assertSame(['ok'], $this->apply($b, [$based(1, 1, 0)])['res']);
+        // Tab A: 1 → 2.
+        $this->assertSame(['res' => ['ok'], 'sid' => $sid, 'mine' => [H::ulid(1) => 2], 'left' => 3], $this->apply($b, [$based(1, 2, 1)]));
+        $seq = (int)$this->h->session($sid)['seq'];
+        // Tab B, still at 1, sends the same (so does a retry of tab A's op): stale, nothing written, the state comes back.
+        $this->h->log = [];
+        $this->assertSame(['res' => ['stale'], 'sid' => $sid, 'mine' => [H::ulid(1) => 2], 'left' => 3], $this->apply($b, [$based(1, 2, 1)]));
+        $this->assertSame([], $this->h->log, 'no seq, no vt (rolled back)');
+        $this->assertSame($seq, (int)$this->h->session($sid)['seq']);
+        $this->assertSame([H::ulid(1) => 2], $this->h->store->rows($sid, $vic->pid));
+        // Tab B recomputes its +1 on 2: no vote lost.
+        $this->assertSame(['res' => ['ok'], 'sid' => $sid, 'mine' => [H::ulid(1) => 3], 'left' => 2], $this->apply($b, [$based(1, 3, 2)]));
+        // In batch order: the second op's base is the first op's n.
+        $this->assertSame(['ok', 'ok'], $this->apply($b, [$based(2, 1, 0), $based(2, 2, 1)])['res']);
+        // stale before bad (type) and limit; a matching base then meets the old checks.
+        $this->assertSame(['stale', 'stale', 'limit', 'bad'], $this->apply($b, [$based(4, 1, 1), $based(3, 3, 1), $based(3, 1, 0), $based(4, 1, 0)])['res']);
+        // A deleted item: n = 0 is ok whatever b says, n ≥ 1 is gone (not stale).
+        $this->assertSame(['ok', 'gone'], $this->apply($b, [$based(5, 0, 2), $based(5, 1, 0)])['res']);
+        // Lowering from a stale base is stale too; from the right one it is ok.
+        $this->assertSame(['stale', 'ok'], $this->apply($b, [$based(1, 1, 2), $based(1, 2, 3)])['res']);
+        // Without b (a tab with an older bundle): the last value wins, as before.
+        $out = $this->apply($b, [H::vote($sid, 1, 1)]);
+        $this->assertSame([['ok'], [H::ulid(1) => 1, H::ulid(2) => 2]], [$out['res'], $out['mine']]);
         $this->assertTrue($this->h->allOutsideTransactions());
     }
 
@@ -220,13 +382,13 @@ final class VoteServiceTest extends TestCase {
         $vic = H::user('vic', Role::Vote);
         $this->apply($b, [H::vote($sid, 1, 2), H::vote($sid, 2, 1)]);
         $this->h->sql->setDeleted($b, H::ulid(1), true);
-        $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(2) => 1], 'left' => 2], $this->h->votes->mine($b, $vic->pid));
+        $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(2) => 1], 'left' => 2], $this->h->votes->mine($b, $vic->pid, false));
         $out = $this->apply($b, [H::vote($sid, 3, 2)]);
         $this->assertSame([['ok'], [H::ulid(2) => 1, H::ulid(3) => 2], 0], [$out['res'], $out['mine'], $out['left']], 'the deleted item does not block the budget');
         $this->assertSame(['gone'], $this->apply($b, [H::vote($sid, 1, 1)])['res']);
         // Revived (undo): its rows count again; the overdrawn budget is accepted, left never below 0.
         $this->h->sql->setDeleted($b, H::ulid(1), false);
-        $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(1) => 2, H::ulid(2) => 1, H::ulid(3) => 2], 'left' => 0], $this->h->votes->mine($b, $vic->pid));
+        $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(1) => 2, H::ulid(2) => 1, H::ulid(3) => 2], 'left' => 0], $this->h->votes->mine($b, $vic->pid, false));
         $this->assertSame(['limit'], $this->apply($b, [H::vote($sid, 2, 2)])['res'], 'new votes check against the valid state');
         $this->h->sql->setDeleted($b, H::ulid(1), true);
         $seq = (int)$this->h->session($sid)['seq'];
@@ -261,7 +423,7 @@ final class VoteServiceTest extends TestCase {
         $this->h->sql->setDeleted($b, $a, true);
         $this->assertSame(['ok'], $this->apply($b, [H::vote($sid, 3, 2)])['res']);
         $this->h->sql->setDeleted($b, $a, false);
-        $this->assertSame(['sid' => $sid, 'mine' => [$a => 2, $bb => 1, $c => 2], 'left' => 0], $this->h->votes->mine($b, $vic->pid), 'overdrawn: 5 of 3');
+        $this->assertSame(['sid' => $sid, 'mine' => [$a => 2, $bb => 1, $c => 2], 'left' => 0], $this->h->votes->mine($b, $vic->pid, false), 'overdrawn: 5 of 3');
         // The same value on the overdrawn budget: ok, nothing written.
         $seq = (int)$this->h->session($sid)['seq'];
         $this->assertSame(['ok'], $this->apply($b, [H::vote($sid, 3, 2)])['res']);
@@ -308,7 +470,7 @@ final class VoteServiceTest extends TestCase {
         $this->assertSame(['ok'], $d['acks']['res']);
         $this->assertNull($this->h->store->items($b, [$n])[$n]['parent_id'], 'N lies outside the frame now');
         // N keeps counting: mine, left, voters and the tally.
-        $this->assertSame(['sid' => $sid, 'mine' => [$n => 3, H::ulid(2) => 1], 'left' => 1], $this->h->votes->mine($b, $vic->pid));
+        $this->assertSame(['sid' => $sid, 'mine' => [$n => 3, H::ulid(2) => 1], 'left' => 1], $this->h->votes->mine($b, $vic->pid, false));
         $this->assertSame([$n => 5, H::ulid(2) => 1], $this->h->store->tally($sid));
         $this->assertSame(2, $this->h->store->voters($sid));
         // An increase on N is bad (scope), also for a voter without a row there.

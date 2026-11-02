@@ -102,14 +102,14 @@ final class SyncFlowIntegrationTest extends IntegrationCase {
         $plain = self::ulid(2);
         $f = self::ulid(3);
         $d = $this->sync($b, $p, 0, ['seq' => 1, 'ops' => [
-            ['o' => 'put', 'id' => $a, 't' => 'sticky', 'p' => self::sticky(['data' => ['text' => 'great idea 👍', 'tags' => ['🔥', 'ok']]])],
+            ['o' => 'put', 'id' => $a, 't' => 'sticky', 'p' => self::sticky(['data' => ['text' => 'great idea 👍', 'words' => ['🔥', 'ok']]])],
             ['o' => 'put', 'id' => $plain, 't' => 'sticky', 'p' => self::sticky(['data' => ['text' => '€ ü 中']])],
             ['o' => 'put', 'id' => $f, 't' => 'frame', 'p' => ['x' => 0, 'y' => 0, 'w' => 800, 'h' => 600, 'z' => 'hz', 'data' => ['title' => str_repeat('🗂', 200)]]],
             ['o' => 'patch', 'id' => $a, 'p' => ['style.label' => 'Ziel 🎯']],
         ]]);
         $this->assertSame(['seq' => 1, 'rev' => 1, 'res' => ['ok', 'ok', 'ok', 'ok']], $d['acks'], self::dbKind() . ($four ? '' : ' utf8mb3') . ': the whole batch is written');
         $byId = array_column($d['items'], null, 'id');
-        $this->assertSame([$emoji('great idea 👍'), [$emoji('🔥'), 'ok'], $emoji('Ziel 🎯')], [$byId[$a]['data']['text'], $byId[$a]['data']['tags'], $byId[$a]['style']['label']], 'the writer gets the stored values in the same answer');
+        $this->assertSame([$emoji('great idea 👍'), [$emoji('🔥'), 'ok'], $emoji('Ziel 🎯')], [$byId[$a]['data']['text'], $byId[$a]['data']['words'], $byId[$a]['style']['label']], 'the writer gets the stored values in the same answer');
         $this->assertSame('€ ü 中', $byId[$plain]['data']['text']);
         $this->assertSame($emoji(str_repeat('🗂', 200)), $byId[$f]['data']['title']);
         $this->assertSame($byId, array_intersect_key($this->snapshotItems($b), $byId), 'answer = snapshot');

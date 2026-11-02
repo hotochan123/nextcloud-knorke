@@ -111,6 +111,21 @@ class Access {
         if ($user === null) {
             throw new HttpError(401, 'not_logged_in', 'Not logged in.');
         }
+        return $this->fullCheck($user, $board);
+    }
+
+    /**
+     * The full check of a given account (factory job 267: the AI task listener
+     * writes the result for the account that started it, without a session).
+     *
+     * @return array{0: AccessResult, 1: array} [result, board row + member_role]
+     */
+    public function forAccount(IUser $user, int $board): array {
+        return $this->fullCheck($user, $board);
+    }
+
+    /** @return array{0: AccessResult, 1: array} */
+    private function fullCheck(IUser $user, int $board): array {
         $uid = $user->getUID();
         $now = $this->nowMs();
         // Reads the primary (pin() in the store) BEFORE the user's groups and
@@ -148,11 +163,16 @@ class Access {
      * is the maximum, the origin that of the higher source, share before link
      * on a tie. facilitator: any applying share row has the role moderate.
      * $user null (an account Nextcloud does not know): link role only.
+     * A hidden owner (LinkPolicy::ownerHidden, a disabled account, job 245):
+     * no role at all, before any share row is read.
      *
      * @param array $row findBoardForUser row
      * @return array{0: ?Role, 1: string, 2: bool} [role, origin share|link, facilitator]
      */
     public function memberRole(int $board, array $row, ?IUser $user, bool $linksAllowed): array {
+        if ($this->policy->ownerHidden((string)$row['owner'])) {
+            return [null, 'share', false];
+        }
         $linkRole = $row['member_role'] === null ? null : Role::tryFrom((string)$row['member_role']);
         if ($linkRole !== null && $row['member_link'] !== null && !$linksAllowed) {
             $linkRole = null;
@@ -364,7 +384,18 @@ class Access {
         $this->snapshotThrottle('knorke-snapip-' . $board, Limits::SNAPSHOT_IP_LIMIT, Limits::SNAPSHOT_IP_PERIOD, $ip);
     }
 
-    /** One anonymous ILimiter budget of the snapshot throttle → 429 slow_down. */
+    /**
+     * Comment list throttle of a guest (route 40, factory job 251), after
+     * the token check: `knorke-cmt-<gid>` 120 per 60 s and IP → 429
+     * slow_down (the client's CommentFeed waits and loads again).
+     *
+     * @throws HttpError 429
+     */
+    public function throttleGuestComments(Principal $p, string $ip): void {
+        $this->snapshotThrottle('knorke-cmt-' . substr($p->id, 2), Limits::COMMENT_LIST_LIMIT, Limits::COMMENT_LIST_PERIOD, $ip);
+    }
+
+    /** One anonymous ILimiter budget (snapshot throttle, guest comment list) → 429 slow_down. */
     private function snapshotThrottle(string $identifier, int $limit, int $period, string $ip): void {
         try {
             $this->limiter->registerAnonRequest($identifier, $limit, $period, $ip);

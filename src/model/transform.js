@@ -24,10 +24,16 @@
  * uniform scaling, no rotation: multi rotation was dropped, §12.1, §9.2).
  * Rounding to the 0.01 grid (q(v, 100)) happens when the actions write the
  * result, not here.
+ *
+ * (job 140) What is drawn and handled is gapFrame() of a frame: the box
+ * grown by SELECTION_GAP_PX screen px on every side. The renderer places
+ * the outlines on it, handlesFor() gets it for the handles; resizeFrame,
+ * rotateFrame and mapBoxes keep working on the item boxes (a drag acts by
+ * the pointer offset, so the gap stays).
  */
 import { rotatedBBox } from './geometry.js'
 import { typeInfo } from './registry.js'
-import { ROT_HANDLE_OFFSET_PX } from './tokens.js'
+import { POINT_REVEAL_PX, ROT_HANDLE_OFFSET_PX, ROT_REVEAL_PX, SELECTION_GAP_PX } from './tokens.js'
 
 /** Handle names: corners, edge midpoints, rotation. */
 export const ANCHORS = Object.freeze(['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot'])
@@ -127,14 +133,47 @@ export function selectionFrame(model, ids) {
 }
 
 /**
+ * The selection frame drawn around a box or frame (job 140): grown by
+ * g = SELECTION_GAP_PX / scale world units on every side, same centre,
+ * same r; other keys (n) are kept. Outlines, handles and the context bar's
+ * box all use it. (job 172) below: world units the frame reaches further
+ * down at its bottom edge, in its own axes (the band of a single selected
+ * note's reaction row): top and sides stay, the centre moves by below / 2
+ * along the rotated downward axis.
+ *
+ * @param {{x:number, y:number, w:number, h:number, r?:number}|null} frame box or selection frame
+ * @param {number} scale camera scale (screen px per world unit; not finite or ≤ 0: 1)
+ * @param {{below?: number}} [o] below: extra reach at the bottom (world units; missing, ≤ 0 or not finite: 0)
+ * @return {{x:number, y:number, w:number, h:number, r:number}|null} null for null
+ */
+export function gapFrame(frame, scale, { below = 0 } = {}) {
+	if (!frame) {
+		return null
+	}
+	const g = SELECTION_GAP_PX / (isNum(scale) && scale > 0 ? scale : 1)
+	const r = frame.r || 0
+	const out = { ...frame, x: frame.x - g, y: frame.y - g, w: frame.w + 2 * g, h: frame.h + 2 * g, r }
+	if (!(isNum(below) && below > 0)) {
+		return out
+	}
+	const [dx, dy] = rotate(0, below / 2, r)
+	out.h += below
+	out.x = frame.x + frame.w / 2 + dx - out.w / 2
+	out.y = frame.y + frame.h / 2 + dy - out.h / 2
+	return out
+}
+
+/**
  * The handles to show for a frame, in world coordinates (rotated with the
- * frame). One item: by its type's `resize` — 'box' all eight (notes too:
- * keepRatio only decides how a corner drags, §6.3 table "1 Notiz | 8 +
- * Drehen"), 'text' corners plus l/r (the height is measured, never
- * dragged), 'none' none (connectors, placeholders) — plus 'rot' when every
- * type is rotatable. Several items (frame.n > 1): the four corners, no
- * 'rot'. 'rot' sits ROT_HANDLE_OFFSET_PX screen px above the middle of the
- * top edge.
+ * frame). One item: by its type's `resize` — 'box' (job 231, redesign V8)
+ * the four corners (notes too: keepRatio decides how a corner drags, Shift
+ * frees it), 'text' corners plus l/r (the wrap width; the height is
+ * measured, never dragged), 'none' none (connectors, placeholders), (job
+ * 188) a note pad its four corners — plus 'rot' when every type is
+ * rotatable. Several items (frame.n > 1): the four corners, no 'rot'.
+ * (job 231) 'rot' sits ROT_HANDLE_OFFSET_PX screen px beyond the top right
+ * corner along both of the frame's axes. The scene passes gapFrame() of the
+ * selection frame (job 140), so the handles sit on the drawn frame.
  *
  * @param {{x:number, y:number, w:number, h:number, r?:number, n?:number}|null} frame selection frame
  * @param {Set<string>|Iterable<string>} types types of the selected items
@@ -157,7 +196,7 @@ export function handlesFor(frame, types, scale) {
 		} else if (infos.some((i) => i.resize === 'text')) {
 			names = new Set([...CORNERS, 'l', 'r'])
 		} else {
-			names = new Set(Object.keys(POS))
+			names = new Set(CORNERS)
 		}
 		if (names.size > 0 && infos.length > 0 && infos.every((i) => i.rotatable)) {
 			names.add('rot')
@@ -173,7 +212,7 @@ export function handlesFor(frame, types, scale) {
 		let dx
 		let dy
 		if (name === 'rot') {
-			dx = 0
+			dx = frame.w / 2 + ROT_HANDLE_OFFSET_PX / s
 			dy = -frame.h / 2 - ROT_HANDLE_OFFSET_PX / s
 		} else {
 			dx = (POS[name][0] - 0.5) * frame.w
@@ -185,6 +224,71 @@ export function handlesFor(frame, types, scale) {
 	return out
 }
 
+/** (job 231) The edge of the drawn frame each connection point belongs to. */
+const POINT_EDGE = Object.freeze({ 'plus-t': 't', 'plus-r': 'r', 'plus-b': 'b', 'plus-l': 'l' })
+
+/**
+ * (job 231, redesign V8) The handles of `list` drawn now. With a pen or a
+ * finger (touch) all of them: there is no hovering pointer. With the mouse
+ * the rotation handle only while the pointer is at most ROT_REVEAL_PX from
+ * the top right corner of the drawn frame or POINT_REVEAL_PX from the
+ * handle, or while a rotation runs; a connection point (plus-t/r/b/l) only
+ * while the pointer is at most POINT_REVEAL_PX from its edge of the frame
+ * (across, inside or outside; along, within the edge ± POINT_REVEAL_PX) or
+ * from the point itself, and not in the zone of the rotation handle (when
+ * the list has one). Without a pointer neither shows. Every other handle
+ * always shows. Every hit circle (HANDLE_PX) lies inside its zone, so a
+ * press only hits what showed on the way there. Distances in screen px,
+ * measured in the frame's own axes.
+ *
+ * @param {Array<{name:string, x:number, y:number}>} list handles (world)
+ * @param {{x:number, y:number, w:number, h:number, r?:number}|null} frame the drawn frame (gapFrame, world)
+ * @param {{x:number, y:number}|null} pointer the mouse in world coordinates, null when unknown
+ * @param {number} scale camera scale
+ * @param {{touch?:boolean, rotating?:boolean}} [o] pen or finger; a rotation runs
+ * @return {Set<string>} the names drawn now
+ */
+export function shownHandles(list, frame, pointer, scale, { touch = false, rotating = false } = {}) {
+	const out = new Set()
+	const s = isNum(scale) && scale > 0 ? scale : 1
+	const p = pointer && isNum(pointer.x) && isNum(pointer.y) ? pointer : null
+	// the pointer in the frame's own axes, origin top-left of the unrotated frame, in screen px
+	let lx = NaN
+	let ly = NaN
+	let w = 0
+	let h = 0
+	if (p && frame) {
+		const cx = frame.x + frame.w / 2
+		const cy = frame.y + frame.h / 2
+		const [ux, uy] = rotate(p.x - cx, p.y - cy, -(frame.r || 0))
+		lx = (ux + frame.w / 2) * s
+		ly = (uy + frame.h / 2) * s
+		w = frame.w * s
+		h = frame.h * s
+	}
+	const near = (hd, d) => p !== null && Math.hypot((hd.x - p.x) * s, (hd.y - p.y) * s) <= d
+	const rot = list.find((hd) => hd.name === 'rot')
+	const inRot = rot !== undefined && p !== null && (Math.hypot(lx - w, ly) <= ROT_REVEAL_PX || near(rot, POINT_REVEAL_PX))
+	const R = POINT_REVEAL_PX
+	const along = (v, len) => v >= -R && v <= len + R
+	const atEdge = {
+		t: Math.abs(ly) <= R && along(lx, w),
+		b: Math.abs(ly - h) <= R && along(lx, w),
+		l: Math.abs(lx) <= R && along(ly, h),
+		r: Math.abs(lx - w) <= R && along(ly, h),
+	}
+	for (const hd of list) {
+		let on = true
+		if (!touch && hd.name === 'rot') {
+			on = rotating || inRot
+		} else if (!touch && Object.prototype.hasOwnProperty.call(POINT_EDGE, hd.name)) {
+			on = p !== null && !inRot && (atEdge[POINT_EDGE[hd.name]] === true || near(hd, R))
+		}
+		if (on) out.add(hd.name)
+	}
+	return out
+}
+
 /**
  * Resizes a frame by dragging one handle (dxWorld, dyWorld = pointer offset
  * since the drag started, in world coordinates; the frame is the one at the
@@ -192,16 +296,17 @@ export function handlesFor(frame, types, scale) {
  * follow it, the opposite edges stay (centered: move the other way, the
  * centre stays). keepRatio on a corner: the dragged corner is projected onto
  * the ratio diagonal (Konva). Sizes stay in [min, max]: a handle dragged past
- * the minimum stops there instead of mirroring.
+ * the minimum stops there instead of mirroring. (Job 199) minW and minH
+ * raise the minimum of one axis (a frame with lanes).
  *
  * @param {{x:number, y:number, w:number, h:number, r?:number}} frame frame at drag start
  * @param {string} anchor handle name (tl, t, tr, r, br, b, bl, l)
  * @param {number} dxWorld pointer offset x
  * @param {number} dyWorld pointer offset y
- * @param {{keepRatio?: boolean, centered?: boolean, min?: number, max?: number}} [opts] options
+ * @param {{keepRatio?: boolean, centered?: boolean, min?: number, max?: number, minW?: number, minH?: number}} [opts] options
  * @return {{x:number, y:number, w:number, h:number, r:number}} new frame (other keys of frame kept)
  */
-export function resizeFrame(frame, anchor, dxWorld, dyWorld, { keepRatio = false, centered = false, min = 0, max = Infinity } = {}) {
+export function resizeFrame(frame, anchor, dxWorld, dyWorld, { keepRatio = false, centered = false, min = 0, max = Infinity, minW = 0, minH = 0 } = {}) {
 	const r = frame.r || 0
 	const w = frame.w
 	const h = frame.h
@@ -249,8 +354,10 @@ export function resizeFrame(frame, anchor, dxWorld, dyWorld, { keepRatio = false
 			y1 += ly
 			if (centered) y0 -= ly
 		}
-		;[x0, x1] = clampSpan(x0, x1, w, lo, hi, centered, LEFT.has(anchor))
-		;[y0, y1] = clampSpan(y0, y1, h, lo, hi, centered, TOP.has(anchor))
+		const loW = isNum(minW) ? Math.min(hi, Math.max(lo, minW)) : lo
+		const loH = isNum(minH) ? Math.min(hi, Math.max(lo, minH)) : lo
+		;[x0, x1] = clampSpan(x0, x1, w, loW, hi, centered, LEFT.has(anchor))
+		;[y0, y1] = clampSpan(y0, y1, h, loH, hi, centered, TOP.has(anchor))
 	}
 	const nw = x1 - x0
 	const nh = y1 - y0
@@ -313,26 +420,49 @@ function getSnap(snaps, deg, tolDeg) {
  * Rotates a frame with the rotation handle: the angle from the frame centre
  * to the pointer (0° = pointer straight above the centre, clockwise), snapped
  * to `snaps` within tolDeg, or to multiples of stepDeg when given (Shift).
- * The rotation is around the centre, so x, y, w, h stay.
+ * The rotation is around the centre, so x, y, w, h stay. (job 231) fromDeg
+ * is subtracted from that angle before the snapping: the angle of the press
+ * point minus the frame's r at the start (rotationOffset), so a press beside
+ * the top middle (the rotation handle at the top right corner) turns
+ * nothing until the pointer moves.
  *
  * @param {{x:number, y:number, w:number, h:number, r?:number}} frame frame
  * @param {{x:number, y:number}} pointer pointer in world coordinates
- * @param {{snaps?: number[], tolDeg?: number, stepDeg?: number|null}} [opts] snapping
+ * @param {{snaps?: number[], tolDeg?: number, stepDeg?: number|null, fromDeg?: number}} [opts] snapping, offset
  * @return {{x:number, y:number, w:number, h:number, r:number}} new frame, r in [0, 360)
  */
-export function rotateFrame(frame, pointer, { snaps = SNAPS, tolDeg = 5, stepDeg = null } = {}) {
+export function rotateFrame(frame, pointer, { snaps = SNAPS, tolDeg = 5, stepDeg = null, fromDeg = 0 } = {}) {
 	const cx = frame.x + frame.w / 2
 	const cy = frame.y + frame.h / 2
 	if (!pointer || !isNum(pointer.x) || !isNum(pointer.y) || (pointer.x === cx && pointer.y === cy)) {
 		return { ...frame, r: frame.r || 0 }
 	}
-	let deg = norm360(Math.atan2(pointer.y - cy, pointer.x - cx) * 180 / Math.PI + 90)
+	let deg = norm360(Math.atan2(pointer.y - cy, pointer.x - cx) * 180 / Math.PI + 90 - (isNum(fromDeg) ? fromDeg : 0))
 	if (isNum(stepDeg) && stepDeg > 0) {
 		deg = Math.round(deg / stepDeg) * stepDeg
 	} else {
 		deg = getSnap(Array.isArray(snaps) ? snaps : [], deg, isNum(tolDeg) ? tolDeg : 0)
 	}
 	return { ...frame, r: norm360(deg) }
+}
+
+/**
+ * (job 231) The offset of a rotation that starts with a press at pointer:
+ * the angle of the press point around the frame's centre (as rotateFrame
+ * measures it) minus the frame's r, in (-180, 180]. 0 when the press lies
+ * straight above the centre in the frame's own axes (the old place of the
+ * rotation handle) or on the centre.
+ *
+ * @param {{x:number, y:number, w:number, h:number, r?:number}} frame frame at the start
+ * @param {{x:number, y:number}} pointer press point in world coordinates
+ * @return {number} degrees, for rotateFrame's fromDeg
+ */
+export function rotationOffset(frame, pointer) {
+	const cx = frame.x + frame.w / 2
+	const cy = frame.y + frame.h / 2
+	if (!pointer || !isNum(pointer.x) || !isNum(pointer.y) || (pointer.x === cx && pointer.y === cy)) return 0
+	const d = norm360(Math.atan2(pointer.y - cy, pointer.x - cx) * 180 / Math.PI + 90 - (frame.r || 0))
+	return d > 180 ? d - 360 : d
 }
 
 /**

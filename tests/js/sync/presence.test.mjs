@@ -4,7 +4,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PALETTE, PresenceModel, colorFor, viewOf } from '../../../src/sync/presence.js'
+import { PALETTE, PresenceModel, colorFor, laserDelay, laserOf, viewOf } from '../../../src/sync/presence.js'
+import { TEN } from '../../../src/model/tokens.js'
 
 const N1 = '01JA0000000000000000000001'
 const N2 = '01JA0000000000000000000002'
@@ -34,8 +35,29 @@ test('colorFor: stable, from the palette, spread over pids', () => {
 	for (let i = 0; i < 200; i++) {
 		seen.add(colorFor('pid' + i.toString(16).padStart(13, '0')))
 	}
-	assert.ok(seen.size >= 10, 'uses most of the palette: ' + seen.size)
-	assert.equal(PALETTE.length, 12)
+	assert.ok(seen.size >= 9, 'uses most of the palette: ' + seen.size)
+	assert.equal(PALETTE.length, 10)
+})
+
+test('job 227 AK7: the colour of a person is one of the ten strong tones (TEN), the same for the same pid, in participants() and sample() alike', () => {
+	assert.deepEqual(PALETTE, TEN)
+	let x = 12345
+	const rnd = () => { x = (Math.imul(x, 1103515245) + 12345) >>> 0; return x.toString(16).padStart(8, '0') }
+	const seen = new Set()
+	for (let i = 0; i < 1000; i++) {
+		const pid = rnd() + rnd()
+		const c = colorFor(pid)
+		assert.ok(TEN.includes(c), pid + ': ' + c)
+		assert.equal(colorFor(pid), c)
+		seen.add(c)
+	}
+	assert.equal(seen.size, 10, 'all ten in use')
+	const p = new PresenceModel({ now: () => 0 })
+	p.update({ 'p1:c1': entry({ k: 'p1', n: 'Alice' }), 'p1:c2': entry({ k: 'p1', n: 'Alice' }), 'g7:c1': entry({ k: 'g7', n: 'Gast', g: 1 }) }, 1000)
+	const bySample = new Map(p.sample(1000).map((e) => [e.pid, e.color]))
+	for (const q of p.participants()) assert.equal(q.color, bySample.get(q.pid), q.pid)
+	assert.equal(bySample.get('p1'), colorFor('p1'))
+	assert.equal(bySample.get('g7'), colorFor('g7'))
 })
 
 test('palette: every color has contrast ≥ 4.5 against white name tags', () => {
@@ -241,4 +263,149 @@ test('M1 [B] entry shape: a presenter that sent only {v} arrives with x = y = nu
 	assert.equal(s.cursor, null)
 	assert.equal(s.view, null)
 	assert.equal(p.entryView('pa:c1', now + 400).view, null)
+})
+
+// ---- factory job 171: the laser trail l (AK7) ----
+
+/** Where the test sender's pen is at sender time t (ms): 0.5 units per ms to the right, 0.2 down. */
+const penAt = (t) => [0.5 * t, 100 + 0.2 * t]
+
+/**
+ * The l of a card built at b, as the session sends it ("Senden"): the sender's points every 30 ms
+ * from `from` to `to`, those of the last 2500 ms, at most the newest 80, [r1(x), r1(y), b − t].
+ *
+ * @param {number} b build time
+ * @param {number} [from] first point
+ * @param {number} [to] last point
+ * @return {Array<number[]>|undefined} l, undefined without a point
+ */
+function laserCard(b, from = 0, to = 1e9) {
+	const r1 = (v) => Math.round(v * 10) / 10
+	const out = []
+	for (let t = from; t <= Math.min(b, to); t += 30) {
+		if (b - t <= 2500) out.push([r1(penAt(t)[0]), r1(penAt(t)[1]), Math.round(b - t)])
+	}
+	const l = out.slice(-80)
+	return l.length > 0 ? l : undefined
+}
+
+/** @param {object} s RemoteSample @return {number[]} the tip [x, y] of its newest stroke */
+const tipOf = (s) => s.laser.at(-1).at(-1)
+
+/**
+ * Checks the samples of one stroke between two times: the tip where the sender was at now − delay
+ * (± 1), one stroke, ages falling strictly (no point twice), every point at most FADE old.
+ */
+function assertPlays(p, from, to, delay) {
+	for (let now = from; now <= to; now += 16) {
+		const s = p.sample(now)[0]
+		assert.equal(s.laser.length, 1, `one stroke at ${now}`)
+		const [x, y, age] = tipOf(s)
+		const [ex, ey] = penAt(now - delay)
+		assert.ok(Math.abs(x - ex) <= 1 && Math.abs(y - ey) <= 1, `tip at ${now}: ${x}, ${y} instead of ${ex}, ${ey}`)
+		assert.equal(age, 0, 'the tip is new')
+		const ages = s.laser[0].map((q) => q[2])
+		for (let i = 1; i < ages.length; i++) assert.ok(ages[i] < ages[i - 1], `no point twice at ${now}`)
+		assert.ok(ages[0] <= 1000, 'nothing older than FADE')
+	}
+}
+
+test('job 171 AK7: a stroke in cards every 400 ms plays with its tip where the sender was 900 ms ago; nothing twice', () => {
+	const p = new PresenceModel({ now: () => 0 })
+	assert.equal(p.laserDelayMs, 900, 'laserDelay(false) by default')
+	assert.equal(laserDelay(false), 900)
+	for (let b = 400; b <= 6000; b += 400) {
+		p.update({ 'pb:c1': entry({ k: 'pb', l: laserCard(b) }) }, b)
+		assertPlays(p, Math.max(b, 2000), b + 384, 900)
+	}
+	assert.equal(p.hasLaser(), true)
+})
+
+test('job 171 AK7: on a view-only device (cards every 2 s) the tip is where the sender was 2500 ms ago', () => {
+	assert.equal(laserDelay(true), 2500)
+	const p = new PresenceModel({ now: () => 0, laserDelayMs: laserDelay(true) })
+	for (let b = 2000; b <= 12000; b += 2000) {
+		p.update({ 'pb:c1': entry({ k: 'pb', l: laserCard(b) }) }, b)
+		assertPlays(p, Math.max(b, 4000), b + 1984, 2500)
+	}
+})
+
+test('job 171 AK7: a jittered repeat of the buffered points comes once', () => {
+	const p = new PresenceModel({ now: () => 0 })
+	for (let b = 400; b <= 4000; b += 400) {
+		// every second card arrives 10 ms late: its points get times 10 ms later than their twins
+		p.update({ 'pb:c1': entry({ k: 'pb', l: laserCard(b) }) }, b + ((b / 400) % 2) * 10)
+	}
+	const s = p.sample(4100)[0]
+	const ages = s.laser.flat().map((q) => q[2])
+	for (let i = 1; i < ages.length; i++) assert.ok(ages[i] < ages[i - 1] - 10, `points ${i - 1} and ${i} are no twins: ${ages[i - 1]}, ${ages[i]}`)
+})
+
+test('job 171 AK7: two strokes and a gap over 300 ms stay apart; the strokes fade out; a card without l lets the buffer play to its end', () => {
+	const p = new PresenceModel({ now: () => 0 })
+	const R = 10000
+	p.update({ 'pb:c1': entry({ k: 'pb', l: [[0, 0, 1000], [10, 0, 970], null, [20, 0, 900], [30, 0, 870], [40, 0, 400], [50, 0, 370]] }) }, R)
+	assert.equal(p.hasLaser(), true)
+	assert.deepEqual(p.sample(R - 370 + 900)[0].laser, [[[0, 0, 630], [10, 0, 600]], [[20, 0, 530], [30, 0, 500]], [[40, 0, 30], [50, 0, 0]]])
+	// the tip between two points of the last stroke
+	assert.deepEqual(p.sample(R - 385 + 900)[0].laser.at(-1), [[40, 0, 15], [45, 0, 0]])
+	// the next card without l: the buffer plays on, hasLaser ends
+	p.update({ 'pb:c1': entry({ k: 'pb' }) }, R + 400)
+	assert.equal(p.hasLaser(), false)
+	assert.deepEqual(p.sample(R - 370 + 900 + 600)[0].laser, [[[40, 0, 630], [50, 0, 600]]], 'still playing: only the last stroke is younger than FADE')
+	assert.deepEqual(p.sample(R - 370 + 900 + 1001)[0].laser, [], 'all faded')
+	// the key goes, the buffer with it
+	p.update({}, R + 800)
+	p.update({ 'pb:c1': entry({ k: 'pb' }) }, R + 1200)
+	assert.deepEqual(p.sample(R + 1200)[0].laser, [])
+})
+
+test('job 171 AK7: an invalid l gives laser [] and counts as none; the rest of the entry stays', () => {
+	const bad = {
+		'a string': 'x',
+		'empty': [],
+		'101 elements': Array.from({ length: 101 }, () => [1, 2, 3]),
+		'd rises': [[1, 2, 3], [4, 5, 6]],
+		'null first': [null, [1, 2, 3]],
+		'null last': [[1, 2, 3], null],
+		'null twice': [[1, 2, 9], null, null, [3, 4, 5]],
+		'd a float': [[1, 2, 3.5]],
+		'd < 0': [[1, 2, -1]],
+		'x a string': [['1', 2, 3]],
+		'[x, y]': [[1, 2]],
+	}
+	for (const [name, l] of Object.entries(bad)) {
+		const p = new PresenceModel({ now: () => 0 })
+		p.update({ 'pb:c1': entry({ k: 'pb', x: 5, y: 6, s: [N1], l }) }, 1000)
+		const s = p.sample(1500)[0]
+		assert.deepEqual(s.laser, [], name)
+		assert.deepEqual([s.cursor, s.selection], [[5, 6], [N1]], `${name}: the rest stays`)
+		assert.equal(p.hasLaser(), false, name)
+		assert.equal(laserOf(l), null, name)
+	}
+	assert.deepEqual(laserOf([[1, 2, 9], null, [3, 4, 0]]), [[1, 2, 9], null, [3, 4, 0]])
+	assert.equal(new PresenceModel({ now: () => 0 }).sample(0).length, 0)
+})
+
+test('job 173 AK3: the holder per cell of a table (ec); editingCell in samples; another form counts as none', () => {
+	const A = 'c00000001.r00000001'
+	const B = 'c00000002.r00000001'
+	const p = new PresenceModel({ now: () => 0 })
+	p.update({
+		'pidal:c1': entry({ k: 'pidal', n: 'Alice Adler', e: N1, ec: A, h: 1 }),
+		'pidbob:c2': entry({ k: 'pidbob', n: 'Bob Berg', e: N1, ec: B, h: 1 }),
+		'pidgina:c3': entry({ k: 'pidgina', n: 'Gina', e: N1, ec: A, h: 0 }),
+		'pidmo:c4': entry({ k: 'pidmo', n: 'Mo', e: N2, ec: 'C1.r1', h: 1 }),
+		'pidno:c5': entry({ k: 'pidno', n: 'No', e: null, ec: A, h: 0 }),
+	}, 0)
+	assert.deepEqual(p.leaseHolder(N1, A), { pid: 'pidal', name: 'Alice Adler' })
+	assert.deepEqual(p.leaseHolder(N1, B), { pid: 'pidbob', name: 'Bob Berg' })
+	assert.equal(p.leaseHolder(N1), null, 'nobody holds the table itself')
+	assert.equal(p.leaseHolder(N1, 'c00000003.r00000001'), null)
+	assert.deepEqual(p.leaseHolder(N2), { pid: 'pidmo', name: 'Mo' }, 'an invalid ec counts as none: the item itself')
+	const samples = p.sample(0)
+	const of = (pid) => samples.find((x) => x.pid === pid)
+	assert.deepEqual([of('pidal').editingCell, of('pidbob').editingCell, of('pidgina').editingCell], [A, B, A])
+	assert.equal(of('pidmo').editingCell, null)
+	assert.equal(of('pidno').editingCell, null, 'no ec without e')
 })

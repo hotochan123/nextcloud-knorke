@@ -23,7 +23,7 @@ final class ItemRegistryTest extends TestCase {
         foreach (['shape', 'text', 'connector'] as $t) {
             $this->assertTrue(ItemRegistry::has($t), $t);
         }
-        $this->assertFalse(ItemRegistry::has('pen'));
+        $this->assertFalse(ItemRegistry::has('brush'));
         $this->assertFalse(ItemRegistry::has('constructor'));
         $this->assertTrue(ItemRegistry::isContainer('frame'));
         $this->assertFalse(ItemRegistry::isContainer('sticky'));
@@ -36,21 +36,21 @@ final class ItemRegistryTest extends TestCase {
         $this->assertTrue(ItemRegistry::canBeChildOf('shape', 'frame'));
         $this->assertTrue(ItemRegistry::canBeChildOf('text', 'frame'));
         $this->assertFalse(ItemRegistry::canBeChildOf('connector', 'frame'), 'connectors are never children');
-        $this->assertFalse(ItemRegistry::canBeChildOf('pen', 'frame'), 'unknown type = GENERIC: no parent');
+        $this->assertFalse(ItemRegistry::canBeChildOf('brush', 'frame'), 'unknown type = GENERIC: no parent');
     }
 
     public function testGenericForUnknownTypes(): void {
-        $info = ItemRegistry::info('mindmap');
+        $info = ItemRegistry::info('chart');
         $this->assertFalse($info['container']);
         $this->assertSame([], $info['childOf']);
         $this->assertTrue($info['rotatable']);
         $this->assertSame([0, 1000000], $info['size']);
         $this->assertSame([], $info['fields']);
-        $this->assertNull(ItemRegistry::textPath('mindmap'));
-        $this->assertNull(ItemRegistry::checkItem(self::item([], 'mindmap')), 'put accepts registry types only');
-        $this->assertSame(['w' => 5.0, 'data.anything' => 'x'], ItemRegistry::checkPatch('mindmap', ['w' => 5.0, 'data.anything' => 'x']));
-        $this->assertNull(ItemRegistry::checkPatch('mindmap', ['x' => 1.0, 'y' => 1.0, 'parent' => '01JF5Q4T0V9W8X7Y6Z5A4B3C2D']));
-        $this->assertNotNull(ItemRegistry::checkPatch('mindmap', ['x' => 1.0, 'y' => 1.0, 'parent' => null]));
+        $this->assertNull(ItemRegistry::textPath('chart'));
+        $this->assertNull(ItemRegistry::checkItem(self::item([], 'chart')), 'put accepts registry types only');
+        $this->assertSame(['w' => 5.0, 'data.anything' => 'x'], ItemRegistry::checkPatch('chart', ['w' => 5.0, 'data.anything' => 'x']));
+        $this->assertNull(ItemRegistry::checkPatch('chart', ['x' => 1.0, 'y' => 1.0, 'parent' => '01JF5Q4T0V9W8X7Y6Z5A4B3C2D']));
+        $this->assertNotNull(ItemRegistry::checkPatch('chart', ['x' => 1.0, 'y' => 1.0, 'parent' => null]));
     }
 
     public function testTextPaths(): void {
@@ -123,10 +123,10 @@ final class ItemRegistryTest extends TestCase {
     }
 
     public function testBindableVotablePlacementAndGeneric(): void {
-        $this->assertSame([true, false, true, true, false, false], array_map([ItemRegistry::class, 'isBindable'], ['sticky', 'frame', 'shape', 'text', 'connector', 'pen']));
-        $this->assertSame([true, false, true, true, false, false], array_map([ItemRegistry::class, 'isVotable'], ['sticky', 'frame', 'shape', 'text', 'connector', 'pen']));
-        $this->assertSame(['box', 'box', 'box', 'box', 'none', 'box'], array_map(static fn (string $t): string => ItemRegistry::info($t)['placement'], ['sticky', 'frame', 'shape', 'text', 'connector', 'pen']));
-        $generic = ItemRegistry::info('pen');
+        $this->assertSame([true, false, true, true, false, false], array_map([ItemRegistry::class, 'isBindable'], ['sticky', 'frame', 'shape', 'text', 'connector', 'brush']));
+        $this->assertSame([true, false, true, true, false, false], array_map([ItemRegistry::class, 'isVotable'], ['sticky', 'frame', 'shape', 'text', 'connector', 'brush']));
+        $this->assertSame(['box', 'box', 'box', 'box', 'none', 'box'], array_map(static fn (string $t): string => ItemRegistry::info($t)['placement'], ['sticky', 'frame', 'shape', 'text', 'connector', 'brush']));
+        $generic = ItemRegistry::info('brush');
         $this->assertSame([false, false, 'box', [], [], null], [$generic['bindable'], $generic['votable'], $generic['placement'], $generic['required'], $generic['fields'], $generic['textPath']], 'GENERIC keys (§4.8)');
         $this->assertSame(['data.start', 'data.end'], ItemRegistry::info('connector')['required']);
         foreach (['sticky', 'frame', 'shape', 'text'] as $t) {
@@ -205,6 +205,36 @@ final class ItemRegistryTest extends TestCase {
         $this->assertNull(ItemRegistry::checkPatch('text', ['style.align' => 'justify']));
     }
 
+    /** Factory job 201 AK1: the flowchart kinds and the symbols are shape kinds; any other kind is refused. */
+    public function testShapePanelKinds(): void {
+        foreach (['database', 'document', 'offPage', 'iconPerson', 'iconCloud'] as $kind) {
+            $item = ItemRegistry::checkItem(self::item(['w' => 96.0, 'h' => 96.0, 'data' => ['kind' => $kind, 'text' => '']], 'shape'));
+            $this->assertNotNull($item, $kind);
+            $this->assertSame($kind, $item['data']['kind']);
+            $this->assertSame(['data.kind' => $kind], ItemRegistry::checkPatch('shape', ['data.kind' => $kind]));
+        }
+        foreach (['nope', 'iconperson', 'Database', 'icon'] as $kind) {
+            $this->assertNull(ItemRegistry::checkItem(self::item(['data' => ['kind' => $kind]], 'shape')), $kind);
+            $this->assertNull(ItemRegistry::checkPatch('shape', ['data.kind' => $kind]), $kind);
+        }
+    }
+
+    /** Factory job 204 AK1: the BPMN kinds are shape kinds; the open tips of a message flow are connector tips. */
+    public function testBpmnKindsAndTips(): void {
+        foreach (['bpmnStart', 'bpmnUserTask', 'bpmnExclusive', 'bpmnDataStore'] as $kind) {
+            $item = ItemRegistry::checkItem(self::item(['w' => 64.0, 'h' => 64.0, 'data' => ['kind' => $kind, 'text' => '']], 'shape'));
+            $this->assertNotNull($item, $kind);
+            $this->assertSame(['data.kind' => $kind], ItemRegistry::checkPatch('shape', ['data.kind' => $kind]));
+        }
+        $this->assertNull(ItemRegistry::checkItem(self::item(['data' => ['kind' => 'pool']], 'shape')), 'the pool entry is no shape kind');
+        $flow = ItemRegistry::checkItem(self::connector(['style' => ['dash' => 'dashed', 'startCap' => 'circleOpen', 'endCap' => 'triangleOpen']]));
+        $this->assertNotNull($flow);
+        $this->assertSame(['dash' => 'dashed', 'startCap' => 'circleOpen', 'endCap' => 'triangleOpen'], $flow['style']);
+        $this->assertSame(['style.startCap' => 'circleOpen'], ItemRegistry::checkPatch('connector', ['style.startCap' => 'circleOpen']));
+        $this->assertNull(ItemRegistry::checkItem(self::connector(['style' => ['endCap' => 'circle']])));
+        $this->assertNull(ItemRegistry::checkPatch('connector', ['style.endCap' => 'circle']));
+    }
+
     // ---- tests/fixtures/registry-golden.json (SPEC-M1 §4.8, §9.2) --------
     //
     // Frozen in stage 1, phase 0; src/model/registry.js (checkField) is pinned
@@ -224,14 +254,18 @@ final class ItemRegistryTest extends TestCase {
     public function testGoldenFixtureFormat(): void {
         $g = self::golden();
         $this->assertSame(['types', 'enums', 'values'], array_keys($g));
-        $this->assertSame(['sticky', 'frame', 'shape', 'text', 'connector'], array_keys($g['types']));
-        $this->assertSame(['shapeKinds', 'dashes', 'aligns', 'valigns', 'routes', 'caps'], array_keys($g['enums']));
+        // job 173: the table is the sixth type, style.header its enum; job 188: the note pad the seventh;
+        // job 195: the mind map the eighth, style.layout its enum
+        $this->assertSame(['sticky', 'frame', 'shape', 'text', 'connector', 'table', 'pad', 'mindmap', 'ai', 'pen'], array_keys($g['types']));
+        $this->assertSame(['shapeKinds', 'dashes', 'aligns', 'valigns', 'routes', 'caps', 'headers', 'mindLayouts', 'penKinds'], array_keys($g['enums']));
         // Every enum rule refers to one of the listed enums, literally.
         $used = [];
         foreach ($g['types'] as $t => $info) {
             $this->assertSame(self::GOLDEN_TYPE_KEYS, array_keys($info), $t);
             foreach ($info['fields'] as $path => $rule) {
-                $this->assertContains($rule[0], ['text', 'color', 'int', 'enum', 'endpoint'], "$t $path");
+                // job 191: tags (data.tags of a note)
+                // job 203: image (data.img of a shape)
+                $this->assertContains($rule[0], ['text', 'color', 'int', 'enum', 'endpoint', 'tags', 'image', 'points'], "$t $path");
                 if ($rule[0] === 'enum') {
                     $name = array_search($rule[1], $g['enums'], true);
                     $this->assertIsString($name, "$t $path: enum list is one of enums");
@@ -239,7 +273,7 @@ final class ItemRegistryTest extends TestCase {
                 }
             }
         }
-        $this->assertCount(6, $used, 'every enum is used by a rule');
+        $this->assertCount(count($g['enums']), $used, 'every enum is used by a rule');
         $this->assertGreaterThanOrEqual(60, count($g['values']));
         foreach ($g['values'] as $i => $c) {
             $this->assertSame(['type', 'path', 'value', 'ok', 'norm'], array_keys($c), "#$i");
@@ -274,8 +308,8 @@ final class ItemRegistryTest extends TestCase {
         }
         $this->assertSame($want, $got);
         $this->assertSame($textPaths, ItemRegistry::allTextPaths(), 'allTextPaths in registry order');
-        $this->assertFalse(ItemRegistry::has('pen'), 'pen is a later type');
-        $generic = ItemRegistry::info('pen');
+        $this->assertFalse(ItemRegistry::has('brush'), 'pen is a later type');
+        $generic = ItemRegistry::info('brush');
         $this->assertSame([false, false, 'box'], [$generic['bindable'] ?? '<missing>', $generic['votable'] ?? '<missing>', $generic['placement'] ?? '<missing>'], 'GENERIC (§4.8)');
     }
 
@@ -287,6 +321,131 @@ final class ItemRegistryTest extends TestCase {
     public function testGoldenValuesOfM1Types(): void {
         // RED until stage-1 phase 1 (WP-B1): checkers enum and endpoint, types shape/text/connector.
         $this->assertSame([], self::goldenValueMismatches(['shape', 'text', 'connector']));
+    }
+
+    public function testGoldenValuesOfTables(): void {
+        // Job 173 (AK1): the style fields of a table; data.cols/rows/cells are Tables::check's.
+        $this->assertSame([], self::goldenValueMismatches(['table']));
+    }
+
+    public function testTableType(): void {
+        // Job 173: a table lies on content, may live in a frame, does not rotate, binds, gets no votes, groups.
+        $this->assertTrue(ItemRegistry::has('table'));
+        $this->assertTrue(ItemRegistry::canBeChildOf('table', 'frame'));
+        $this->assertTrue(ItemRegistry::isBindable('table'));
+        $this->assertFalse(ItemRegistry::isVotable('table'));
+        $this->assertTrue(ItemRegistry::isGroupable('table'));
+        $this->assertNull(ItemRegistry::textPath('table'));
+        $item = self::item(['w' => 480.0, 'h' => 108.0, 'data' => ['cols' => ['c00000001' => ['o' => 'i0', 'w' => 160]], 'rows' => ['r00000001' => ['o' => 'i0']]]], 'table');
+        $this->assertNotNull(ItemRegistry::checkItem($item));
+        $this->assertNull(ItemRegistry::checkItem(['r' => 5.0] + $item), 'not rotatable');
+        $this->assertNull(ItemRegistry::checkItem(['w' => 19.0] + $item));
+        $this->assertNotNull(ItemRegistry::checkItem(['w' => 100000.0] + $item));
+        $this->assertNull(ItemRegistry::checkItem(['data' => ['rows' => $item['data']['rows']]] + $item), 'data.cols is required');
+        // paths below data.cells pass the registry at every depth (Tables::check judges the result)
+        $this->assertSame(['data.cells.c00000001.r00000001' => 'x'], ItemRegistry::checkPatch('table', ['data.cells.c00000001.r00000001' => 'x']));
+        $this->assertSame(['data.cells' => ['c00000001' => ['r00000001' => 'x']]], ItemRegistry::checkPatch('table', ['data.cells' => ['c00000001' => ['r00000001' => 'x']]]));
+        $this->assertNull(ItemRegistry::checkPatch('table', ['style.header' => 'maybe']));
+    }
+
+    public function testShapeSquareTick(): void {
+        // Job 240 (AK2): the tick "1:1" of a shape is on or off; anything else is bad, null deletes it.
+        $this->assertSame(['style.square' => 'on', 'w' => 200.0, 'h' => 200.0], ItemRegistry::checkPatch('shape', ['style.square' => 'on', 'w' => 200.0, 'h' => 200.0]));
+        $this->assertSame(['style.square' => 'off'], ItemRegistry::checkPatch('shape', ['style.square' => 'off']));
+        $this->assertSame(['style.square' => null], ItemRegistry::checkPatch('shape', ['style.square' => null]));
+        foreach (['yes', 'ON', true, 1] as $bad) {
+            $this->assertNull(ItemRegistry::checkPatch('shape', ['style.square' => $bad]), var_export($bad, true));
+        }
+        $this->assertNotNull(ItemRegistry::checkItem(self::item(['style' => ['square' => 'on']], 'shape')));
+        $this->assertNull(ItemRegistry::checkItem(self::item(['style' => ['square' => 'maybe']], 'shape')));
+    }
+
+    public function testGoldenValuesOfPads(): void {
+        // Job 188 (AK1): the title (text 200 code points) and the colour of a note pad, as in registry.test.mjs.
+        $this->assertSame([], self::goldenValueMismatches(['pad']));
+    }
+
+    public function testPadType(): void {
+        // Job 188 (AK1): a note pad lies on content, may live in a frame, does not rotate,
+        // binds no connector, gets no votes, groups by the derived rule; its text is data.title.
+        $this->assertTrue(ItemRegistry::has('pad'));
+        $this->assertTrue(ItemRegistry::canBeChildOf('pad', 'frame'));
+        $this->assertFalse(ItemRegistry::isContainer('pad'));
+        $this->assertFalse(ItemRegistry::isBindable('pad'));
+        $this->assertFalse(ItemRegistry::isVotable('pad'));
+        $this->assertTrue(ItemRegistry::isGroupable('pad'));
+        $this->assertSame('data.title', ItemRegistry::textPath('pad'));
+        $this->assertSame(['data.text', 'data.title', 'data.label'], ItemRegistry::allTextPaths(), 'no new text path');
+        $pad = self::item(['data' => ['title' => 'Ideen'], 'style' => ['fill' => '#F5D76E']], 'pad');
+        $ok = ItemRegistry::checkItem($pad);
+        $this->assertNotNull($ok, '200 × 200 with a title and a colour');
+        $this->assertSame(['title' => 'Ideen'], $ok['data']);
+        $this->assertSame(['fill' => '#f5d76e'], $ok['style'], 'the colour in lower case');
+        $this->assertNotNull(ItemRegistry::checkItem(['parent' => '01JF5Q4T0V9W8X7Y6Z5A4B3C2D'] + $pad), 'in a frame (the parent rule: childOf)');
+        $this->assertNull(ItemRegistry::checkItem(['r' => 15.0] + $pad), 'r 15: not rotatable');
+        $this->assertNull(ItemRegistry::checkItem(['w' => 2001.0] + $pad), 'w 2001');
+        $this->assertNull(ItemRegistry::checkItem(['w' => 19.0] + $pad), 'w 19');
+        $this->assertNotNull(ItemRegistry::checkItem(['w' => 2000.0, 'h' => 20.0] + $pad), 'the bounds themselves');
+        $this->assertNull(ItemRegistry::checkItem(['data' => ['title' => str_repeat('😀', 201)]] + $pad), 'a title of 201 code points');
+        $this->assertNotNull(ItemRegistry::checkItem(['data' => ['title' => str_repeat('😀', 200)]] + $pad), '200 code points');
+        $this->assertNull(ItemRegistry::checkItem(['style' => ['fill' => 'red']] + $pad), 'the colour red');
+        $this->assertNull(ItemRegistry::checkPatch('pad', ['r' => 15.0]));
+        $this->assertNull(ItemRegistry::checkPatch('pad', ['data.title.x' => 'a']), 'a typed leaf never becomes a map');
+        $this->assertSame(['data.title' => 'Neu', 'style.fill' => '#a8d8f8', 'w' => 300.0], ItemRegistry::checkPatch('pad', ['data.title' => 'Neu', 'style.fill' => '#A8D8F8', 'w' => 300.0]));
+    }
+
+    public function testMindmapType(): void {
+        // Job 195 (AK1): a mind map lies on content, may live in a frame, does not rotate, binds no
+        // connector, gets no votes, groups by the derived rule, has no text path of its own (a lease
+        // per node instead); style.layout both|right, data.nodes required.
+        $this->assertTrue(ItemRegistry::has('mindmap'));
+        $this->assertTrue(ItemRegistry::canBeChildOf('mindmap', 'frame'));
+        $this->assertFalse(ItemRegistry::isContainer('mindmap'));
+        $this->assertFalse(ItemRegistry::isBindable('mindmap'));
+        $this->assertFalse(ItemRegistry::isVotable('mindmap'));
+        $this->assertTrue(ItemRegistry::isGroupable('mindmap'));
+        $this->assertNull(ItemRegistry::textPath('mindmap'));
+        $this->assertSame([], self::goldenValueMismatches(['mindmap']));
+        $data = ['nodes' => ['b0' => ['n00000000' => ['o' => 'i0']]]];
+        $mm = self::item(['w' => 120.0, 'h' => 48.0, 'data' => $data, 'style' => ['layout' => 'right']], 'mindmap');
+        $this->assertNotNull(ItemRegistry::checkItem($mm));
+        $this->assertNull(ItemRegistry::checkItem(['data' => []] + $mm), 'data.nodes is required');
+        $this->assertNull(ItemRegistry::checkItem(['style' => ['layout' => 'left']] + $mm));
+        $this->assertNull(ItemRegistry::checkItem(['r' => 15.0] + $mm), 'r 15: not rotatable');
+        $this->assertNotNull(ItemRegistry::checkPatch('mindmap', ['data.nodes.b1.n10000000' => ['o' => 'i1', 'p' => 'n00000000']]), 'paths below data.nodes');
+    }
+
+    public function testAiCardType(): void {
+        // Job 267 (AK8): an AI summary card lies on content, may live in a frame, does not rotate,
+        // binds connectors, gets no votes, has no text path (nobody edits it); data.md up to 12000.
+        $this->assertTrue(ItemRegistry::has('ai'));
+        $this->assertTrue(ItemRegistry::canBeChildOf('ai', 'frame'));
+        $this->assertTrue(ItemRegistry::isBindable('ai'));
+        $this->assertFalse(ItemRegistry::isVotable('ai'));
+        $this->assertNull(ItemRegistry::textPath('ai'));
+        $card = self::item(['w' => 360.0, 'h' => 200.0, 'data' => ['md' => "# Hi\n- **a**", 'title' => 'Ideas']], 'ai');
+        $this->assertNotNull(ItemRegistry::checkItem($card));
+        $this->assertNull(ItemRegistry::checkItem(['data' => ['md' => str_repeat('a', 12001)]] + $card), 'md over 12000');
+        $this->assertNull(ItemRegistry::checkItem(['r' => 15.0] + $card), 'not rotatable');
+    }
+
+    public function testNoteTags(): void {
+        // Job 191 (AK2): data.tags of a note takes 1–8 different ids in ULID form; [] removes the field.
+        $u = static fn (int $n): string => '01JA' . str_pad((string)$n, 22, '0', STR_PAD_LEFT);
+        $this->assertSame(['tags', 8], ItemRegistry::info('sticky')['fields']['data.tags']);
+        $eight = array_map($u, range(1, 8));
+        $this->assertSame(['data.tags' => $eight], ItemRegistry::checkPatch('sticky', ['data.tags' => $eight]));
+        $this->assertNull(ItemRegistry::checkPatch('sticky', ['data.tags' => [...$eight, $u(9)]]), '9 ids');
+        $this->assertNull(ItemRegistry::checkPatch('sticky', ['data.tags' => [$u(1), $u(1)]]), 'a double');
+        $this->assertNull(ItemRegistry::checkPatch('sticky', ['data.tags' => ['nope']]), 'no ULID');
+        $this->assertNull(ItemRegistry::checkPatch('sticky', ['data.tags' => $u(1)]), 'no list');
+        $this->assertNull(ItemRegistry::checkPatch('sticky', ['data.tags.0' => $u(1)]), 'a path below data.tags');
+        $this->assertSame(['data.tags' => []], ItemRegistry::checkPatch('sticky', ['data.tags' => []]), '[] deletes the field');
+        $this->assertSame(['data.tags' => null], ItemRegistry::checkPatch('sticky', ['data.tags' => null]));
+        $ok = ItemRegistry::checkItem(self::item(['data' => ['text' => 'x', 'tags' => [$u(2), $u(1)]]]));
+        $this->assertSame([$u(2), $u(1)], $ok['data']['tags'], 'the order of ticking stays');
+        $this->assertNull(ItemRegistry::checkItem(self::item(['data' => ['tags' => [$u(1), 'x']]])));
+        $this->assertNull(ItemRegistry::info('shape')['fields']['data.tags'] ?? null, 'notes only: other types keep it as an unknown field');
     }
 
     /** @return array<string, array> fields sorted by path (the rule lists themselves stay as they are) */

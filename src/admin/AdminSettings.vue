@@ -3,187 +3,161 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <template>
-	<div class="section knorke-admin" data-knorke-admin="privacy">
-		<h2>{{ t('knorke', 'Privacy notice') }}</h2>
-		<p class="knorke-admin__intro">
-			{{ t('knorke', 'Guests who join a board through a link see this notice in the name dialog. Signed-in people see it on boards that are open by link. Plain text; line breaks are kept.') }}
+	<div ref="pageEl" class="section knorke-admin knorke-admin-page" data-knorke-admin-page>
+		<p v-if="waiting > 0" class="knorke-admin__notice" data-knorke-admin-notice>
+			<NcIconSvgWrapper :path="icons.team" :size="20" inline />
+			<span>{{ n('knorke', '%n suggestion is waiting for you', '%n suggestions are waiting for you', waiting) }}</span>
 		</p>
-		<form class="knorke-admin__form"
-			novalidate
-			@input="status = ''"
-			@submit.prevent="save">
-			<h3 class="knorke-admin__heading">
-				{{ t('knorke', 'Default') }}
-			</h3>
-			<div class="knorke-admin__block">
-				<div class="knorke-admin__field">
-					<label :for="fieldId('default', 'text')">{{ t('knorke', 'Default text') }}</label>
-					<textarea :id="fieldId('default', 'text')"
-						:ref="(el) => setField('default', 'text', el)"
-						v-model="defaults.text"
-						rows="5"
-						:maxlength="textMax"
-						:placeholder="builtIn"
-						:aria-invalid="invalid('default', 'text')"
-						:aria-describedby="describedBy('default', 'text')"
-						data-knorke-field="privacy-text"
-						data-knorke-lang="default" />
-					<p :id="hintId('default', 'text')" class="knorke-admin__hint">
-						{{ hintBuiltIn }}
-					</p>
-				</div>
-				<div class="knorke-admin__field">
-					<label :for="fieldId('default', 'url')">{{ t('knorke', 'Privacy policy URL') }}</label>
-					<input :id="fieldId('default', 'url')"
-						:ref="(el) => setField('default', 'url', el)"
-						v-model="defaults.url"
-						type="url"
-						:placeholder="themingUrl"
-						:aria-invalid="invalid('default', 'url')"
-						:aria-describedby="describedBy('default', 'url')"
-						data-knorke-field="privacy-url"
-						data-knorke-lang="default">
-					<p :id="hintId('default', 'url')" class="knorke-admin__hint">
-						{{ t('knorke', 'Empty: the privacy policy URL from the Theming settings.') }}
-					</p>
-				</div>
-				<p v-if="error && error.at === 'default'"
-					:id="errorId('default')"
-					class="knorke-admin__error"
-					:data-knorke-error="error.code">
-					{{ error.text }}
-				</p>
-			</div>
 
-			<h3 class="knorke-admin__heading">
-				{{ t('knorke', 'Texts per language') }}
-			</h3>
-			<fieldset v-for="e in entries"
-				:key="e.code"
-				class="knorke-admin__block knorke-admin__lang"
-				:data-knorke-lang="e.code">
-				<legend>{{ labelOf(e.code) }}</legend>
+		<AdminSection id="templates"
+			:title="t('knorke', 'Templates')"
+			:summary="open.templates ? t('knorke', 'Accounts suggest templates here. What you adopt, everyone can insert.') : listSummary(lists.templates, t('knorke', 'The templates could not be loaded.'))"
+			:icon="icons.board"
+			:count="lists.templates.suggestions"
+			:open="open.templates"
+			@toggle="toggle('templates')">
+			<TemplateAdmin @lists="(s) => (lists.templates = s)" />
+		</AdminSection>
+
+		<AdminSection id="shapelibs"
+			:title="t('knorke', 'Shape libraries')"
+			:summary="open.shapelibs ? t('knorke', 'Accounts suggest their shape libraries here. What you adopt, everyone finds in the Shapes panel.') : listSummary(lists.shapelibs, t('knorke', 'The shape libraries could not be loaded.'))"
+			:icon="icons.shape"
+			:count="lists.shapelibs.suggestions"
+			:open="open.shapelibs"
+			@toggle="toggle('shapelibs')">
+			<ShapeLibAdmin @lists="(s) => (lists.shapelibs = s)" />
+		</AdminSection>
+
+		<AdminSection id="ai"
+			:title="t('knorke', 'AI')"
+			:summary="open.ai ? t('knorke', 'Signed-in people with the right to edit can summarise notes and cluster them by topic with the AI provider set up in Nextcloud (Artificial intelligence settings). Guests never can.') : aiLine"
+			:icon="icons.sparkle"
+			:open="open.ai"
+			@toggle="toggle('ai')">
+			<div class="knorke-admin__ai" data-knorke-admin="ai" @input="aiForm.serverError.value = null">
+				<p v-if="!aiProvider" class="knorke-admin__hint" data-knorke-ai-provider="none">
+					{{ t('knorke', 'No AI provider for text is set up in Nextcloud yet: Knorke shows no AI buttons.') }}
+				</p>
+				<label class="knorke-admin__check">
+					<input v-model="aiEnabled" type="checkbox" data-knorke-field="ai-enabled">
+					<span>{{ t('knorke', 'Allow AI in Knorke') }}</span>
+				</label>
 				<div class="knorke-admin__field">
-					<label :for="fieldId(e.code, 'text')">{{ t('knorke', 'Text') }}</label>
-					<textarea :id="fieldId(e.code, 'text')"
-						:ref="(el) => setField(e.code, 'text', el)"
-						v-model="e.text"
-						rows="4"
-						:maxlength="textMax"
-						:aria-invalid="invalid(e.code, 'text')"
-						:aria-describedby="describedBy(e.code, 'text')"
-						data-knorke-field="privacy-text"
-						:data-knorke-lang="e.code" />
-					<p :id="hintId(e.code, 'text')" class="knorke-admin__hint">
-						{{ t('knorke', 'Empty: the default is used.') }}
+					<label for="knorke-ai-limit">{{ t('knorke', 'AI tasks per account and day') }}</label>
+					<input id="knorke-ai-limit"
+						v-model.number="aiLimit"
+						type="number"
+						min="0"
+						:max="aiLimitMax"
+						step="1"
+						:aria-invalid="limitError ? 'true' : null"
+						:aria-describedby="limitError ? 'knorke-ai-limit-error' : null"
+						data-knorke-field="ai-limit">
+					<p v-if="limitError"
+						id="knorke-ai-limit-error"
+						class="knorke-admin__error"
+						data-knorke-error="ai-limit">
+						<NcIconSvgWrapper :path="icons.close" :size="16" inline />
+						{{ limitError.text }}
 					</p>
 				</div>
-				<div class="knorke-admin__field">
-					<label :for="fieldId(e.code, 'url')">{{ t('knorke', 'Privacy policy URL') }}</label>
-					<input :id="fieldId(e.code, 'url')"
-						:ref="(el) => setField(e.code, 'url', el)"
-						v-model="e.url"
-						type="url"
-						:aria-invalid="invalid(e.code, 'url')"
-						:aria-describedby="describedBy(e.code, 'url')"
-						data-knorke-field="privacy-url"
-						:data-knorke-lang="e.code">
-					<p :id="hintId(e.code, 'url')" class="knorke-admin__hint">
-						{{ t('knorke', 'Empty: the default is used.') }}
-					</p>
-				</div>
-				<p v-if="error && error.at === e.code"
-					:id="errorId(e.code)"
-					class="knorke-admin__error"
-					:data-knorke-error="error.code">
-					{{ error.text }}
-				</p>
-				<NcButton variant="tertiary"
-					:data-knorke-lang="e.code"
-					data-knorke-action="privacy-remove-language"
-					@click="remove(e.code)">
-					{{ t('knorke', 'Remove {language}', { language: nameOf(e.code) }) }}
-				</NcButton>
-			</fieldset>
-
-			<div class="knorke-admin__add">
-				<div class="knorke-admin__field">
-					<label :for="fieldId('language', 'pick')">{{ t('knorke', 'Language') }}</label>
-					<select :id="fieldId('language', 'pick')"
-						:ref="(el) => setField('language', 'pick', el)"
-						v-model="pick"
-						:aria-invalid="error && error.at === 'language' ? 'true' : null"
-						:aria-describedby="error && error.at === 'language' ? errorId('language') : null"
-						data-knorke-field="privacy-language">
-						<option value="">
-							{{ t('knorke', 'Choose a language') }}
-						</option>
-						<option v-for="l in free" :key="l.code" :value="l.code">
-							{{ labelOf(l.code) }}
-						</option>
-					</select>
-				</div>
-				<NcButton :disabled="pick === '' || entries.length >= languagesMax"
-					data-knorke-action="privacy-add-language"
-					@click="add">
-					{{ t('knorke', 'Add language') }}
-				</NcButton>
-				<p v-if="error && error.at === 'language'"
-					:id="errorId('language')"
-					class="knorke-admin__error"
-					:data-knorke-error="error.code">
-					{{ error.text }}
-				</p>
+				<h3 class="knorke-admin__heading">
+					{{ t('knorke', 'Notice before the first use') }}
+				</h3>
+				<NoticeFields ref="aiFields" :form="aiForm" />
 			</div>
+		</AdminSection>
 
-			<div class="knorke-admin__actions">
-				<NcButton type="submit"
-					variant="primary"
-					:disabled="busy"
-					data-knorke-action="privacy-save">
-					{{ t('knorke', 'Save') }}
-				</NcButton>
-				<p class="knorke-admin__status" role="status" data-knorke-admin-status>
-					{{ status }}
-				</p>
+		<AdminSection id="privacy"
+			:title="t('knorke', 'Privacy notice')"
+			:summary="open.privacy ? t('knorke', 'Guests who join a board through a link see this notice in the name dialog. Signed-in people see it on boards that are open by link. Plain text; line breaks are kept.') : privacyLine"
+			:icon="icons.legal"
+			:open="open.privacy"
+			@toggle="toggle('privacy')">
+			<div data-knorke-admin="privacy">
+				<NoticeFields ref="privacyFields" :form="privacyForm" />
 			</div>
+		</AdminSection>
+
+		<div v-if="dirty" ref="barEl" class="knorke-admin__savebar" data-knorke-admin-savebar>
+			<p class="knorke-admin__savebar-text"
+				:class="{ 'knorke-admin__savebar-text--error': errorCount > 0 }"
+				data-knorke-admin-savebar-text>
+				<NcIconSvgWrapper v-if="errorCount > 0" :path="icons.close" :size="16" inline />
+				{{ barLine }}
+			</p>
 			<p v-if="failure" class="knorke-admin__error" role="alert" data-knorke-error="save">
 				{{ failure }}
 			</p>
-		</form>
+			<div class="knorke-admin__savebar-actions">
+				<NcButton variant="tertiary"
+					:disabled="busy"
+					data-knorke-action="admin-discard"
+					@click="discard">
+					{{ t('knorke', 'Discard') }}
+				</NcButton>
+				<NcButton variant="primary"
+					:disabled="busy || errorCount > 0"
+					data-knorke-action="admin-save"
+					@click="save">
+					{{ t('knorke', 'Save') }}
+				</NcButton>
+			</div>
+		</div>
+		<p class="knorke-admin__status" role="status" data-knorke-admin-status>
+			{{ status }}
+		</p>
 	</div>
 </template>
 
 <script setup>
 /*
- * The admin section "Knorke" (M2 privacy notice, page 'admin'): the notice
- * text and the privacy policy URL as a default and per language, from the
- * initial state `privacyAdmin` {settings, languages, themingUrl, textMax,
- * languagesMax}.
+ * The admin section "Knorke" (page 'admin'), factory job 281 (design A3 of
+ * redesign round 5): one column [data-knorke-admin-page] of collapsible
+ * sections (AdminSection.vue), at most 760 px wide:
+ * - the notice [data-knorke-admin-notice] "n suggestions are waiting for
+ *   you" while the two lists hold open suggestions;
+ * - Templates (TemplateAdmin.vue, job 182) and Shape libraries
+ *   (ShapeLibAdmin.vue, job 203), each with a counter pill; they report
+ *   their load state and counts with the event `lists`;
+ * - AI (job 267, from privacyAdmin.ai): "Allow AI in Knorke", the AI tasks
+ *   per account and day and the notice before the first use;
+ * - Privacy notice (M2, from privacyAdmin): default and texts per language.
+ * Once both lists have loaded, the first list section with open suggestions
+ * and every list that failed open (adminPage.js initialOpen); all others
+ * stay closed. A closed section says in one line how it is set.
  *
- * - Default: text (placeholder = the built-in text) and URL (placeholder =
- *   theming's privacy policy URL when set).
- * - Texts per language: one fieldset per entry, legend "Name (code)", text,
- *   URL and "Remove {language}"; below a native <select> of the languages
- *   not yet used and "Add language" (disabled without a choice and at
- *   languagesMax entries).
- * - Save (no automatic saving) sends the whole form to route 27
- *   (api/boards.js savePrivacy). 200: the form takes the normalised answer,
- *   the status line says "Saved.". 400: the text of the code stands at the
- *   field of `at` (aria-invalid, aria-describedby) and that field gets the
- *   focus. Anything else: a general message (role alert). "Saved." goes
- *   with the next change (typing, adding or removing a language), so it
- *   never stands next to unsaved edits.
+ * One save bar [data-knorke-admin-savebar] at the end, only while the AI or
+ * the privacy part differs from its saved state: "Unsaved changes" (or the
+ * errors per section), "Discard" and "Save" (blocked while an error is
+ * open: an address the browser refuses, a daily limit outside 0…limitMax,
+ * or the field error of the last save). Save sends route 58 (enabled,
+ * dailyLimit and notice in one request) when the AI part changed, then
+ * route 27 when the privacy part changed; each answer becomes that part's
+ * saved state. A 400 stands at its field, opens its section and focuses
+ * the field; the rest is not sent. Any other error: "The settings could
+ * not be saved." (role alert). Done: "Saved." in [data-knorke-admin-status]
+ * until the next change. While the bar shows, the page's scrolling element
+ * keeps a bottom scroll padding of its height (adminPage.js padForBar), so
+ * the caret of a growing text field never ends up behind the sticky bar.
  *
  * Plain text, never HTML: the admin's texts only go through v-model and
  * interpolation. Admin texts are not translated.
  */
-import { computed, inject, nextTick, reactive, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
+import { saveAiSettings } from '../api/ai.js'
 import { savePrivacy } from '../api/boards.js'
-import { builtInText } from '../components/privacy.js'
-import { HttpError } from '../sync/http.js'
-import { t } from '../util/l10n.js'
+import { icons } from '../components/icons.js'
+import { n, t } from '../util/l10n.js'
+import AdminSection from './AdminSection.vue'
+import { aiSummary, barText, initialOpen, listSummary, ownText, padForBar, privacySummary, scrollParent } from './adminPage.js'
+import { createNoticeForm } from './noticeForm.js'
+import NoticeFields from './NoticeFields.vue'
+import ShapeLibAdmin from './ShapeLibAdmin.vue'
+import TemplateAdmin from './TemplateAdmin.vue'
 
 const props = defineProps({
 	/** the page's initial state (tests); the app provides it as 'knorke-state' */
@@ -191,218 +165,172 @@ const props = defineProps({
 })
 
 const state = props.state ?? inject('knorke-state', {})
-const admin = state.privacyAdmin && typeof state.privacyAdmin === 'object' ? state.privacyAdmin : {}
-const textMax = Number.isInteger(admin.textMax) && admin.textMax > 0 ? admin.textMax : 2000
-const languagesMax = Number.isInteger(admin.languagesMax) && admin.languagesMax > 0 ? admin.languagesMax : 20
-const themingUrl = typeof admin.themingUrl === 'string' ? admin.themingUrl : ''
-/** Nextcloud's languages in Nextcloud's order (common ones first). */
-const languages = (Array.isArray(admin.languages) ? admin.languages : [])
-	.filter((l) => l && typeof l.code === 'string' && l.code !== '')
-	.map((l) => ({ code: l.code, name: typeof l.name === 'string' && l.name !== '' ? l.name : l.code }))
-const names = new Map(languages.map((l) => [l.code, l.name]))
-const builtIn = builtInText()
-const hintBuiltIn = t('knorke', 'Empty: Knorke\'s built-in text.')
+const privacyAdmin = state.privacyAdmin && typeof state.privacyAdmin === 'object' ? state.privacyAdmin : {}
+/** (job 267) the AI settings: privacyAdmin.ai (AiService::adminState) */
+const aiAdmin = privacyAdmin.ai && typeof privacyAdmin.ai === 'object' ? privacyAdmin.ai : {}
 
-const defaults = reactive({ text: '', url: '' })
-/** @type {import('vue').Ref<Array<{code: string, text: string, url: string}>>} */
-const entries = ref([])
-const pick = ref('')
+const privacyForm = createNoticeForm(privacyAdmin, 'privacy')
+const aiForm = createNoticeForm(aiAdmin.notice, 'ai')
+const aiLimitMax = Number.isInteger(aiAdmin.limitMax) && aiAdmin.limitMax > 0 ? aiAdmin.limitMax : 1000
+const aiProvider = aiAdmin.provider !== false
+const aiEnabled = ref(aiAdmin.enabled !== false)
+const aiLimit = ref(Number.isInteger(aiAdmin.dailyLimit) ? aiAdmin.dailyLimit : 30)
+/** the saved switch and daily limit */
+const aiSaved = ref({ enabled: aiEnabled.value, limit: aiLimit.value })
+
+/** the sections' open state */
+const open = reactive({ templates: false, shapelibs: false, ai: false, privacy: false })
+/** the two lists' load state and counts (event `lists` of TemplateAdmin and ShapeLibAdmin) */
+const lists = reactive({
+	templates: { state: 'loading', suggestions: 0, adopted: 0 },
+	shapelibs: { state: 'loading', suggestions: 0, adopted: 0 },
+})
+let opened = false
+const aiFields = ref(null)
+const privacyFields = ref(null)
 const busy = ref(false)
 const status = ref('')
 const failure = ref('')
-/** The field error of the last save: {at: 'default'|code|'language', field: 'text'|'url'|'pick', code, text}. */
-const error = ref(null)
-/** Field elements by "<at>:<field>" (focus after a 400). */
-const fields = new Map()
 
-const free = computed(() => languages.filter((l) => !entries.value.some((e) => e.code === l.code)))
+const waiting = computed(() => lists.templates.suggestions + lists.shapelibs.suggestions)
 
-/**
- * @param {unknown} settings the normalised form {default: {text, url}, languages: {<code>: {text, url}}}
- */
-function load(settings) {
-	const s = settings && typeof settings === 'object' ? settings : {}
-	defaults.text = typeof s.default?.text === 'string' ? s.default.text : ''
-	defaults.url = typeof s.default?.url === 'string' ? s.default.url : ''
-	const langs = s.languages && typeof s.languages === 'object' && !Array.isArray(s.languages) ? s.languages : {}
-	entries.value = Object.entries(langs).map(([code, e]) => ({
-		code,
-		text: typeof e?.text === 'string' ? e.text : '',
-		url: typeof e?.url === 'string' ? e.url : '',
-	}))
-}
+const limitError = computed(() => {
+	const v = aiLimit.value
+	return Number.isInteger(v) && v >= 0 && v <= aiLimitMax
+		? null
+		: { at: 'limit', field: 'limit', code: 'ai-limit', text: t('knorke', 'Enter a whole number from 0 to {max}.', { max: aiLimitMax }) }
+})
+const aiErrors = computed(() => (limitError.value ? 1 : 0) + aiForm.errors.value.length)
+const privacyErrors = computed(() => privacyForm.errors.value.length)
+const errorCount = computed(() => aiErrors.value + privacyErrors.value)
 
-load(admin.settings)
+const aiDirty = computed(() => aiEnabled.value !== aiSaved.value.enabled || aiLimit.value !== aiSaved.value.limit || aiForm.dirty.value)
+const dirty = computed(() => aiDirty.value || privacyForm.dirty.value)
+const barLine = computed(() => barText(aiErrors.value, privacyErrors.value))
 
-/**
- * @param {string} code language code
- * @return {string} its name in Nextcloud's list, else the code
- */
-function nameOf(code) {
-	return names.get(code) ?? code
-}
+const aiLine = computed(() => aiSummary({
+	provider: aiProvider,
+	enabled: aiEnabled.value === true,
+	limit: limitError.value ? aiSaved.value.limit : aiLimit.value,
+	ownNotice: ownText(aiForm.defaults, aiForm.entries.value),
+}))
+const privacyLine = computed(() => privacySummary({
+	ownText: ownText(privacyForm.defaults, privacyForm.entries.value),
+	languages: privacyForm.entries.value.length,
+	url: privacyForm.defaults.url,
+	themingUrl: privacyForm.themingUrl,
+}))
 
-/**
- * @param {string} code language code
- * @return {string} "Name (code)"
- */
-function labelOf(code) {
-	return nameOf(code) + ' (' + code + ')'
-}
-
-/**
- * @param {string} at 'default', a language code or 'language'
- * @param {string} field 'text' | 'url' | 'pick'
- * @return {string} element id
- */
-function fieldId(at, field) {
-	return 'knorke-privacy-' + at + '-' + field
-}
-
-/**
- * @param {string} at 'default' or a language code
- * @param {string} field 'text' | 'url'
- * @return {string} id of the field's hint
- */
-function hintId(at, field) {
-	return fieldId(at, field) + '-hint'
-}
-
-/**
- * @param {string} at 'default', a language code or 'language'
- * @return {string} id of the error text of that block
- */
-function errorId(at) {
-	return 'knorke-privacy-' + at + '-error'
-}
-
-/**
- * @param {string} at block
- * @param {string} field field
- * @return {string|null} 'true' on the field the last error points to
- */
-function invalid(at, field) {
-	return error.value && error.value.at === at && error.value.field === field ? 'true' : null
-}
-
-/**
- * @param {string} at block
- * @param {string} field field
- * @return {string} hint id, plus the error id on the invalid field
- */
-function describedBy(at, field) {
-	return invalid(at, field) ? hintId(at, field) + ' ' + errorId(at) : hintId(at, field)
-}
-
-/**
- * @param {string} at block
- * @param {string} field field
- * @param {Element|null} el element (null on unmount)
- */
-function setField(at, field, el) {
-	if (el) {
-		fields.set(at + ':' + field, el)
-	} else {
-		fields.delete(at + ':' + field)
+// "Saved." goes with the next change
+watch(dirty, (d) => {
+	if (d) {
+		status.value = ''
 	}
-}
+})
 
-/**
- * @param {string} at block
- * @param {string} field field
- */
-function focusField(at, field) {
-	nextTick(() => fields.get(at + ':' + field)?.focus?.())
-}
+// round 1: the sticky bar never covers the caret or a focused field (scroll padding of the bar's height)
+const pageEl = ref(null)
+const barEl = ref(null)
+watch(barEl, (bar) => padForBar(scrollParent(pageEl.value), bar), { flush: 'post' })
+onBeforeUnmount(() => padForBar(scrollParent(pageEl.value), null))
 
-function add() {
-	const code = pick.value
-	if (code === '' || entries.value.length >= languagesMax || entries.value.some((e) => e.code === code)) {
-		return
-	}
-	entries.value.push({ code, text: '', url: '' })
-	pick.value = ''
-	status.value = ''
-	focusField(code, 'text')
-}
-
-/** @param {string} code language code */
-function remove(code) {
-	entries.value = entries.value.filter((e) => e.code !== code)
-	status.value = ''
-	if (error.value?.at === code) {
-		error.value = null
-	}
-	focusField('language', 'pick')
-}
-
-/** Longest privacy policy URL the server accepts (PublicPageController::httpUrl, bytes). */
-const URL_MAX_BYTES = 2048
-
-/**
- * @param {string} at 'default' or a language code
- * @return {boolean} the URL of that block is longer than URL_MAX_BYTES
- */
-function urlTooLong(at) {
-	const url = at === 'default' ? defaults.url : (entries.value.find((x) => x.code === at)?.url ?? '')
-	return new TextEncoder().encode(String(url).trim()).length > URL_MAX_BYTES
-}
-
-/**
- * The text of a 400 at its field (the code's own text, `at` from the body).
- *
- * @param {unknown} e error of the save
- * @return {object|null} the field error, null when the error has no field
- */
-function fieldError(e) {
-	if (!(e instanceof HttpError) || e.status !== 400) {
-		return null
-	}
-	const at = typeof e.body?.at === 'string' ? e.body.at : null
-	const max = Number.isInteger(e.body?.max) ? e.body.max : null
-	const known = at === 'default' || entries.value.some((x) => x.code === at)
-	switch (e.code) {
-	case 'text_too_long':
-		return known ? { at, field: 'text', code: e.code, text: t('knorke', 'At most {max} characters.', { max: max ?? textMax }) } : null
-	case 'invalid_url':
-		if (!known) {
-			return null
+// once both lists have loaded: open the first with suggestions and every one that failed (never closes one)
+watch(() => [lists.templates.state, lists.shapelibs.state], () => {
+	const keys = opened ? null : initialOpen(lists)
+	if (keys !== null) {
+		opened = true
+		for (const k of keys) {
+			open[k] = true
 		}
-		// the server refuses an address over URL_MAX_BYTES with the same code: say why
-		return urlTooLong(at)
-			? { at, field: 'url', code: e.code, text: t('knorke', 'At most {max} characters.', { max: URL_MAX_BYTES }) }
-			: { at, field: 'url', code: e.code, text: t('knorke', 'Enter an address starting with http:// or https://.') }
-	case 'unknown_language':
-		return known ? { at, field: 'text', code: e.code, text: t('knorke', 'This language is not available on this Nextcloud.') } : null
-	case 'too_many_languages':
-		return { at: 'language', field: 'pick', code: e.code, text: t('knorke', 'At most {max} languages.', { max: max ?? languagesMax }) }
-	default:
-		return null
+	}
+})
+
+/** @return {Array} the notice fields of the AI and the privacy section */
+function noticeFields() {
+	return [aiFields.value, privacyFields.value].filter(Boolean)
+}
+
+/** @param {string} key section id */
+function toggle(key) {
+	open[key] = !open[key]
+	if (open[key]) {
+		for (const f of noticeFields()) {
+			f.fitAll?.()
+		}
 	}
 }
 
+/** Everything back to the saved state. */
+function discard() {
+	aiEnabled.value = aiSaved.value.enabled
+	aiLimit.value = aiSaved.value.limit
+	aiForm.discard()
+	privacyForm.discard()
+	failure.value = ''
+	for (const f of noticeFields()) {
+		f.fitAll?.()
+	}
+}
+
+/**
+ * A failed save of one part: a 400 at its field (section open, focus), else the general alert.
+ *
+ * @param {'ai'|'privacy'} key the section
+ * @param {object} form its notice form
+ * @param {unknown} e the error
+ */
+function failed(key, form, e) {
+	const fe = form.takeError(e)
+	if (fe) {
+		open[key] = true
+		const fields = key === 'ai' ? aiFields : privacyFields
+		nextTick(() => {
+			fields.value?.fitAll?.()
+			fields.value?.focusField?.(fe.at, fe.field)
+		})
+	} else {
+		failure.value = t('knorke', 'The settings could not be saved.')
+	}
+}
+
+/** The save bar's Save: route 58 when the AI part changed, then route 27 when the privacy part changed. */
 async function save() {
-	if (busy.value) {
+	if (busy.value || errorCount.value > 0 || !dirty.value) {
 		return
 	}
 	busy.value = true
-	status.value = ''
 	failure.value = ''
-	error.value = null
-	const body = { default: { text: defaults.text, url: defaults.url }, languages: {} }
-	for (const e of entries.value) {
-		body.languages[e.code] = { text: e.text, url: e.url }
-	}
 	try {
-		load(await savePrivacy(body))
+		if (aiDirty.value) {
+			const notice = aiForm.body()
+			let s
+			try {
+				s = await saveAiSettings({ enabled: aiEnabled.value === true, dailyLimit: aiLimit.value, notice })
+			} catch (e) {
+				failed('ai', aiForm, e)
+				return
+			}
+			if (s && typeof s === 'object') {
+				aiEnabled.value = s.enabled !== false
+				aiLimit.value = Number.isInteger(s.dailyLimit) ? s.dailyLimit : aiLimit.value
+			}
+			aiSaved.value = { enabled: aiEnabled.value, limit: aiLimit.value }
+			aiForm.load(s?.notice?.settings ?? notice)
+		}
+		if (privacyForm.dirty.value) {
+			const body = privacyForm.body()
+			let p
+			try {
+				p = await savePrivacy(body)
+			} catch (e) {
+				failed('privacy', privacyForm, e)
+				return
+			}
+			privacyForm.load(p ?? body)
+		}
 		status.value = t('knorke', 'Saved.')
-	} catch (e) {
-		const fe = fieldError(e)
-		if (fe) {
-			error.value = fe
-			focusField(fe.at, fe.field)
-		} else {
-			failure.value = t('knorke', 'The settings could not be saved.')
+		for (const f of noticeFields()) {
+			f.fitAll?.()
 		}
 	} finally {
 		busy.value = false

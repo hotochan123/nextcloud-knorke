@@ -14,10 +14,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-dom'
 import {
-	DEFAULT_SHARE_ROLE, FILTERS, PASSWORD_LENGTH, SEARCH_DEBOUNCE_MS, SHARE_ROLES, accessLabel, addDays, addSharee, boardAccess, dateOfDay, dayOf,
+	DEFAULT_SHARE_ROLE, FILTERS, PASSWORD_LENGTH, SEARCH_DEBOUNCE_MS, SHARE_ROLES, accessLabel, addDays, addSharee, boardAccess, dateOfDay, dayOf, droppedModerators,
 	errorText, expiryProblem, filterBoards, generatePassword, initialExpiry, isDay, isTightening, linkDraft, linkMeetsPolicy,
 	linkSaveBody, linksAllowedAfter, lockoutText, normalizePolicy, normalizeShares, removeShare, reprefill, roleChoices, roleLabel, sameShares, saveDisabled,
-	setShareRole, settingsFirst, shareKey, shareeOptions, sourceLabel, sourceOf, subnameOf, textOf, todayOf, wireShares,
+	setShareRole, settingsFirst, shareKey, shareeOptions, sourceLabel, sourceOf, subnameOf, textOf, todayOf, viaLinkRemoved, wireShares,
 } from '../../../src/components/share.js'
 import { HttpError } from '../../../src/sync/http.js'
 import { FEATURES } from '../../../src/util/features.js'
@@ -443,7 +443,8 @@ test('R14-12: accessLabel — a vote row says "Can view" while !FEATURES.voting,
 	assert.equal(boardAccess({ role: 'vote', mod: false }), 'vote', '[data-knorke-board-access=vote] stays')
 	assert.equal(roleLabel('vote'), 'Can vote', 'SharePeople shows a stored vote row as "Can vote" (CLI-06)')
 	const list = read('src/views/BoardList.vue')
-	assert.match(list, /\{\{ accessLabel\(boardAccess\(b\)\) \}\}/)
+	// job 232: the second muted line of a card (origin(b))
+	assert.match(list, /parts\.push\(sourceLabel\(sourceOf\(b\)\), accessLabel\(boardAccess\(b\)\)\)/)
 	assert.doesNotMatch(list, /roleLabel\(/, 'the list never labels with the plain role label')
 	assert.match(read('src/components/SharePeople.vue'), /function roleOption\(role\) \{\s*return \{ id: role, role, label: roleLabel\(role\) \}/)
 })
@@ -529,11 +530,18 @@ test('R13 CLI-05: the dialog loads route 19 on every open; 403/404 closes it; a 
 	assert.match(view, /watch\(\(\) => isOwner\.value \|\| isMod\.value, \(may\) => \{\s*if \(!may\) \{\s*shareOpen\.value = false/)
 	const top = template('src/components/TopBar.vue')
 	// stage 3 (R16 narrow layout): the wide layout's share button; the narrow one's overflow menu carries it (ModerationMenu)
-	assert.equal(vIf(withHook(top, 'data-knorke-action', 'share')[0]), '!narrow && (isOwner || mod)', 'share button for owner || me.mod (wide layout)')
+	// job 228: in the right island (not narrow), the one primary button, never on the guest page
+	const right = findAll(top, (e) => attr(e, 'data-knorke-island') === 'right')[0]
+	assert.equal(vIf(right), '!narrow')
+	const share = withHook(right, 'data-knorke-action', 'share')[0]
+	assert.equal(vIf(share), 'mayShare', 'share button for owner || me.mod (wide layout)')
+	assert.equal(attr(share, 'variant'), 'primary')
+	assert.match(read('src/components/TopBar.vue'), /const mayShare = computed\(\(\) => \(props\.isOwner \|\| props\.mod\) && !props\.isGuest\)/)
 	const menu = findAll(top, (e) => e.tag === 'ModerationMenu' && e.props.some((p) => p.type === 6 && p.name === 'overflow'))
 	assert.equal(menu.length, 1)
-	assert.equal(vIf(menu[0]), 'narrow && (isOwner || mod || canModerate)')
-	assert.ok(menu[0].props.some((p) => p.type === 7 && p.arg?.content === 'can-share' && p.exp?.content === 'isOwner || mod'), 'overflow "Share" for owner || me.mod')
+	const narrowPart = findAll(top, (e) => e.tag === 'template' && e.props.some((p) => p.name === 'else') && findAll(e, (x) => x === menu[0]).length === 1)
+	assert.ok(narrowPart.length >= 1, 'job 178: the overflow menu for every role (the board menu\'s entries), in the narrow branch')
+	assert.ok(menu[0].props.some((p) => p.type === 7 && p.arg?.content === 'can-share' && p.exp?.content === 'mayShare'), 'overflow "Share" for owner || me.mod, not guests')
 })
 
 test('R13 CLI-05: readOnly links exactly — no toggle, rotate, settings-save, password, expiry; copy, QR and present stay', () => {
@@ -565,11 +573,31 @@ test('R13 CLI-05: readOnly links exactly — no toggle, rotate, settings-save, p
 	assert.equal(withHook(ast, 'data-knorke-field', 'link-url').length, 1)
 })
 
+test('job 228 AK5: "Show to the room" is the third section after the link sections, one button per active link, else "Turn on a link first."', () => {
+	const ast = template('src/components/ShareLinks.vue')
+	const room = findAll(ast, (e) => e.tag === 'section' && attr(e, 'data-knorke-share-room') !== null)
+	assert.equal(room.length, 1)
+	assert.equal(vIf(room[0]), 'loaded')
+	const on = findAll(ast, (e) => e.tag === 'template' && e.props.some((p) => p.name === 'else'))
+	const parent = on.find((t) => findAll(t, (e) => e === room[0]).length === 1)
+	assert.ok(parent, 'not in the disabled view')
+	const kids = parent.children.filter((c) => c.type === 1)
+	assert.equal(kids.at(-1), room[0], 'after the link sections')
+	assert.ok(kids.some((c) => attr(c, 'data-knorke-link') === 'role'))
+	const present = withHook(ast, 'data-knorke-action', 'link-present')
+	assert.equal(present.length, 1)
+	assert.equal(findAll(room[0], (e) => e === present[0]).length, 1, 'only in the room section')
+	assert.equal(present[0].props.find((p) => p.name === 'for')?.exp?.content, 'role in activeRoles')
+	assert.equal(attr(present[0], 'data-knorke-present'), 'role')
+	assert.match(read('src/components/ShareLinks.vue'), /const activeRoles = computed\(\(\) => roles\.value\.filter\(\(r\) => !!props\.links\[r\]\)\)/)
+	assert.match(read('src/components/ShareLinks.vue'), /<p v-else class="knorke-share__off">\s*\{\{ t\('knorke', 'Turn on a link first\.'\) \}\}/)
+})
+
 test('R13 CLI-01: the edit section comes before the vote section; the vote section only with FEATURES.voting', () => {
 	const src = read('src/components/ShareLinks.vue')
 	assert.match(src, /const roles = computed\(\(\) => \(FEATURES\.voting \? \['edit', 'vote'\] : \['edit'\]\)\)/)
 	const ast = template('src/components/ShareLinks.vue')
-	const sections = findAll(ast, (e) => e.tag === 'section')
+	const sections = findAll(ast, (e) => e.tag === 'section' && attr(e, 'data-knorke-share-room') === null)
 	assert.ok(sections.every((s) => attr(s, 'data-knorke-link') === 'role'))
 	const links = template('src/components/ShareLinks.vue')
 	assert.equal(withHook(links, 'data-knorke-banner', 'links_disabled').length, 1, 'the links_disabled note is in the Links tab')
@@ -629,7 +657,8 @@ test('R13 CLI-10: the board list filters carry [data-knorke-filter] and aria-cur
 	assert.match(app, /:data-knorke-filter="f\.id"/)
 	assert.match(app, /:aria-current="filter === f\.id \? 'page' : null"/)
 	assert.match(app, /:active="filter === f\.id"/)
-	assert.match(app, /\{ id: 'all', [^}]*\},\s*\{ id: 'mine', [^}]*\},\s*\{ id: 'shared', /)
+	// job 219 AK7: "Favorites" second
+	assert.match(app, /\{ id: 'all', [^}]*\},\s*\{ id: 'favorites', [^}]*\},\s*\{ id: 'mine', [^}]*\},\s*\{ id: 'shared', /)
 	const list = template('src/views/BoardList.vue')
 	const li = findAll(list, (e) => e.tag === 'li')[0]
 	assert.equal(attr(li, 'data-knorke-board-source'), 'sourceOf(b)')
@@ -659,4 +688,52 @@ test('QrCode / PresentLinkDialog: svg with the value hook, no innerHTML; the pre
 	assert.match(pres, /Scan to vote on this board/)
 	assert.match(pres, /Scan to join this board/)
 	assert.match(pres, /size="min\(64vmin, 720px\)"/, '≥ 60 % of the shorter screen side')
+})
+
+// ---- job 248: hints on removal ---------------------------------------------------
+
+test('job 248 AK3: normalizeShares keeps only viaLink true on account rows; addSharee never sets it; the PUT body never sends it', () => {
+	const rows = normalizeShares([
+		{ kind: 'user', id: 'bob', name: 'Bob', role: 'edit', viaLink: true },
+		{ kind: 'user', id: 'carol', name: 'Carol', role: 'edit', viaLink: 'yes' },
+		{ kind: 'user', id: 'dave', name: 'Dave', role: 'edit', appAccess: false, viaLink: true },
+		{ kind: 'group', id: 'staff', name: 'Staff', role: 'edit', viaLink: true },
+	])
+	assert.deepEqual(rows.map((r) => r.viaLink), [true, undefined, true, undefined])
+	assert.equal('viaLink' in rows[1], false)
+	assert.deepEqual(rows[2], { kind: 'user', id: 'dave', name: 'Dave', role: 'edit', available: true, appAccess: false, viaLink: true })
+	const added = addSharee([], { kind: 'user', id: 'erin', name: 'Erin', viaLink: true }).draft
+	assert.equal('viaLink' in added[0], false)
+	assert.deepEqual(wireShares(rows.slice(0, 1)), [{ kind: 'user', id: 'bob', role: 'edit' }])
+	assert.equal(setShareRole(rows, 'user:bob', 'view')[0].viaLink, true, 'a role change keeps the mark')
+})
+
+test('job 248 AK4: viaLinkRemoved names the saved viaLink rows missing from the draft, in stored order', () => {
+	const stored = [
+		{ kind: 'user', id: 'bob', name: 'Bob', role: 'edit', viaLink: true },
+		{ kind: 'user', id: 'carol', name: 'Carol', role: 'edit' },
+		{ kind: 'user', id: 'dave', name: 'Dave', role: 'moderate', viaLink: true },
+	]
+	assert.deepEqual(viaLinkRemoved(stored, stored), [])
+	assert.deepEqual(viaLinkRemoved(stored, []), ['Bob', 'Dave'])
+	assert.deepEqual(viaLinkRemoved(stored, [stored[0]]), ['Dave'])
+	assert.deepEqual(viaLinkRemoved(stored, [stored[0], stored[2]]), [], 'carol has no viaLink')
+	assert.deepEqual(viaLinkRemoved(stored, [{ kind: 'user', id: 'dave', name: 'Dave', role: 'edit' }, stored[0]]), [], 'back in the draft (another role)')
+	assert.deepEqual(viaLinkRemoved(undefined, undefined), [])
+})
+
+test('job 248 AK5: droppedModerators finds removed and downgraded facilitators of every kind, nothing else', () => {
+	const before = [
+		{ kind: 'user', id: 'bob', role: 'moderate' },
+		{ kind: 'group', id: 'staff', role: 'moderate' },
+		{ kind: 'team', id: 'tN', role: 'moderate' },
+		{ kind: 'user', id: 'carol', role: 'edit' },
+	]
+	assert.deepEqual(droppedModerators(before, before), [])
+	assert.deepEqual(droppedModerators(before, [before[1], before[3]]), ['user:bob', 'team:tN'], 'removed')
+	assert.deepEqual(droppedModerators(before, [{ ...before[0], role: 'edit' }, before[1], before[2]]), ['user:bob'], 'downgraded; carol removed does not count')
+	assert.deepEqual(droppedModerators(before, [...before, { kind: 'user', id: 'dave', role: 'moderate' }]), [], 'a new facilitator')
+	assert.deepEqual(droppedModerators(before, before.map((s) => (s.id === 'carol' ? { ...s, role: 'view' } : s))), [], 'another role downgraded')
+	assert.deepEqual(droppedModerators([], []), [])
+	assert.deepEqual(droppedModerators(undefined, undefined), [])
 })

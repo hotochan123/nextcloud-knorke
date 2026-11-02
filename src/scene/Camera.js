@@ -29,6 +29,30 @@ import { MAX_SCALE, MIN_SCALE } from '../model/tokens.js'
 /** Fit never zooms in beyond 100 %: a board with one note should not open at 400 %. */
 export const FIT_MAX_SCALE = 1
 
+/** (job 223) Below this free width or height (container px, after the padding) the insets are dropped. */
+export const MIN_FREE_PX = 64
+
+/**
+ * (job 223) The part of the viewport the bars leave free: the viewport less
+ * the insets ({top, right, bottom, left}, container px the bars cover at each
+ * edge; a value that is not a positive number counts as 0). Without an
+ * inset, or when the free part less padPx on each side would be narrower or
+ * lower than MIN_FREE_PX: the whole viewport.
+ *
+ * @param {number} vw viewport width
+ * @param {number} vh viewport height
+ * @param {number} padPx screen padding the fit keeps inside the free part
+ * @param {{top?:number, right?:number, bottom?:number, left?:number}|null} [insets] covered px per edge
+ * @return {{x:number, y:number, w:number, h:number}} container px
+ */
+export function freePart(vw, vh, padPx, insets = null) {
+	const [t, r, b, l] = ['top', 'right', 'bottom', 'left'].map((k) => (Number.isFinite(insets?.[k]) && insets[k] > 0 ? insets[k] : 0))
+	const w = vw - l - r
+	const h = vh - t - b
+	// without insets this is the whole viewport too
+	return w - 2 * padPx >= MIN_FREE_PX && h - 2 * padPx >= MIN_FREE_PX ? { x: l, y: t, w, h } : { x: 0, y: 0, w: vw, h: vh }
+}
+
 /**
  * @param {number} s scale
  * @param {number} min lower bound
@@ -140,27 +164,30 @@ export class Camera {
 	/**
 	 * Camera that shows rect centred with padPx on every side. An empty board
 	 * (rect null) gets {x: -vw/2, y: -vh/2, scale: 1} (world origin centred).
-	 * Never zooms in beyond FIT_MAX_SCALE.
+	 * Never zooms in beyond FIT_MAX_SCALE. (Job 223) With insets: centred in
+	 * the part the bars leave free (freePart), padPx inside it.
 	 *
 	 * @param {{x:number, y:number, w:number, h:number}|null} rect world rectangle
 	 * @param {number} vw viewport width
 	 * @param {number} vh viewport height
 	 * @param {number} [padPx] screen padding
+	 * @param {{top?:number, right?:number, bottom?:number, left?:number}|null} [insets] covered px per edge
 	 * @return {CameraState}
 	 */
-	fit(rect, vw, vh, padPx = 48) {
+	fit(rect, vw, vh, padPx = 48, insets = null) {
 		if (!rect || !(vw > 0) || !(vh > 0)) {
 			return { x: -(vw > 0 ? vw : 0) / 2, y: -(vh > 0 ? vh : 0) / 2, scale: 1 }
 		}
-		const aw = Math.max(1, vw - 2 * padPx)
-		const ah = Math.max(1, vh - 2 * padPx)
+		const f = freePart(vw, vh, padPx, insets)
+		const aw = Math.max(1, f.w - 2 * padPx)
+		const ah = Math.max(1, f.h - 2 * padPx)
 		const sw = rect.w > 0 ? aw / rect.w : Infinity
 		const sh = rect.h > 0 ? ah / rect.h : Infinity
 		let scale = Math.min(sw, sh, FIT_MAX_SCALE)
 		scale = clampScale(scale, this.#min, Math.min(this.#max, FIT_MAX_SCALE))
 		const cx = rect.x + rect.w / 2
 		const cy = rect.y + rect.h / 2
-		return { x: cx - vw / (2 * scale), y: cy - vh / (2 * scale), scale }
+		return { x: cx - (f.x + f.w / 2) / scale, y: cy - (f.y + f.h / 2) / scale, scale }
 	}
 
 	/**

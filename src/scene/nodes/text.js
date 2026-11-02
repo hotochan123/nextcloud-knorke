@@ -17,10 +17,14 @@
  * other part and builds this one, so no visible() setter runs when a cached
  * entry re-enters the viewport (lab gate "Herausnehmen"); visible() is only
  * used while the text editor hides the text.
+ *
+ * (Job 279) The text is nodes/richText.js makeText: a Konva.Text, or the
+ * rich shape when the text has Markdown marks.
  */
 import { fieldValue } from '../../model/registry.js'
-import { FONT_FAMILY, LINE_HEIGHT, TEXT_BAR_COLOR, TEXT_MIN_PX } from '../../model/tokens.js'
+import { FONT_FAMILY, LINE_HEIGHT, TEXT_BAR_COLOR, TEXT_MIN_PX, shownColor } from '../../model/tokens.js'
 import { SHAPE_BASE, makeGroup, place, positive, str } from './common.js'
+import { makeText, setText } from './richText.js'
 
 /**
  * Konva text attributes of a text item (also used to measure it).
@@ -34,7 +38,7 @@ export function textItemAttrs(item, w) {
 		width: positive(w),
 		text: str(fieldValue(item, 'data.text')),
 		fontSize: fieldValue(item, 'style.fontSize'),
-		fill: fieldValue(item, 'style.color'),
+		fill: shownColor(fieldValue(item, 'style.color')),
 		align: fieldValue(item, 'style.align'),
 	}
 }
@@ -76,15 +80,13 @@ export function barAttrs(item, abs) {
  * @param {{w:number, h:number}} abs absolute box
  */
 function addText(ctx, entry, item, abs) {
-	const text = new ctx.Text({
-		...SHAPE_BASE,
+	const text = makeText(ctx, {
 		...textItemAttrs(item, abs.w),
 		fontFamily: FONT_FAMILY,
 		wrap: 'word',
 		lineHeight: LINE_HEIGHT,
 		visible: !entry.textHidden,
 	})
-	text.transformsEnabled('position')
 	entry.root.add(text)
 	entry.parts.text = text
 }
@@ -154,7 +156,8 @@ export const text = {
 		}
 		const { text, bars } = entry.parts
 		if (text && (fields.has('geom') || fields.has('style') || fields.has('text'))) {
-			text.setAttrs(textItemAttrs(item, abs.w))
+			// job 279: swapped when the text gains or loses its Markdown marks
+			entry.parts.text = setText(ctx, text, textItemAttrs(item, abs.w))
 		}
 		if (bars && (fields.has('geom') || fields.has('style') || fields.has('text'))) {
 			bars.setAttrs(barAttrs(item, abs))

@@ -12,7 +12,8 @@
  * - 412 (signed-in only): fetch a fresh CSRF token once (GET /csrftoken),
  *   repeat the same request once; a second 412 becomes HttpError(401,
  *   'http_401'). On /sync SyncClient counts it like every 401 (SPEC-M1 §1.2,
- *   R21): one is bridged, a second 401 in a row reports `logged_out`.
+ *   R21, job 164): three are bridged (retries after 1, 2 and 4 s), a fourth
+ *   401 in a row reports `logged_out`.
  * - proxy 429/503 is NOT retried here; SyncClient and BoardSession.open wait
  *   and repeat (isProxyRetry).
  * - guest join answering 404: forget the stored guest entry, rethrow.
@@ -28,6 +29,16 @@
  *   without this (or a proxy that drops the header) answers 401/403 as before.
  *
  * Time limits: sync 10 s, snapshot and join 30 s.
+ *
+ * Factory job 189: both transports carry `comments` {list, create, update,
+ * remove, mentions} for the comment routes 35–43 (accounts: CSRF token and
+ * the same 412 rule; guests: the guest token in X-Knorke-Guest and
+ * X-Requested-With, which the server's refuseCrossSite needs). Guests have
+ * no @ list (mentions null). Time limit: COMMENT_TIMEOUT_MS.
+ *
+ * Factory job 191: both transports carry `tags` {save} for routes 44 and 45
+ * (the board's tag list, PUT {action, …}; accounts with the CSRF token,
+ * guests with the guest token), time limit TAG_TIMEOUT_MS.
  */
 import { END_STATE_HEADER, HttpError, endStateOf, request as httpRequest } from './http.js'
 import { api, appUrl, ncUrl } from '../util/routes.js'
@@ -35,6 +46,10 @@ import { getRequestToken, setRequestToken } from '../util/csrf.js'
 
 export const SYNC_TIMEOUT_MS = 10000
 export const SNAPSHOT_TIMEOUT_MS = 30000
+/** Factory job 189: the comment routes. */
+export const COMMENT_TIMEOUT_MS = 15000
+/** Factory job 191: the tag routes. */
+export const TAG_TIMEOUT_MS = 15000
 
 /**
  * Debug counters of a session (window.__knorke.counters(), §6.7).
@@ -146,6 +161,18 @@ export function userTransport(boardId, {
 			}
 			return call(api.sync(boardId), body, SYNC_TIMEOUT_MS, { keepalive, onBytes: meter(counters, true), endState: true }).then(endStateOf)
 		},
+		/** Factory job 189: routes 35–39. */
+		comments: Object.freeze({
+			list: () => call(api.listComments(boardId), undefined, COMMENT_TIMEOUT_MS),
+			create: (body) => call(api.createComment(boardId), body, COMMENT_TIMEOUT_MS),
+			update: (body) => call(api.updateComment(boardId), body, COMMENT_TIMEOUT_MS),
+			remove: (comment) => call(api.deleteComment(boardId, comment), undefined, COMMENT_TIMEOUT_MS),
+			mentions: (q) => call(api.searchMentions(boardId, q), undefined, COMMENT_TIMEOUT_MS),
+		}),
+		/** Factory job 191: route 44. */
+		tags: Object.freeze({
+			save: (body) => call(api.saveTags(boardId), body, TAG_TIMEOUT_MS),
+		}),
 	}
 }
 
@@ -268,5 +295,27 @@ export function guestTransport({
 			}
 			return request(r.method, urlOf(r.path), { body, headers, timeoutMs: SYNC_TIMEOUT_MS, keepalive, onBytes: meter(counters, true) }).then(endStateOf)
 		},
+		/** Factory job 189: routes 40–43; no @ list for guests. */
+		comments: Object.freeze({
+			list: () => guestCall(api.guestComments(board)),
+			create: (body) => guestCall(api.guestCreateComment(board), body),
+			update: (body) => guestCall(api.guestUpdateComment(board), body),
+			remove: (comment) => guestCall(api.guestDeleteComment(board, comment)),
+			mentions: null,
+		}),
+		/** Factory job 191: route 45. */
+		tags: Object.freeze({
+			save: (body) => guestCall(api.guestSaveTags(board), body, TAG_TIMEOUT_MS),
+		}),
+	}
+
+	/**
+	 * @param {{method: string, path: string}} r route
+	 * @param {object} [body] JSON body
+	 * @param {number} [timeoutMs] time limit
+	 * @return {Promise<object>} answer
+	 */
+	function guestCall(r, body = undefined, timeoutMs = COMMENT_TIMEOUT_MS) {
+		return request(r.method, urlOf(r.path), { body, headers: tokenHeaders(), timeoutMs })
 	}
 }

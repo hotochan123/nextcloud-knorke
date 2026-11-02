@@ -23,14 +23,17 @@
  *   type, Esc → three notes side by side (+20), three undo steps.
  * E23 connectors (round 1b): key L with the canvas focused, drag from note A
  *   to note B → a connector bound to both (placement none, creation defaults
- *   route straight and end cap arrow); __knorke.connector(id) starts on A's
+ *   route elbow and end cap arrow since job 153); __knorke.connector(id) starts on A's
  *   border and ends on B's (±2). A is dragged and held: the route follows at
  *   alice (local preview) and at bob (remote drag preview through the box
  *   resolver), and after the release by A's displacement, the stored ends
  *   unchanged. Delete B: data.end becomes the free point at the last docking
  *   point (±2; deleteItems v2 releases before the remove), also at bob and the
- *   server; Ctrl+Z revives B and binds the end again. Route "elbow" and end cap
- *   "dot" through the context bar ([data-knorke-style=data.route|style.endCap]),
+ *   server; Ctrl+Z revives B and binds the end again. End cap "dot", then (job
+ *   153) "Swap direction" in the panel "Tips" (start dot, end none at alice,
+ *   bob and the server; Ctrl+Z restores; the menu entry swap-direction on the
+ *   connector swaps again), then route "curved" (job 153: elbow is the default)
+ *   through the context bar ([data-knorke-style=data.route|style.endCap]),
  *   the label by a double click on the line (editor kind label), all seen by
  *   bob and the server. The end handle of the selected connector dragged onto
  *   C retargets the end (Ctrl+Z hangs it back), and the lower "+" handle of the
@@ -74,17 +77,24 @@
  *   selects the note tool (R10: the session focused the canvas); keyboard
  *   only, Tab selects frames first, then content by y/x, and leaves the
  *   canvas after the last item; arrows move by 1, Shift+arrows by 10; Enter
- *   opens the editor; "Arrange" sets width, height and angle; two selected
+ *   opens the editor; "Arrange" sets width, height and angle, and an X of
+ *   20000000 puts the item at the limit x 10000000 (the field shows it, no
+ *   toast; job 146), undone with Ctrl+Z; two selected
  *   items and "Connect" activated from the keyboard (focus + Enter) create a
  *   connector between them (1b); "Align items" (two notes): Enter on the
  *   toggle opens its panel, one Tab leads to "Align left edges", Shift+Tab
- *   back to the toggle, the panel lies below the bar; after a mouse click on
+ *   back to the toggle, the panel lies on the side its
+ *   [data-knorke-panel-side] names (job 137: above or below the bar placed
+ *   at the selection) without overlapping the bar; after a mouse click on
  *   a command the canvas has the focus and the panel stays open, a first Esc
  *   closes only the panel (selection and bar stay), a second Esc clears the
  *   selection (also after the preventDefault of a Nextcloud header menu,
  *   E40); the key N with the focus in the TopBar does nothing; after a mouse
  *   click on a toolbar button the focus is back on the canvas and N selects
- *   the note tool, a click creates a note.
+ *   the note tool, a click creates a note. Last (job 160, seeded only then so
+ *   the Tab order stays): a note in a frame at x −100 gets an X of 10000000
+ *   in "Arrange" and is stored at x 10000000 relative to the frame (parent
+ *   kept), the field shows 9999900, no toast.
  *
  * Check labels start with exactly ONE owner of a red check (SPEC-M1 §9.6;
  * stage1.test.mjs refuses two): [S] where the check fails in the scene –
@@ -104,7 +114,7 @@ import {
 	K, APP, api, waitReady, until, sleep, openBoard, itemMap, idSet, centerOf, selectItem, tool, settle, newActor, action,
 	ulid, seedOps, serverMap, put, CANVAS, canvasFocused, toolPressed, worldAt, dragPath, handleOf, recordToasts, toastsOf, sameList,
 	login, extraHandles, onBorder, nearPt, styleButton, closeContextPanels, TRANSFORM_HANDLES, PLUS_HANDLES, END_HANDLES,
-	handleNames, pickHandle,
+	handleNames, pickHandle, barMore,
 } from '../lib/harness.mjs'
 import { anchorPoint } from '../lib/geom.mjs'
 import { countedErrors, firefoxLaunchOptions, FIREFOX_TIMEOUT_MS, abortNote, retryOnce } from '../lib/browsers.mjs'
@@ -167,7 +177,7 @@ async function editorKind(page) {
 async function editorLook(page) {
 	return editor(page).evaluate((el) => {
 		const st = getComputedStyle(el)
-		return { outlineStyle: st.outlineStyle, outlineWidth: st.outlineWidth, boxShadow: st.boxShadow, borderTopWidth: st.borderTopWidth, focused: document.activeElement === el }
+		return { outlineStyle: st.outlineStyle, outlineWidth: st.outlineWidth, boxShadow: st.boxShadow, borderTopWidth: st.borderTopWidth, textAlign: st.textAlign, focused: document.activeElement === el }
 	}).catch((e) => ({ error: String(e) }))
 }
 
@@ -247,7 +257,7 @@ export const E21 = {
 		t.check(Array.isArray(sel) && sameList(sel, [A]), '[C] __knorke.selection() = [A]', sel)
 		const hs = await K.handles(p)
 		t.must(Array.isArray(hs) && hs.length > 0, '[S] __knorke.handles() liefert Griffe', hs)
-		t.check(sameList(transformNames(hs), ['b', 'bl', 'br', 'l', 'r', 'rot', 't', 'tl', 'tr']), '[S] eine Form: 8 Griffe + Drehgriff', hs.map((h) => h.name))
+		t.check(sameList(transformNames(hs), ['bl', 'br', 'rot', 'tl', 'tr']), '[S] eine Form: 4 Eckgriffe + Drehgriff (Job 231)', hs.map((h) => h.name))
 		t.check(sameList(plusNames(hs), ALL_PLUS), '[S] eine Form (bindbar): dazu die vier „+“-Griffe plus-t/r/b/l (§6.3, Namen §6.7)', hs.map((h) => h.name))
 		const box0 = boxOf((await itemMap(p)).get(A))
 		const br = await handleOf(p, 'br')
@@ -363,6 +373,7 @@ export const E22 = {
 		const lookT = await editorLook(p)
 		t.check(lookT.outlineStyle === 'none' && lookT.boxShadow === 'none' && lookT.borderTopWidth === '0px' && lookT.focused === true,
 			'[S] Text-Editor offen und fokussiert: kein Rahmen um das Textfeld (outline none, box-shadow none, border 0), nur der Cursor', lookT)
+		t.check(lookT.textAlign === 'center', '[S] Job 241: der Editor eines neuen Texts schreibt zentriert (text-align center)', lookT.textAlign)
 		const LINE1 = 'eins zwei drei vier fünf sechs'
 		await p.keyboard.type(LINE1, { delay: 5 })
 		await p.keyboard.press('Escape')
@@ -372,6 +383,8 @@ export const E22 = {
 		const t1 = (await itemMap(p)).get(T)
 		const fs1 = t1.style?.fontSize ?? 24
 		t.note(`Text-Objekt: w ${t1.w}, h ${t1.h}, fontSize ${t1.style?.fontSize}`)
+		t.check(t1.parent == null && near(t1.x + t1.w / 2, P.x, tol) && t1.style?.align === 'center',
+			'[S] Job 241: neuer Text zentriert, die Mitte seines Kastens auf dem Klickpunkt', { mitte: t1.x + t1.w / 2, klick: P.x, align: t1.style?.align })
 
 		t.step('zwei weitere Zeilen')
 		const ct = await centerOf(p, T)
@@ -391,7 +404,7 @@ export const E22 = {
 		const hsT = await K.handles(p)
 		const names = transformNames(hsT)
 		t.check(sameList(names, ['bl', 'br', 'l', 'r', 'rot', 'tl', 'tr']), '[S] Text: Seitengriffe l/r, 4 Ecken, Drehgriff (§6.3)', hsT?.map((h) => h.name))
-		t.check(sameList(plusNames(hsT), ALL_PLUS), '[S] Text (bindbar): dazu die vier „+“-Griffe plus-t/r/b/l (Runde 1b, Namen §6.7)', hsT?.map((h) => h.name))
+		t.check(sameList(plusNames(hsT), ['plus-b', 'plus-t']), '[S] Text (bindbar): dazu die Punkte plus-t/b; l/r gehören den Seitengriffen (Job 231)', hsT?.map((h) => h.name))
 		const hr = await handleOf(p, 'r')
 		t.must(hr, '[S] Griff r vorhanden')
 		await dragPath(p, hr, { x: hr.x - t3.w * 0.5 * s, y: hr.y })
@@ -590,7 +603,7 @@ async function checkEndHandles(t, page, id, when) {
 
 export const E23 = {
 	id: 'E23',
-	title: 'Verbinder: Taste L, von A nach B ziehen; A verschieben (folgt live bei alice und bob); B löschen (freies Ende an der letzten Andockstelle ±2); Strg+Z bindet wieder; Route „elbow“, Endspitze und Strich über die Kontextleiste; Beschriftung per Doppelklick; Ende auf C umhängen, Strg+Z; „+“-Griff von A nach C',
+	title: 'Verbinder: Taste L, von A nach B ziehen (rechtwinklig mit Pfeil); A verschieben (folgt live bei alice und bob); B löschen (freies Ende an der letzten Andockstelle ±2); Strg+Z bindet wieder; Endspitze, „Swap direction“ in Leiste und Menü, Strg+Z, Route „curved“ und Strich über die Kontextleiste; Beschriftung per Doppelklick; Ende auf C umhängen, Strg+Z; „+“-Griff von A nach C',
 	async run(t, world) {
 		const board = await world.board('E23 Verbinder')
 		const token = await linkToken(board)
@@ -632,12 +645,13 @@ export const E23 = {
 		let it = (await itemMap(p)).get(KC)
 		t.check(it?.data?.start?.item === A && it?.data?.end?.item === B, '[S] Enden gebunden: start an A, end an B', it?.data)
 		t.check(it && it.x === 0 && it.y === 0 && it.w === 0 && it.h === 0 && it.r === 0 && it.parent === null, '[C] Lage none: x = y = w = h = r = 0, parent null (Regel 12)', it && fmt(boxOf(it)))
-		t.check(it?.data?.route === 'straight' && it?.style?.endCap === 'arrow', '[C] Anlege-Vorgaben gespeichert: Route straight, Endspitze arrow (§6.2)', { route: it?.data?.route, style: it?.style })
+		t.check(it?.data?.route === 'elbow' && it?.style?.endCap === 'arrow' && !it?.style?.startCap, '[C] Anlege-Vorgaben gespeichert: Route elbow, Endspitze arrow, keine Anfangsspitze (§6.2, Job 153)', { route: it?.data?.route, style: it?.style })
 		const g0 = await K.connector(p, KC)
 		t.must(g0?.start && g0?.end, '[S] __knorke.connector(id) liefert die Route (start, end)', g0)
 		t.check(onBorder(g0.start, await boxIn(p, A), 2) && onBorder(g0.end, await boxIn(p, B), 2), '[S] die Route beginnt am Rand von A und endet am Rand von B (±2)', routeFmt(g0))
 		const srv0 = (await serverMap('alice', board)).get(KC)
 		t.check(srv0?.data?.start?.item === A && srv0?.data?.end?.item === B, '[B] beim Server: Verbinder mit beiden Enden gebunden', srv0?.data)
+		t.check(srv0?.data?.route === 'elbow' && srv0?.style?.endCap === 'arrow', '[B] beim Server: Route elbow, Endspitze arrow (Job 153)', { route: srv0?.data?.route, style: srv0?.style })
 		await settle([p, b.page])
 		const gb0 = await K.connector(b.page, KC)
 		t.check(gb0 && nearPt(gb0.start, g0.start, 2) && nearPt(gb0.end, g0.end, 2), '[C] bob sieht den Verbinder mit derselben Route (±2)', { alice: routeFmt(g0), bob: routeFmt(gb0) })
@@ -706,18 +720,63 @@ export const E23 = {
 		const srv3 = await serverMap('alice', board)
 		t.check(srv3.has(B) && srv3.get(KC)?.data?.end?.item === B, '[B] beim Server: B belebt, das Ende gebunden', srv3.get(KC)?.data?.end)
 
-		t.step('Verbinder auswählen (Klick auf die Linie), Route „elbow“, Endspitze „dot“ und Strich „dashed“ in der Kontextleiste')
+		t.step('Verbinder auswählen (Klick auf die Linie), Strich „dashed“ und Endspitze „dot“ in der Kontextleiste')
 		t.must(await selectConnector(p, KC), '[S] ein Klick auf die Linie wählt den Verbinder (Treffer line)', await K.selection(p))
 		await checkEndHandles(t, p, KC, 'ausgewählter Verbinder')
-		t.check(await styleButton(p, 'data.route', 'elbow'), '[C] Kontextleiste: [data-knorke-style=data.route][data-knorke-value=elbow] (Route, §6.8)')
-		t.check(await until(async () => (await itemMap(p)).get(KC)?.data?.route === 'elbow', { timeout: 4000 }), '[C] data.route = elbow', (await itemMap(p)).get(KC)?.data?.route)
-		t.check(await styleButton(p, 'style.endCap', 'dot'), '[C] Kontextleiste: [data-knorke-style=style.endCap][data-knorke-value=dot] (Spitzen, §6.8)')
-		t.check(await until(async () => (await itemMap(p)).get(KC)?.style?.endCap === 'dot', { timeout: 4000 }), '[C] style.endCap = dot', (await itemMap(p)).get(KC)?.style)
+		// job 137: the route last, so its small panel stays open above the bar placed at the line and the
+		// line stays free for the C-1b-02 check (the tall "Line" panel opens below the bar, over the line)
 		t.check(await styleButton(p, 'style.dash', 'dashed'), '[C] Kontextleiste: [data-knorke-style=style.dash][data-knorke-value=dashed] (Strich, §6.8)')
 		t.check(await until(async () => (await itemMap(p)).get(KC)?.style?.dash === 'dashed', { timeout: 4000 }), '[C] style.dash = dashed', (await itemMap(p)).get(KC)?.style)
+		t.check(await styleButton(p, 'style.endCap', 'dot'), '[C] Kontextleiste: [data-knorke-style=style.endCap][data-knorke-value=dot] (Spitzen, §6.8)')
+		t.check(await until(async () => (await itemMap(p)).get(KC)?.style?.endCap === 'dot', { timeout: 4000 }), '[C] style.endCap = dot', (await itemMap(p)).get(KC)?.style)
+
+		t.step('„Swap direction“ im Feld „Tips“ (Job 153): Anfang dot, Ende none bei alice, bob und beim Server; Strg+Z stellt zurück; der Menüeintrag auf dem Verbinder tauscht erneut')
+		const tipsOf = (x) => ({ start: x?.style?.startCap ?? null, end: x?.style?.endCap ?? null })
+		const swapped = (x) => x?.style?.startCap === 'dot' && x?.style?.endCap === 'none'
+		const unswapped = (x) => !!x && !x.style?.startCap && x.style?.endCap === 'dot'
+		const swapBtn = p.locator('.knorke-contextbar [data-knorke-panel=caps] [data-knorke-action=swap-direction]').first()
+		t.must(await swapBtn.isVisible().catch(() => false), '[C] das offene Feld „Tips“ zeigt [data-knorke-action=swap-direction] unter den Spitzen-Zeilen')
+		t.check(await swapBtn.isEnabled().catch(() => false), '[C] verschiedene Spitzen: „Swap direction“ ist bedienbar')
+		await swapBtn.click()
+		t.check(await until(async () => swapped((await itemMap(p)).get(KC)) || null, { timeout: 4000 }), '[C] alice: Anfang dot, Ende none', tipsOf((await itemMap(p)).get(KC)))
+		t.check(await p.locator('.knorke-contextbar [data-knorke-panel=caps]').first().isVisible().catch(() => false), '[C] das Feld „Tips“ bleibt nach dem Klick offen')
+		await K.waitIdle(p)
+		await settle([p, b.page])
+		t.check(swapped((await itemMap(b.page)).get(KC)), '[C] bob: Anfang dot, Ende none', tipsOf((await itemMap(b.page)).get(KC)))
+		t.check(swapped((await serverMap('alice', board)).get(KC)), '[B] beim Server: Anfang dot, Ende none', tipsOf((await serverMap('alice', board)).get(KC)))
+		await p.keyboard.press('Control+z')
+		t.check(await until(async () => unswapped((await itemMap(p)).get(KC)) || null, { timeout: 4000 }), '[C] ein Strg+Z stellt zurück: keine Anfangsspitze, Ende dot', tipsOf((await itemMap(p)).get(KC)))
+		await K.waitIdle(p)
+		t.check(unswapped((await serverMap('alice', board)).get(KC)), '[B] beim Server nach Strg+Z: keine Anfangsspitze, Ende dot', tipsOf((await serverMap('alice', board)).get(KC)))
+		// the right click on a free canvas point of the selected connector's line; the panel "Tips" may lie
+		// over it: Esc with the canvas focus closes only the panel, the selection stays
+		await p.keyboard.press('Escape')
+		t.check(await until(async () => ((await openSections(p)) === 0 ? true : null), { timeout: 2000 }), '[C] Esc mit Leinwand-Fokus schließt das Feld „Tips“', await openSections(p))
+		t.must(sameList((await K.selection(p)) || [], [KC]), '[S] der Verbinder bleibt nach Esc ausgewählt', await K.selection(p))
+		const onLine = await canvasPointOnLine(p, KC)
+		t.must(onLine, '[S] ein freier Leinwandpunkt auf der Linie für den Rechtsklick')
+		await p.mouse.move(onLine.x, onLine.y)
+		await p.mouse.click(onLine.x, onLine.y, { button: 'right' })
+		// job 230: the menu on the connector lists no swap-direction any more (the panel "Tips" has it): Esc, then the panel
+		t.must(await until(() => p.locator('[data-knorke-menu=context]').first().isVisible().catch(() => false), { timeout: 3000 }), '[C] der Rechtsklick auf den Verbinder öffnet das Menü', await K.selection(p))
+		t.check((await p.locator('[data-knorke-menu=context] [data-knorke-menu-item=swap-direction]').count()) === 0, '[C] das Menü hat keinen Eintrag swap-direction (Job 230)')
+		await p.keyboard.press('Escape')
+		await p.locator('.knorke-contextbar [data-knorke-section=caps]').first().click()
+		const swapEntry = p.locator('.knorke-contextbar__panel [data-knorke-action=swap-direction]').first()
+		t.must(await swapEntry.waitFor({ state: 'visible', timeout: 3000 }).then(() => true, () => false), '[C] das Feld „Tips“ zeigt [data-knorke-action=swap-direction]', await K.selection(p))
+		await swapEntry.click()
+		t.check(await until(async () => swapped((await itemMap(p)).get(KC)) || null, { timeout: 4000 }), '[C] „Swap direction“ tauscht erneut: Anfang dot, Ende none', tipsOf((await itemMap(p)).get(KC)))
+		await p.keyboard.press('Escape')
+		await K.waitIdle(p)
+		t.check(swapped((await serverMap('alice', board)).get(KC)), '[B] beim Server: Anfang dot, Ende none', tipsOf((await serverMap('alice', board)).get(KC)))
+		t.must(sameList((await K.selection(p)) || [], [KC]), '[S] der Verbinder bleibt ausgewählt', await K.selection(p))
+
+		t.step('Route „curved“ in der Kontextleiste (rechtwinklig ist die Vorgabe)')
+		t.check(await styleButton(p, 'data.route', 'curved'), '[C] Kontextleiste: [data-knorke-style=data.route][data-knorke-value=curved] (Route, §6.8)')
+		t.check(await until(async () => (await itemMap(p)).get(KC)?.data?.route === 'curved', { timeout: 4000 }), '[C] data.route = curved', (await itemMap(p)).get(KC)?.data?.route)
 		await K.waitIdle(p)
 		const g4 = await K.connector(p, KC)
-		t.check(g4 && onBorder(g4.start, await boxIn(p, A), 2) && onBorder(g4.end, await boxIn(p, B), 2), '[S] die rechtwinklige Route beginnt und endet weiter an den Rändern von A und B (±2)', routeFmt(g4))
+		t.check(g4 && onBorder(g4.start, await boxIn(p, A), 2) && onBorder(g4.end, await boxIn(p, B), 2), '[S] die gebogene Route beginnt und endet weiter an den Rändern von A und B (±2)', routeFmt(g4))
 
 		t.step('Offenes Kontextleisten-Feld: ein Druck auf die Leinwand schließt es (C-1b-02, §6.6 R11)')
 		await checkPanelDismiss(t, p, KC)
@@ -726,7 +785,7 @@ export const E23 = {
 		// fallback: a panel still open lies over the canvas – close it like a user before going back to the line
 		const closed = await closeContextPanels(p)
 		if (closed) t.note(`Kontextleiste: ${closed} offene(s) Feld(er) vor dem Doppelklick geschlossen`)
-		// A and B on one line: the elbow route is horizontal, its middle (where the label goes) lies on it
+		// A and B on one line: the curved route is horizontal (both tangents along it), its middle (where the label goes) lies on it
 		const mid = g4 ? await K.w2s(p, (g4.start.x + g4.end.x) / 2, (g4.start.y + g4.end.y) / 2) : null
 		const atMid = await elementAt(p, mid)
 		if (mid) await p.mouse.dblclick(mid.x, mid.y)
@@ -745,9 +804,9 @@ export const E23 = {
 		await K.waitIdle(p)
 		await settle([p, b.page])
 		const bk = (await itemMap(b.page)).get(KC)
-		t.check(bk?.data?.route === 'elbow' && bk?.data?.label === 'ja' && bk?.style?.endCap === 'dot' && bk?.style?.dash === 'dashed', '[C] bob sieht Route, Endspitze, Strich und Beschriftung', { data: bk?.data, style: bk?.style })
+		t.check(bk?.data?.route === 'curved' && bk?.data?.label === 'ja' && swapped(bk) && bk?.style?.dash === 'dashed', '[C] bob sieht Route, Spitzen, Strich und Beschriftung', { data: bk?.data, style: bk?.style })
 		const sk = (await serverMap('alice', board)).get(KC)
-		t.check(sk?.data?.route === 'elbow' && sk?.data?.label === 'ja' && sk?.style?.endCap === 'dot' && sk?.style?.dash === 'dashed', '[B] beim Server: Route, Endspitze, Strich, Beschriftung', { data: sk?.data, style: sk?.style })
+		t.check(sk?.data?.route === 'curved' && sk?.data?.label === 'ja' && swapped(sk) && sk?.style?.dash === 'dashed', '[B] beim Server: Route, Spitzen, Strich, Beschriftung', { data: sk?.data, style: sk?.style })
 
 		t.step('Ende umhängen: den Endgriff von B auf C ziehen; Strg+Z')
 		t.must(await selectConnector(p, KC), '[S] Verbinder wieder ausgewählt', await K.selection(p))
@@ -1305,7 +1364,7 @@ export const E25 = {
 		await clickWorld(p, o.x + 30, o.y - 8)
 		t.check(sameList((await K.selection(p)) || [], [F]), '[S] Klick ins Titelband wählt den Frame', await K.selection(p))
 		const hs = await K.handles(p)
-		t.check(Array.isArray(hs) && sameList(transformNames(hs), ['b', 'bl', 'br', 'l', 'r', 't', 'tl', 'tr']), '[S] Frame: 8 Griffe, kein Drehgriff', hs?.map((h) => h.name))
+		t.check(Array.isArray(hs) && sameList(transformNames(hs), ['bl', 'br', 'tl', 'tr']), '[S] Frame: 4 Eckgriffe, kein Drehgriff (Job 231)', hs?.map((h) => h.name))
 		t.check(Array.isArray(hs) && plusNames(hs).length === 0 && extraHandles(hs).length === 0, '[S] Frame (nicht bindbar): keine „+“-Griffe und keine anderen Griffe (§6.3)', hs?.map((h) => h.name))
 		let tl = await handleOf(p, 'tl')
 		t.must(tl, '[S] Griff tl vorhanden')
@@ -1349,7 +1408,7 @@ export const E25 = {
 
 export const E26 = {
 	id: 'E26',
-	title: 'Tastatur/A11y: Board öffnen und ohne Klick N → Notiz-Werkzeug; nur Tastatur – Tab wählt Frames zuerst, dann Inhalt nach y/x, nach dem letzten verlässt Tab die Leinwand; Pfeile 1/Umschalt 10; Enter öffnet den Editor; „Anordnen“ setzt B/H/Winkel; zwei Objekte + „Connect“ (per Tastatur) legt einen Verbinder an; „Align items“: ein Tab ins Panel, nach Mausklick schließt das erste Esc nur das Panel; N bei TopBar-Fokus legt nichts an; nach Mausklick auf einen Toolbar-Knopf wirkt N sofort',
+	title: 'Tastatur/A11y: Board öffnen und ohne Klick N → Notiz-Werkzeug; nur Tastatur – Tab wählt Frames zuerst, dann Inhalt nach y/x, nach dem letzten verlässt Tab die Leinwand; Pfeile 1/Umschalt 10; Enter öffnet den Editor; „Anordnen“ setzt B/H/Winkel und klemmt X 20000000 an die Grenze 10000000; zwei Objekte + „Connect“ (per Tastatur) legt einen Verbinder an; „Align items“: ein Tab ins Panel, nach Mausklick schließt das erste Esc nur das Panel; N bei TopBar-Fokus legt nichts an; nach Mausklick auf einen Toolbar-Knopf wirkt N sofort; zuletzt rückt „Anordnen“ mit X 10000000 eine Notiz im Rahmen bei x −100 an den Rand (gespeichert x 10000000, Feld 9999900, kein Toast)',
 	async run(t, world) {
 		const board = await world.board('E26 Tastatur')
 		const [F, N1, N2, N3] = [ulid(), ulid(), ulid(), ulid()]
@@ -1361,6 +1420,8 @@ export const E26 = {
 		])
 		t.must(res.every((x) => x === 'ok'), '[B] Frame und drei Notizen angelegt', res)
 		const a = await world.actor('alice-tasten', { user: 'alice' })
+		// job 146: the clamped "Arrange" shows no toast
+		await recordToasts(a.ctx)
 		const p = a.page
 		p.on('dialog', (d) => d.accept().catch(() => {}))
 		await openBoard(a, board)
@@ -1395,6 +1456,10 @@ export const E26 = {
 		t.note(`Umschalt+Tab zurück: Fokus auf der Leinwand ${await canvasFocused(p)}`)
 
 		t.step('Pfeile: N1 (per Klick ausgewählt, der Klick fokussiert die Leinwand) → 3 × rechts, Umschalt+oben')
+		// job 223: Esc first: the context bar of N3 (still selected from Tab) may lie over N1's centre
+		// at the scale "Show everything" picks now that it keeps clear of the bars
+		await focusCanvas(p)
+		await p.keyboard.press('Escape')
 		await tool(p, 'select')
 		await selectItem(p, N1)
 		t.must(sameList((await K.selection(p)) || [], [N1]) && await canvasFocused(p), '[S] Klick wählt N1 und fokussiert die Leinwand', { sel: await K.selection(p), focus: await canvasFocused(p) })
@@ -1432,6 +1497,30 @@ export const E26 = {
 		await K.waitIdle(p)
 		const n2 = (await itemMap(p)).get(N2)
 		t.check(n2?.w === 260 && n2?.h === 240 && n2?.r === 30, '[C] Anordnen setzt w 260, h 240, r 30', fmt(boxOf(n2)))
+
+		t.step('„Anordnen“ (job 146, R22): X 20000000 + Enter → N2 steht an der Grenze x 10000000, das X-Feld zeigt 10000000, kein Toast; Strg+Z setzt die Lage zurück')
+		const toastsBefore = (await toastsOf(p)).length
+		const xField = p.locator('[data-knorke-field=arrange-x]:visible').first()
+		t.must(await xField.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] Feld [data-knorke-field=arrange-x] sichtbar')
+		const xTag = await xField.evaluate((el) => el.tagName)
+		// the handle stays on the same input: the bar hides once N2 is off screen (job 137)
+		const xInput = await (['INPUT', 'TEXTAREA'].includes(xTag) ? xField : xField.locator('input').first()).elementHandle()
+		await xInput.fill('20000000')
+		await xInput.press('Enter')
+		await K.waitIdle(p)
+		const n2c = (await itemMap(p)).get(N2)
+		t.check(n2c?.x === 1e7 && (n2c?.parent ?? null) === null && n2c?.y === 600, '[C] Anordnen klemmt X 20000000 auf x 10000000 (y bleibt)', fmt(boxOf(n2c)))
+		t.check((await serverMap('alice', board)).get(N2)?.x === 1e7, '[B] beim Server gespeichert bei x 10000000', (await serverMap('alice', board)).get(N2)?.x)
+		const xShown = () => xInput.evaluate((el) => el.value).catch(() => null)
+		t.check(await until(async () => ((await xShown()) === '10000000' ? true : null), { timeout: 3000 }), '[C] das X-Feld zeigt 10000000 (die echte Lage, nicht die Eingabe)', await xShown())
+		await sleep(500)
+		const newToasts = (await toastsOf(p)).slice(toastsBefore)
+		t.check(newToasts.length === 0, '[C] Klemmen ohne Toast', newToasts.map((x) => x.text))
+		await focusCanvas(p)
+		await p.keyboard.press('Control+z')
+		await K.waitIdle(p)
+		const n2r = (await itemMap(p)).get(N2)
+		t.must(n2r?.x === 400 && n2r?.y === 600 && n2r?.w === 260, '[C] Strg+Z: N2 wieder bei x 400 (für die folgenden Schritte)', fmt(boxOf(n2r)))
 		await p.keyboard.press('Escape').catch(() => {})
 
 		t.step('zwei Objekte auswählen (N1, Umschalt+Klick N3) und „Connect“ per Tastatur (Fokus + Enter): ein Verbinder N1 → N3')
@@ -1442,9 +1531,10 @@ export const E26 = {
 		await p.keyboard.up('Shift')
 		const sel2 = (await K.selection(p)) || []
 		t.check(sel2.length === 2 && sel2.includes(N1) && sel2.includes(N3), '[S] Umschalt+Klick: Auswahl [N1, N3]', sel2.map(nameOf))
-		const connectBtn = p.locator('[data-knorke-action=connect]:visible').first()
-		const hasConnect = await connectBtn.waitFor({ state: 'visible', timeout: 4000 }).then(() => true, () => false)
-		t.check(hasConnect, '[C] mit zwei ausgewählten Objekten zeigt die Kontextleiste [data-knorke-action=connect] (WCAG 2.5.7)')
+		// job 230: "Connect" is an entry of the bar's "…"
+		const connectBtn = await barMore(p, 'connect', { timeout: 4000 }).catch(() => null)
+		const hasConnect = connectBtn !== null
+		t.check(hasConnect, '[C] mit zwei ausgewählten Objekten zeigt „…“ der Kontextleiste [data-knorke-action=connect] (WCAG 2.5.7)')
 		if (hasConnect) {
 			const beforeC = await idSet(p)
 			await connectBtn.focus()
@@ -1499,9 +1589,11 @@ export const E26 = {
 			const panel = document.querySelector('[data-knorke-panel=align]')
 			const bar = panel?.closest('.knorke-contextbar')
 			const r = (el) => (el ? el.getBoundingClientRect().toJSON() : null)
-			return { panel: r(panel), bar: r(bar) }
+			return { panel: r(panel), bar: r(bar), side: panel ? panel.getAttribute('data-knorke-panel-side') : null }
 		})
-		t.check(!!boxes.panel && !!boxes.bar && boxes.panel.top >= boxes.bar.bottom - 0.5, '[C] das Panel liegt unter der Leiste wie bisher (Oberkante ≥ Unterkante der Leiste)', boxes)
+		// job 137: the side comes from data-knorke-panel-side; either way the panel does not overlap the bar
+		const sideOk = !!boxes.panel && !!boxes.bar && (boxes.side === 'below' ? boxes.panel.top >= boxes.bar.bottom - 0.5 : boxes.side === 'above' && boxes.panel.bottom <= boxes.bar.top + 0.5)
+		t.check(sideOk, '[C] das Panel liegt auf der Seite aus data-knorke-panel-side (above: Unterkante ≤ Oberkante der Leiste, below: Oberkante ≥ Unterkante der Leiste), ohne Überlappung mit der Leiste', boxes)
 		// (b) pointer: a click on a command gives the focus back to the canvas, the panel stays open
 		if (!(await alignPanel.first().isVisible().catch(() => false))) await alignBtn.click()
 		const leftBtn = p.locator('[data-knorke-align=left]:visible').first()
@@ -1554,6 +1646,41 @@ export const E26 = {
 		t.check(created, '[S] ein Klick legt danach eine Notiz an')
 		if (await editor(p).isVisible().catch(() => false)) await p.keyboard.press('Escape')
 		await K.waitIdle(p).catch(() => {})
+
+		// last step (job 160): its items come only now, so the Tab order above stays as it is
+		t.step('„Anordnen“ im Rahmen (job 160): Rahmen RF bei x −100 (abseits), darin Notiz NF; X 10000000 + Enter → NF gespeichert bei x 10000000 (relativ, parent RF), das X-Feld zeigt 9999900, kein Toast')
+		const [RF, NF] = [ulid(), ulid()]
+		const resF = await seedOps('alice', board, [
+			put.frame(RF, { x: -100, y: 1600, w: 600, h: 400, data: { title: 'Rand' } }),
+			put.sticky(NF, { parent: RF, x: 50, y: 50, data: { text: 'im Rahmen' } }),
+		])
+		t.must(resF.every((x) => x === 'ok'), '[B] Rahmen RF bei x −100 und die Notiz NF darin angelegt', resF)
+		t.must(await until(async () => ((await itemMap(p)).get(NF)?.parent === RF ? true : null), { timeout: 10000 }), '[C] RF und NF kommen bei alice an', (await itemMap(p)).get(NF))
+		await p.keyboard.press('Escape').catch(() => {})
+		await tool(p, 'select')
+		await fitAll(p)
+		await selectItem(p, NF)
+		t.must(sameList((await K.selection(p)) || [], [NF]), '[S] Klick wählt NF (die Notiz im Rahmen)', await K.selection(p))
+		const toastsBeforeF = (await toastsOf(p)).length
+		await action(p, 'arrange')
+		const xFieldF = p.locator('[data-knorke-field=arrange-x]:visible').first()
+		t.must(await xFieldF.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] Feld [data-knorke-field=arrange-x] sichtbar (NF)')
+		const xTagF = await xFieldF.evaluate((el) => el.tagName)
+		// the handle stays on the same input: the bar hides once NF is off screen (job 137)
+		const xInputF = await (['INPUT', 'TEXTAREA'].includes(xTagF) ? xFieldF : xFieldF.locator('input').first()).elementHandle()
+		await xInputF.fill('10000000')
+		await xInputF.press('Enter')
+		await K.waitIdle(p)
+		const nf = (await itemMap(p)).get(NF)
+		t.check(nf?.x === 1e7 && nf?.y === 50 && nf?.parent === RF, '[C] Anordnen klemmt NF auf die gespeicherte Lage x 10000000 (relativ zu RF, y bleibt, parent RF)', { x: nf?.x, y: nf?.y, parent: nf?.parent === RF ? 'RF' : nf?.parent })
+		const nfServer = (await serverMap('alice', board)).get(NF)
+		t.check(nfServer?.x === 1e7 && nfServer?.parent === RF, '[B] beim Server gespeichert bei x 10000000 mit RF als parent', { x: nfServer?.x, parent: nfServer?.parent === RF ? 'RF' : nfServer?.parent })
+		const xShownF = () => xInputF.evaluate((el) => el.value).catch(() => null)
+		t.check(await until(async () => ((await xShownF()) === '9999900' ? true : null), { timeout: 3000 }), '[C] das X-Feld zeigt 9999900 (die absolute Lage am Rand, nicht die Eingabe)', await xShownF())
+		await sleep(500)
+		const newToastsF = (await toastsOf(p)).slice(toastsBeforeF)
+		t.check(newToastsF.length === 0, '[C] an den Rand ohne Toast (kein „Position could not be set“)', newToastsF.map((x) => x.text))
+		await p.keyboard.press('Escape').catch(() => {})
 		await world.drop(a)
 	},
 }

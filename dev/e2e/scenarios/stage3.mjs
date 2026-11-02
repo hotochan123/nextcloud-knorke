@@ -63,7 +63,7 @@
  * page.waitForFunction (Nextcloud's CSP, ENTWICKLUNG trap 9.10).
  */
 import {
-	K, APP, PHONE, TABLET, api, waitReady, until, sleep, openBoard, action, field, bannerVisible, CANVAS, put, ulid, seedOps, worldAt,
+	K, APP, PHONE, TABLET, api, waitReady, until, sleep, openBoard, action, field, bannerVisible, CANVAS, put, ulid, seedOps, worldAt, zoomToFrame,
 } from '../lib/harness.mjs'
 import { bridge } from '../lib/bridge.mjs'
 import { collectBars, checkBars } from '../lib/bars.mjs'
@@ -284,7 +284,12 @@ async function centerOn(page, wx, wy) {
 	return false
 }
 
-/** Pans a desktop page with the wheel (no Ctrl = pan, M0 E10) at the canvas centre. */
+/**
+ * Pans a desktop page with the wheel (no Ctrl) at the canvas centre. Since job
+ * 154 a page.mouse.wheel event with deltaX 0 counts as a notch under
+ * "Mouse wheel: Automatic" and zooms: E33's actors pan in the stage Pan
+ * (newActor wheel: 'pan').
+ */
 async function wheelPan(page, dx, dy, steps = 5) {
 	const box = await canvasBox(page)
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -781,10 +786,11 @@ export const E33 = {
 			put.sticky(NF, { parent: F, x: 300, y: 150, w: 200, h: 200, data: { text: 'Im Frame' } }),
 		])
 		t.must(res.every((x) => x === 'ok'), '[B] Vorbedingung: acht Notizen (200 × 200), ein Frame mit einer Notiz', res)
-		const a = await world.actor('alice-folgen', { user: 'alice', reducedMotion: 'reduce' })
+		// alice and bob pan with the wheel: the stage Pan (job 154)
+		const a = await world.actor('alice-folgen', { user: 'alice', reducedMotion: 'reduce', wheel: 'pan' })
 		await openBoard(a, board)
 		t.must(voting(await featuresOf(a.page)), '[C] FEATURES.voting (Stufe 3)')
-		const b = await world.actor('bob-folgen', { user: 'bob', reducedMotion: 'reduce' })
+		const b = await world.actor('bob-folgen', { user: 'bob', reducedMotion: 'reduce', wheel: 'pan' })
 		await joinAsMember(b, L)
 		const g = await world.actor('gina-folgen', { touch: true, reducedMotion: 'reduce' })
 		await joinAsGuest(g, L, 'Gina')
@@ -892,10 +898,8 @@ export const E33 = {
 		t.step('alice schaltet auf „Edit“: Frame-Liste und Umschalt+2')
 		await a.page.locator('[data-knorke-action=vote-mode]').first().click()
 		t.check(await until(async () => (await K.state(a.page)).uiMode === 'edit', { timeout: 3000 }), '[C] alice: vote-mode → uiMode edit', await K.state(a.page))
-		await a.page.locator('[data-knorke-action=frames]').first().click()
-		const fl = a.page.locator('[data-knorke-frame-list]').first()
-		t.check(await fl.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] [data-knorke-frame-list] geöffnet (Knopf „Frames“)')
-		await fl.locator(`[data-knorke-frame="${F}"]`).first().click()
+		// job 229: the frame list is the level "Frames" of the zoom menu
+		t.check(await zoomToFrame(a.page, F).then(() => true, () => false), '[C] Zoom-Menü › Frames › der Frame (Einträge [data-knorke-frame])')
 		const fr = await until(async () => { const r = await hitRect(a.page, F); return r && r.inside ? r : null }, { timeout: 3000 })
 		t.check(fr, '[C] Frame-Liste bringt den Frame ins Bild', await hitRect(a.page, F))
 		const nf = await hitRect(a.page, NF)

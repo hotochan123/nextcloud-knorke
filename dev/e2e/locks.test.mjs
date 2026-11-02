@@ -11,9 +11,11 @@
  *   the ten steps with their hooks (lock/unlock actions, the badge, the
  *   menu entry, the toasts lock-delete and lock-undo, Ctrl+Shift+L, LOD 2
  *   and scene().locks; job 044: step (9), bob's board menu without and
- *   alice's with unlock-all, the toast unlock-all, Ctrl+Z; job 062: step
- *   (10), bob's locks on A and C over the API, unlock-by on A, the board
- *   menu inside F ending on unlock-frame, unlock-all)
+ *   alice's with unlock-all, the toast unlock-all, Ctrl+Z (job 152: every
+ *   item with its lock.by of before, bob unlocks one of his in the bar);
+ *   job 062: step (10), its precondition and bob's locks on A and C over
+ *   the API, unlock-by on A, the board menu inside F ending on
+ *   unlock-frame, unlock-all)
  * - E41@390x844: a 60-character locker name, the badge cut and in the
  *   viewport, Unlock at least 44 × 44; bob's display name put back in
  *   `finally`
@@ -66,12 +68,17 @@ test('E41: alice on her own board, bob as an account through the edit link; the 
 	assert.match(nine, /pb\.locator\('\[data-knorke-menu-item=unlock-all\]'\)\.count\(\) === 0/, 'bob has no unlock-all')
 	assert.match(nine, /pa\.locator\('\[data-knorke-menu-item=unlock-all\]'\)\.first\(\)\.click\(\)/, 'alice clicks unlock-all')
 	assert.match(nine, /\.locks \?\? -1\) === 0/, 'bob: scene().locks = 0')
-	assert.match(nine, /pa\.keyboard\.press\('Control\+z'\)[\s\S]*i\.lock\?\.by === alicePid/, 'Ctrl+Z locks in alice\'s name')
+	// job 152: Ctrl+Z gives every item back the lock.by it had before "Unlock all"; bob unlocks one of his in the bar
+	assert.match(nine, /const by9 = new Map\(\[\.\.\.s9\.values\(\)\]\.map\(\(i\) => \[i\.id, i\.lock\?\.by \?\? null\]\)\)[\s\S]*pa\.locator\('\[data-knorke-menu-item=unlock-all\]'\)/, 'lock.by of every item before unlock-all')
+	assert.match(nine, /pa\.keyboard\.press\('Control\+z'\)[\s\S]*\(i\.lock\.by \?\? null\) === by9\.get\(i\.id\)/, 'Ctrl+Z: each item with the lock.by of before')
+	assert.match(nine, /\[\.\.\.by9\.values\(\)\]\.includes\(alicePid\) && \[\.\.\.by9\.values\(\)\]\.includes\(bobState\.pid\)/, 'alice\'s and bob\'s items among them')
+	assert.match(nine, /selectItem\(pb, bobsItem\)[\s\S]*\[data-knorke-lock-badge=mine\][\s\S]*barMore\(pb, 'unlock'\)[\s\S]*unlock9\.click\(\)[\s\S]*get\(bobsItem\)\?\.lock === null/, 'bob: badge mine, Unlock in the bar frees it on the server')
 	// job 062, step (10): after (9), in the same board
 	const ten = src.slice(src.indexOf("t.step('(10) "), src.indexOf('await world.drop(bob)'))
 	assert.ok(src.indexOf("t.step('(10) ") > src.indexOf("t.step('(9) "), '(10) after (9)')
 	assert.ok(ten.length > 0 && !ten.includes('world.board('), 'the same board')
-	assert.match(ten, /seedOps\('alice', board, \[A, C\]\.map\(\(id\) => \(\{ o: 'patch', id, p: \{ lock: null \} \}\)\)\)/, 'alice unlocks A and C over the API')
+	assert.match(ten, /seedOps\('alice', board, live10\.flatMap\(\(id\) => \[A, C\]\.includes\(id\)\n\t\t\t\? \[\{ o: 'patch', id, p: \{ lock: null \} \}\]\n\t\t\t: \[\{ o: 'patch', id, p: \{ lock: null \} \}, lockOp\(id\)\]\)\)/,
+		'job 152: over the API alice locks every item but A and C in her name and unlocks A and C')
 	assert.match(ten, /seedOps\('bob', board, \[lockOp\(A\), lockOp\(C\)\]\)/, 'bob locks A and C over the API')
 	assert.match(ten, /\[B\] \(10\) A und C tragen lock\.by = bobs pid/)
 	assert.match(ten, /\[B\] \(10\) F und die übrigen lebenden Objekte tragen lock\.by = alices pid/)
@@ -81,7 +88,7 @@ test('E41: alice on her own board, bob as an account through the edit link; the 
 	assert.match(ten, /pa\.locator\('\[data-knorke-menu-item=unlock-by\]'\)\.first\(\)\.click\(\)[\s\S]*\[data-knorke-toast=unlock-all\]/, 'a click, then the toast unlock-all')
 	assert.match(ten, /screenOf\(pa, 1300, 400\)[\s\S]*canvasAt\(pa, inF\.x, inF\.y\)[\s\S]*\{ button: 'right' \}/, 'the free inside of F at world (1300, 400), checked first')
 	assert.match(ten, /getAttribute\('data-knorke-menu-target'\)\) === '',/, 'the board menu')
-	assert.match(ten, /names10\.slice\(-2\)\.join\(','\) === 'unlock-frame,unlock-all'/, 'the last two entries')
+	assert.match(ten, /names10\.filter\(\(x\) => x\.startsWith\('unlock'\)\)\.join\(','\) === 'unlock-frame,unlock-all' && names10\.at\(-1\) === 'grid'/, 'job 230: the mass unlocks right before "Show grid"')
 	assert.match(ten, /pa\.locator\('\[data-knorke-menu-item=unlock-frame\]'\)\.first\(\)\.click\(\)[\s\S]*get\(F\)\?\.lock === null/, 'unlock-frame unlocks F')
 	assert.match(src, /keyboard\.press\('Control\+Shift\+L'\)/)
 	assert.match(src, /keyboard\.press\('Control\+z'\)[\s\S]*keyboard\.press\('Control\+Shift\+z'\)/)

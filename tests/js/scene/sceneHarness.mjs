@@ -14,6 +14,13 @@
  * coarseTitleAt() answers from the title rectangles of the last
  * paintStubCoarse(): the real planCoarse/paintCoarse of the whole board on
  * a recording context whose glyphs are GLYPH · font size wide (R14-13).
+ * (job 158) measureTitleWidth(text) answers GLYPH · FRAME_TITLE_SIZE per
+ * code point (14 world px), coarseTitleWidth(id) the width of id's
+ * rectangle of the last paintStubCoarse() (null without one).
+ * (job 177) measureShapeLines(item, abs) wraps the shape's text like
+ * fakeTextHeight at its inner text box (nodes/shape.js shapeTextAttrs: width
+ * and font size) and answers the line widths, GLYPH · font size per
+ * character (fakeLineWidths; no cut at the box's height).
  * voteDrawn() answers what setStubVoteDrawn() set (undefined after every
  * setupScene: nothing painted), the counters of a badge painting (stage 3).
  * stats() carries the overscan setStubOverscan() set (M2, job 034; none
@@ -23,6 +30,8 @@ import { KonvaRenderer } from '../../../src/scene/KonvaRenderer.js'
 import { coarseOrder, coarseTitleHit, paintCoarse, planCoarse } from '../../../src/scene/nodes/coarse.js'
 import { SceneManager } from '../../../src/scene/SceneManager.js'
 import { SceneModel } from '../../../src/model/SceneModel.js'
+import { shapeTextAttrs } from '../../../src/scene/nodes/shape.js'
+import { FRAME_TITLE_SIZE } from '../../../src/model/tokens.js'
 import { dispatch, installDom } from './fakeDom.mjs'
 
 /** Every call on the stubbed renderer: [name, ...args]. */
@@ -80,11 +89,40 @@ export function paintStubCoarse(model, scale) {
 		strokeRect() {},
 		fillText() {},
 	}
+	// job 202: outlines, lines and caps paint into nothing
+	for (const k of ['beginPath', 'moveTo', 'lineTo', 'bezierCurveTo', 'quadraticCurveTo', 'arcTo', 'arc', 'ellipse', 'rect',
+		'closePath', 'fill', 'stroke', 'save', 'restore', 'translate', 'rotate', 'setLineDash', 'setAttr']) ctx[k] = () => {}
 	const hits = model.query(-1e12, -1e12, 1e12, 1e12)
-	const plan = planCoarse(model, hits, () => false, coarseOrder(model))
+	const plan = planCoarse(model, hits, () => false, coarseOrder(model), null, scale)
 	stubTitleRects = []
 	paintCoarse(ctx, plan, scale, new Map(), stubTitleRects)
 	return stubTitleRects.slice()
+}
+
+/**
+ * (job 177) Deterministic line layout: greedy word wrap at width w with GLYPH · fs per character.
+ *
+ * @param {string} text text
+ * @param {number} fs font size
+ * @param {number} w wrap width
+ * @return {number[]} widths of the lines, top first
+ */
+export function fakeLineWidths(text, fs, w) {
+	const widths = []
+	for (const para of text.split('\n')) {
+		let cur = 0
+		for (const word of para.split(' ')) {
+			const ww = word.length * GLYPH * fs
+			if (cur > 0 && cur + GLYPH * fs + ww > w) {
+				widths.push(cur)
+				cur = ww
+			} else {
+				cur += (cur > 0 ? GLYPH * fs : 0) + ww
+			}
+		}
+		widths.push(cur)
+	}
+	return widths
 }
 
 /**
@@ -95,23 +133,20 @@ export function paintStubCoarse(model, scale) {
  */
 export function fakeTextHeight(item) {
 	const fs = Number.isInteger(item?.style?.fontSize) ? item.style.fontSize : 24
-	const w = item?.w ?? 0
 	const text = typeof item?.data?.text === 'string' ? item.data.text : ''
-	let lines = 0
-	for (const para of text.split('\n')) {
-		let cur = 0
-		lines++
-		for (const word of para.split(' ')) {
-			const ww = word.length * GLYPH * fs
-			if (cur > 0 && cur + GLYPH * fs + ww > w) {
-				lines++
-				cur = ww
-			} else {
-				cur += (cur > 0 ? GLYPH * fs : 0) + ww
-			}
-		}
-	}
-	return lines * fs * 1.2
+	return fakeLineWidths(text, fs, item?.w ?? 0).length * fs * 1.2
+}
+
+/**
+ * (job 177) The stub of renderer.measureShapeLines: the shape's text wrapped at its inner text box.
+ *
+ * @param {object} item shape WireItem
+ * @param {{w:number, h:number}} abs absolute box
+ * @return {number[]} widths of the lines, top first
+ */
+export function fakeShapeLines(item, abs) {
+	const a = shapeTextAttrs(item, abs)
+	return fakeLineWidths(a.text, a.fontSize, a.width)
 }
 
 /** Replaces every KonvaRenderer member with a recording stub (idempotent). */
@@ -125,9 +160,12 @@ export function stubRenderer() {
 			...(stubOverscan !== undefined ? { overscan: stubOverscan } : {}),
 		}),
 		measureTextHeight: (item) => fakeTextHeight(item),
+		measureShapeLines: (item, abs) => fakeShapeLines(item, abs),
 		lodLevel: () => stubLod,
 		lodAt: () => stubLod,
 		coarseTitleAt: (wx, wy, tol) => coarseTitleHit(stubTitleRects, wx, wy, tol),
+		measureTitleWidth: (text) => Array.from(typeof text === 'string' ? text : '').length * GLYPH * FRAME_TITLE_SIZE,
+		coarseTitleWidth: (id) => stubTitleRects.find((r) => r.id === id)?.w ?? null,
 		voteDrawn: () => stubVoteDrawn,
 	}
 	for (const name of Object.getOwnPropertyNames(proto)) {
@@ -171,8 +209,9 @@ export function callsOf(name) {
  * origin, scale 1 after one frame).
  *
  * @param {object[]} items WireItems
- * @param {object} [opts] {scene: SceneManager options, on: {callback name: fn}}; every callback
- *   except onCamera and onPointer is added to the log, every one is handed to opts.on
+ * @param {object} [opts] {scene: SceneManager options, on: {callback name: fn}, viewInsets: fn}; every callback
+ *   except onCamera, onPointer, onSelectionBox, onTouchPan and onLockedOffer (job 190) is added to the log,
+ *   every one is handed to opts.on; (job 223) opts.viewInsets becomes the asked callback viewInsets as it is
  * @return {object} {dom, container, model, scene, log, frame, key, pointer, focusCanvas, restore}
  */
 export function setupScene(items, opts = {}) {
@@ -190,15 +229,19 @@ export function setupScene(items, opts = {}) {
 	const model = new SceneModel()
 	model.load(items)
 	const log = []
-	const names = ['onIntent', 'onSelection', 'onCamera', 'onUserCamera', 'onPointer', 'onActivity', 'onDragPreview', 'onEditing', 'onTool', 'onGrid']
+	// job 171: onLaser too (only the laser tool calls it, so other logs stay as they were)
+	// job 195: onNodeFocus (only a mind map calls it)
+	const names = ['onIntent', 'onSelection', 'onCamera', 'onUserCamera', 'onPointer', 'onActivity', 'onDragPreview', 'onEditing', 'onTool', 'onGrid', 'onSelectionBox', 'onTouchPan', 'onShortcuts', 'onCursors', 'onLaser', 'onLockedOffer', 'onNodeFocus', 'onSearch']
 	const callbacks = {}
 	for (const n of names) {
 		callbacks[n] = (...args) => {
-			// onCamera and onPointer are frequent: not logged, only handed to opts.on
-			if (n !== 'onCamera' && n !== 'onPointer') log.push([n, ...args])
+			// onCamera, onPointer and onSelectionBox (job 137) are frequent: not logged, only handed to opts.on;
+			// onTouchPan (job 142) and onLockedOffer (job 190) neither, so the logs of other tests stay as they were
+			if (n !== 'onCamera' && n !== 'onPointer' && n !== 'onSelectionBox' && n !== 'onTouchPan' && n !== 'onLockedOffer') log.push([n, ...args])
 			opts.on?.[n]?.(...args)
 		}
 	}
+	if (opts.viewInsets) callbacks.viewInsets = opts.viewInsets
 	const scene = new SceneManager(container, model, { limits: { maxText: 6000, maxTitle: 200 }, ...opts.scene, callbacks })
 	scene.mount()
 	scene.setCamera({ x: 0, y: 0, scale: 1 })

@@ -11,9 +11,10 @@
  *   (1) bob selects A and clicks [data-knorke-action=lock]: serverItems()
  *       shows A with lock.by = bob's pid; alice's scene paints a lock
  *       (scene().locks ≥ 1);
- *   (2) bob drags A by 100 px with the mouse: A stays (locally and on the
- *       server); handles() has no transformer handle; a double click opens
- *       no editor;
+ *   (2) bob's mouse drag from A over C (job 151: a marquee, as on empty
+ *       canvas) selects only C, A stays (locally and on the server); a click
+ *       selects A again, handles() has no transformer handle; a double
+ *       click opens no editor;
  *   (3) bob: Ctrl+A selects everything but A; a marquee over A and C
  *       selects only C; a click on A and Shift+click on B select both, Del
  *       deletes only B and [data-knorke-toast=lock-delete] appears;
@@ -33,8 +34,14 @@
  *       [data-knorke-menu-item=unlock-all]; alice's board menu has it, a
  *       click shows [data-knorke-toast=unlock-all], the server holds every
  *       item unlocked and bob's scene paints no lock (scene().locks = 0);
- *       alice's Ctrl+Z locks the same items again, now in her name;
- *  (10) (job 062) over the API alice unlocks A and C and bob locks them;
+ *       alice's Ctrl+Z locks the same items again, (job 152) each with the
+ *       lock.by it had before "Unlock all" (bob's items bob's pid, alice's
+ *       hers); bob selects one of his: the bar shows
+ *       [data-knorke-lock-badge=mine], and Unlock in the bar frees it on the
+ *       server;
+ *  (10) (job 062) over the API alice locks every item but A and C (job 152:
+ *       the precondition of (10) is no longer left by (9)), unlocks A and C,
+ *       and bob locks them;
  *       alice right-clicks A: [data-knorke-menu-item=unlock-by] names bob,
  *       a click shows [data-knorke-toast=unlock-all], the server holds A
  *       and C unlocked and every other item still locked by alice (F too);
@@ -57,7 +64,7 @@
  */
 import {
 	K, APP, BASE, ENV, PHONE, CANVAS, api, put, ulid, seedOps, serverMap, itemMap, openBoard, waitReady, until, sleep, centerOf, selectItem,
-	dragItem, dragPath, settle, TRANSFORM_HANDLES,
+	dragItem, dragPath, settle, TRANSFORM_HANDLES, barMore,
 } from '../lib/harness.mjs'
 
 /** Width of the phone pass's long display name (SPEC job 023 AK13). */
@@ -116,7 +123,7 @@ const lockOp = (id) => ({ o: 'patch', id, p: { lock: { by: 'e41', name: 'E41' } 
 
 export const E41 = {
 	id: 'E41',
-	title: 'Sperren (Job 023): bob sperrt über die Leiste, Ziehen/Griffe/Editor gesperrt, Strg+A und Rahmen lassen gesperrte aus, Entf löscht nur Freies (lock-delete), alice sieht Etikett und Menü mit bobs Namen und entsperrt, Strg+Umschalt+L mit Undo/Redo, gesperrter Frame bleibt fest mit freiem Inhalt, Undo überspringt (lock-undo), Schloss in LOD 2, „Unlock all“ nur für alice (Job 044) mit Undo in ihrem Namen, „Unlock all locked by …“ hebt nur bobs Sperren auf und das Board-Menü im Inneren von F bietet „Unlock all in this frame“ (Job 062)',
+	title: 'Sperren (Job 023): bob sperrt über die Leiste, ein Zug von A aus zieht einen Rahmen und wählt nur C (Job 151), Griffe/Editor gesperrt, Strg+A und Rahmen lassen gesperrte aus, Entf löscht nur Freies (lock-delete), alice sieht Etikett und Menü mit bobs Namen und entsperrt, Strg+Umschalt+L mit Undo/Redo, gesperrter Frame bleibt fest mit freiem Inhalt, Undo überspringt (lock-undo), Schloss in LOD 2, „Unlock all“ nur für alice (Job 044), Undo sperrt jedes Objekt wieder für seinen Sperrenden (Job 152), „Unlock all locked by …“ hebt nur bobs Sperren auf und das Board-Menü im Inneren von F bietet „Unlock all in this frame“ (Job 062)',
 	async run(t, world) {
 		const board = await world.board('E41 Sperren')
 		const [A, B, C, D, E, F] = [ulid(), ulid(), ulid(), ulid(), ulid(), ulid()]
@@ -144,8 +151,10 @@ export const E41 = {
 
 		t.step('(1) bob wählt A und klickt Lock')
 		await selectItem(pb, A)
-		t.must(await appears(pb, '[data-knorke-action=lock]'), '[C] (1) Lock ist in der Kontextleiste sichtbar')
-		await pb.locator('[data-knorke-action=lock]').first().click()
+		// job 230: Lock is an entry of the bar's "…"
+		const lock1 = await barMore(pb, 'lock').catch(() => null)
+		t.must(lock1 !== null, '[C] (1) Lock ist im Menü „…“ der Kontextleiste sichtbar')
+		await lock1.click()
 		await settle([pa, pb])
 		const s1 = await serverMap('alice', board)
 		t.check(s1.get(A)?.lock?.by === bobState.pid && s1.get(A)?.lock?.name === bobName, '[B] (1) serverItems: A trägt lock.by = bobs pid und seinen Namen', s1.get(A)?.lock)
@@ -153,14 +162,18 @@ export const E41 = {
 		t.check(fromServer?.lock?.by === bobState.pid, '[C] (1) __knorke.serverItems() bei bob zeigt dieselbe Sperre', fromServer?.lock)
 		t.check(await until(async () => ((await K.scene(pa))?.locks ?? 0) >= 1, { timeout: 5000 }), '[S] (1) bei alice malt die Szene ein Schloss (scene().locks ≥ 1)', await K.scene(pa))
 
-		t.step('(2) bob zieht A um 100 px, prüft Griffe und Doppelklick')
+		t.step('(2) bob zieht mit der Maus von A aus über C (Job 151: ein Rahmen), prüft Griffe und Doppelklick')
 		const a0 = await K.rect(pb, A)
-		await dragItem(pb, A, { dx: 100, dy: 0 })
+		await dragItem(pb, A, { to: await screenOf(pb, 400, 150) })
 		await settle([pa, pb])
 		const a1 = await K.rect(pb, A)
 		const s2 = await serverMap('alice', board)
+		const sel2 = (await K.selection(pb)) || []
+		t.check(sel2.length === 1 && sel2[0] === C, '[S] (2) bobs Mauszug von A aus über C wählt nur C (ein Rahmen wie auf leerer Fläche)', sel2)
 		t.check(a0 && a1 && Math.abs(a1.x - a0.x) < 1 && Math.abs(a1.y - a0.y) < 1, '[S] (2) A bleibt lokal an seiner Stelle', { vorher: a0, nachher: a1 })
 		t.check(s2.get(A)?.x === s1.get(A)?.x && s2.get(A)?.y === s1.get(A)?.y, '[B] (2) A bleibt beim Server an seiner Stelle', { vorher: [s1.get(A)?.x, s1.get(A)?.y], nachher: [s2.get(A)?.x, s2.get(A)?.y] })
+		await selectItem(pb, A)
+		t.must(sameIds((await K.selection(pb)) || [], [A]), '[S] (2) ein Klick auf A wählt A wieder', await K.selection(pb))
 		const hs = (await K.handles(pb)) || []
 		t.check(Array.isArray(await K.handles(pb)) && !hs.some((h) => TRANSFORM_HANDLES.includes(h.name)), '[S] (2) handles() enthält keinen Transformer-Griff', hs.map((h) => h.name))
 		const ca = await centerOf(pb, A)
@@ -207,8 +220,9 @@ export const E41 = {
 		t.check(entry.includes(bobName), '[C] (4) der Eintrag nennt bob', entry)
 		await pa.keyboard.press('Escape')
 		await until(async () => !(await pa.locator('[data-knorke-menu=context]').first().isVisible().catch(() => false)), { timeout: 2000 })
-		t.must(await appears(pa, '[data-knorke-action=unlock]'), '[C] (4) Unlock ist in alices Leiste sichtbar')
-		await pa.locator('[data-knorke-action=unlock]').first().click()
+		const unlock4 = await barMore(pa, 'unlock').catch(() => null)
+		t.must(unlock4 !== null, '[C] (4) Unlock ist in alices Menü „…“ sichtbar')
+		await unlock4.click()
 		await settle([pa, pb])
 		t.check(await until(async () => (await lockIn(pb, A)) === null, { timeout: 5000 }), '[C] (4) bei bob ist A danach entsperrt', await lockIn(pb, A))
 
@@ -231,7 +245,7 @@ export const E41 = {
 		t.must(await canvasAt(pa, title.x, title.y), '[D] (6) der Titel von F liegt frei auf der Leinwand', title)
 		await pa.mouse.click(title.x, title.y)
 		t.check(sameIds((await K.selection(pa)) || [], [F]), '[S] (6) ein Klick auf den Titel wählt F', await K.selection(pa))
-		await pa.locator('[data-knorke-action=lock]').first().click()
+		await (await barMore(pa, 'lock')).click()
 		await settle([pa, pb])
 		t.check(await until(async () => (await lockIn(pb, F)) !== null && (await lockIn(pb, F)) !== undefined, { timeout: 5000 }), '[C] (6) bei bob ist F gesperrt', await lockIn(pb, F))
 		await pb.keyboard.press('Escape')
@@ -258,7 +272,7 @@ export const E41 = {
 		const d0 = (await serverMap('alice', board)).get(D)
 		t.must(d0 && dStart && d0.x !== dStart.x, '[B] (7) Vorbedingung: bobs Verschieben von D ist beim Server angekommen', { vorher: dStart?.x, nachher: d0?.x })
 		await selectItem(pa, D)
-		await pa.locator('[data-knorke-action=lock]').first().click()
+		await (await barMore(pa, 'lock')).click()
 		await settle([pa, pb])
 		t.must(await until(async () => (await lockIn(pb, D)) !== null && (await lockIn(pb, D)) !== undefined, { timeout: 5000 }), '[C] (7) bei bob ist D gesperrt', await lockIn(pb, D))
 		await pb.locator(CANVAS).first().focus()
@@ -281,7 +295,7 @@ export const E41 = {
 		t.must(s8, '[D] (8) alice ist in LOD 2', await K.scene(pa))
 		t.check(await until(async () => ((await K.scene(pa))?.locks ?? 0) >= 1, { timeout: 3000 }), '[S] (8) auch in LOD 2 malt die Szene Schlösser (scene().locks ≥ 1)', await K.scene(pa))
 
-		t.step('(9) bob sperrt alles mit Strg+A und Strg+Umschalt+L; nur alice hat „Unlock all“ im Board-Menü, Strg+Z sperrt in ihrem Namen')
+		t.step('(9) bob sperrt alles mit Strg+A und Strg+Umschalt+L; nur alice hat „Unlock all“ im Board-Menü, Strg+Z sperrt jedes Objekt wieder für seinen Sperrenden (Job 152)')
 		await pa.locator(CANVAS).first().focus()
 		await pa.keyboard.press('Shift+Digit1')
 		await pb.locator(CANVAS).first().focus()
@@ -293,6 +307,8 @@ export const E41 = {
 		let s9 = await serverMap('alice', board)
 		await until(async () => allLocked(s9 = await serverMap('alice', board)), { timeout: 5000 })
 		const live9 = [...s9.keys()]
+		/** lock.by of every live item before "Unlock all" (job 152) */
+		const by9 = new Map([...s9.values()].map((i) => [i.id, i.lock?.by ?? null]))
 		t.check(allLocked(s9) && [...s9.values()].some((i) => i.lock?.by === bobState.pid), '[B] (9) jedes lebende Objekt ist gesperrt, mindestens eines von bob', [...s9.values()].map((i) => [i.id.slice(-4), i.lock?.by ?? null]))
 		const empty = { x: 800, y: 420 }
 		const eb = await screenOf(pb, empty.x, empty.y)
@@ -320,16 +336,40 @@ export const E41 = {
 		await pa.locator(CANVAS).first().focus()
 		await pa.keyboard.press('Control+z')
 		await settle([pa, pb])
+		const asBefore = (s) => sameIds([...s.keys()], live9) && [...s.values()].every((i) => i.lock !== null && typeof i.lock === 'object' && (i.lock.by ?? null) === by9.get(i.id))
 		let s9c = await serverMap('alice', board)
-		await until(async () => [...(s9c = await serverMap('alice', board)).values()].every((i) => i.lock?.by === alicePid), { timeout: 5000 })
-		t.check(sameIds([...s9c.keys()], live9) && [...s9c.values()].every((i) => i.lock?.by === alicePid), '[B] (9) nach Strg+Z sind dieselben Objekte gesperrt, jetzt mit lock.by = alices pid', [...s9c.values()].map((i) => [i.id.slice(-4), i.lock?.by ?? null]))
+		await until(async () => asBefore(s9c = await serverMap('alice', board)), { timeout: 5000 })
+		t.check(asBefore(s9c) && [...by9.values()].includes(alicePid) && [...by9.values()].includes(bobState.pid),
+			'[B] (9) nach Strg+Z trägt jedes Objekt wieder den lock.by von vor „Unlock all“: bobs Objekte bobs pid, alices Objekte alices pid (Job 152)',
+			{ vorher: [...by9].map(([id, by]) => [id.slice(-4), by]), nachher: [...s9c.values()].map((i) => [i.id.slice(-4), i.lock?.by ?? null]) })
+		const bobsItem = [C, E, ...live9].find((id) => by9.get(id) === bobState.pid)
+		t.must(typeof bobsItem === 'string', '[D] (9) ein Objekt, das bob gesperrt hatte', [...by9])
+		t.must(await until(async () => (await lockIn(pb, bobsItem))?.by === bobState.pid, { timeout: 8000 }), '[D] (9) bobs Client kennt seine wiederhergestellte Sperre', await lockIn(pb, bobsItem))
+		await pb.locator(CANVAS).first().focus()
+		await pb.keyboard.press('Shift+Digit1')
+		await K.waitIdle(pb)
+		await selectItem(pb, bobsItem)
+		t.must(sameIds((await K.selection(pb)) || [], [bobsItem]), '[S] (9) bob wählt eines seiner Objekte', await K.selection(pb))
+		t.check(await appears(pb, '[data-knorke-lock-badge=mine]', 3000), '[C] (9) bobs Leiste zeigt [data-knorke-lock-badge=mine]: die Sperre ist wieder seine')
+		const unlock9 = await barMore(pb, 'unlock').catch(() => null)
+		t.must(unlock9 !== null, '[C] (9) Unlock ist in bobs Menü „…“ sichtbar')
+		await unlock9.click()
+		await settle([pa, pb])
+		let s9d = await serverMap('alice', board)
+		await until(async () => (s9d = await serverMap('alice', board)).get(bobsItem)?.lock === null, { timeout: 5000 })
+		t.check(s9d.get(bobsItem)?.lock === null, '[B] (9) „Unlock“ in bobs Leiste macht es beim Server frei (lock = null)', s9d.get(bobsItem)?.lock)
+		await pb.keyboard.press('Escape')
 
 		t.step('(10) alice: „Unlock all locked by …“ auf A hebt nur bobs Sperren auf; im Inneren von F bietet das Board-Menü „Unlock all in this frame“')
 		const locks10 = (s) => [...s.values()].map((i) => [i.id.slice(-4), i.lock?.by ?? null])
 		/** every live item but `except` carries alice's lock */
 		const restAlice = (s, except) => [...s.values()].filter((i) => !except.includes(i.id)).every((i) => i.lock?.by === alicePid)
-		const r10a = await seedOps('alice', board, [A, C].map((id) => ({ o: 'patch', id, p: { lock: null } })))
-		t.must(r10a.every((x) => x === 'ok'), '[B] (10) Vorbedingung: alice entsperrt A und C über die API', r10a)
+		// Job 152: after (9) not every item is alice's any more; the precondition comes from the API
+		const live10 = [...(await serverMap('alice', board)).keys()]
+		const r10a = await seedOps('alice', board, live10.flatMap((id) => [A, C].includes(id)
+			? [{ o: 'patch', id, p: { lock: null } }]
+			: [{ o: 'patch', id, p: { lock: null } }, lockOp(id)]))
+		t.must(r10a.every((x) => x === 'ok'), '[B] (10) Vorbedingung: alice sperrt über die API jedes Objekt außer A und C in ihrem Namen und entsperrt A und C', r10a)
 		const r10b = await seedOps('bob', board, [lockOp(A), lockOp(C)])
 		t.must(r10b.every((x) => x === 'ok'), '[B] (10) Vorbedingung: bob sperrt A und C über die API', r10b)
 		const s10 = await serverMap('alice', board)
@@ -365,7 +405,8 @@ export const E41 = {
 		t.must(await appears(pa, '[data-knorke-menu=context]', 3000), '[D] (10) alices Board-Menü ist offen')
 		t.must((await pa.locator('[data-knorke-menu=context]').first().getAttribute('data-knorke-menu-target')) === '', '[D] (10) das Menü im Inneren von F ist das Board-Menü (kein Ziel)')
 		const names10 = await pa.locator('[data-knorke-menu=context] [data-knorke-menu-item]').evaluateAll((els) => els.map((e) => e.getAttribute('data-knorke-menu-item')))
-		t.must(names10.slice(-2).join(',') === 'unlock-frame,unlock-all', '[C] (10) die letzten beiden Einträge sind unlock-frame und unlock-all, in dieser Reihenfolge', names10)
+		// job 230: the mass unlocks stand before "Show grid", the last entry
+		t.must(names10.filter((x) => x.startsWith('unlock')).join(',') === 'unlock-frame,unlock-all' && names10.at(-1) === 'grid' && names10.indexOf('unlock-all') === names10.indexOf('grid') - 1, '[C] (10) unlock-frame und unlock-all in dieser Reihenfolge direkt vor grid', names10)
 		await pa.locator('[data-knorke-menu-item=unlock-frame]').first().click()
 		await settle([pa, pb])
 		let s10c = await serverMap('alice', board)
@@ -430,8 +471,8 @@ export const E41_PHONE = {
 		t.check(m.left >= 0 && m.top >= 0 && m.right <= m.vw && m.bottom <= m.vh, '[C] das Etikett liegt ganz im Viewport', m)
 		t.check(m.scrollWidth > m.clientWidth, '[C] das Etikett ist gekürzt (scrollWidth > clientWidth)', { scrollWidth: m.scrollWidth, clientWidth: m.clientWidth })
 		t.check(typeof m.title === 'string' && m.title.includes(long), '[C] der volle Text steht im title', m.title)
-		const ub = await p.locator('[data-knorke-action=unlock]').first().boundingBox()
-		t.check(ub && ub.width >= 44 && ub.height >= 44, '[C] [data-knorke-action=unlock] ist mindestens 44 × 44 CSS-px groß', ub)
+		const ub = await (await barMore(p, 'unlock')).boundingBox()
+		t.check(ub && ub.width >= 44 && ub.height >= 44, '[C] „Unlock“ im Menü „…“ ist mindestens 44 × 44 CSS-px groß', ub)
 		await world.drop(a)
 	},
 }

@@ -12,10 +12,8 @@ use OCA\Knorke\Db\ItemStore;
 use OCA\Knorke\Service\Compactor;
 use OCA\Knorke\Service\FastCache;
 use OCA\Knorke\Service\Limits;
-use OCA\Knorke\Service\LinkPolicy;
 use OCP\IAppConfig;
 use OCP\IDBConnection;
-use OCP\IUser;
 
 /**
  * Compactor (SPEC-M1 §4.13.7) for unit tests.
@@ -23,8 +21,8 @@ use OCP\IUser;
  * new CompactorHarness(): the REAL ItemStore/BoardStore SQL on an in-memory
  * SQLite (SqliteDb; the two block-boundary SELECTs of the query builder are
  * the same SELECTs in raw SQL in SqlItemStore, BoardStore::pruneLinks — no
- * links table here — answers 0), a MemoryCache behind FastCache (setGens
- * observable), a link policy that always allows, app config in $app
+ * links table here — answers 0), a MemoryCache behind FastCache (raiseMinRev
+ * observable), app config in $app
  * (tombstone_days, tombstone_cap, changes_cap, cleanup_cursor; writes are
  * logged in $appWrites; P7: changes_bytes_cap as text through
  * getValueString) and the budget clock $clock (a closure returning
@@ -74,18 +72,10 @@ final class CompactorHarness {
                 unset($this->app[$key]);
             },
         ]);
-        $policy = new class() extends LinkPolicy {
-            public function __construct() {
-            }
-
-            public function allows(string $ownerUid, ?IUser $known = null): bool {
-                return true;
-            }
-        };
         $h = $this;
-        $this->compactor = new class($this->items, $this->boards, $this->cache, $policy, new Limits($appConfig), $this->db, $appConfig, $h) extends Compactor {
-            public function __construct(ItemStore $i, BoardStore $b, FastCache $c, LinkPolicy $p, Limits $l, IDBConnection $d, IAppConfig $a, private CompactorHarness $h) {
-                parent::__construct($i, $b, $c, $p, $l, $d, $a);
+        $this->compactor = new class($this->items, $this->boards, $this->cache, new Limits($appConfig), $this->db, $appConfig, $h) extends Compactor {
+            public function __construct(ItemStore $i, BoardStore $b, FastCache $c, Limits $l, IDBConnection $d, IAppConfig $a, private CompactorHarness $h) {
+                parent::__construct($i, $b, $c, $l, $d, $a);
             }
 
             protected function clockMs(): float {

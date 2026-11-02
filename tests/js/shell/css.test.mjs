@@ -127,12 +127,15 @@ test('M1 PublicApp: every empty state (revoked, disabled, expired, invalid) sits
 	assert.equal((tpl.match(/<NcEmptyContent/g) ?? []).length, 4, 'no empty state outside the card')
 })
 
-test('M1 §6.5.4: every role/device banner kind has a coloured rule (white on #4a5560, ≥ 4.5:1)', () => {
-	const sel = rules().filter((r) => /background:\s*#4a5560/.test(r.body)).map((r) => r.selector).join(',').split(',').map((x) => x.trim())
+test('M1 §6.5.4, job 226 AK4: the role/device banners (view_role, vote_ready, device_vote, viewonly) take the base rule, the info pair (light surface, dark text, ≥ 4.5:1)', () => {
+	const base = rules().find((r) => r.selector === '.knorke-banner')
+	assert.match(base.body, /(^|[;\s])color:\s*var\(--k-info-text\)/)
+	assert.match(base.body, /background:\s*var\(--k-info-bg\)/)
 	for (const kind of ['view_role', 'vote_ready', 'device_vote', 'viewonly']) {
-		assert.ok(sel.includes('.knorke-banner--' + kind), '.knorke-banner--' + kind)
+		assert.ok(!rules().some((r) => r.selector.split(',').map((x) => x.trim()).includes('.knorke-banner--' + kind)), '.knorke-banner--' + kind + ' has no colour of its own')
 	}
-	assert.ok(contrast('#ffffff', '#4a5560') >= 4.5)
+	// the fallbacks of the info pair (Nextcloud's --color-primary-element-light pair)
+	assert.ok(contrast('#00293f', '#e5f0f5') >= 4.5)
 })
 
 test('M1 QR code: dark modules on a white square in both themes (scannable); never theme colours', () => {
@@ -145,12 +148,14 @@ test('M1 QR code: dark modules on a white square in both themes (scannable); nev
 
 // ---- SPEC-M1 §6.6 (R16 (2), R17 K7): the vote bar docks flush at the bottom ----------
 
-/** The custom properties of the :root rule (first declaration wins). */
+/** The custom properties of the :root rules (first declaration wins: the
+    mouse values; job 226 added the tokens block and the coarse-pointer one). */
 function tokens() {
-	const root = rules().find((r) => r.selector === ':root')
 	const out = new Map()
-	for (const m of (root?.body ?? '').matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) {
-		if (!out.has(m[1])) out.set(m[1], m[2].trim())
+	for (const root of rules().filter((r) => r.selector === ':root')) {
+		for (const m of root.body.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) {
+			if (!out.has(m[1])) out.set(m[1], m[2].trim())
+		}
 	}
 	return out
 }
@@ -248,7 +253,9 @@ function cssPx(expr, base = 0) {
 
 /** The declarations of the (single, unconditional) rule with exactly this selector. */
 function decls(selector) {
-	const found = rules().filter((r) => r.selector === selector)
+	// the rule of exactly this selector; else (job 229: zoom bar and undo island share one) the one rule that lists it
+	let found = rules().filter((r) => r.selector === selector)
+	if (found.length === 0) found = rules().filter((r) => r.selector.split(',').map((x) => x.trim()).includes(selector))
 	assert.equal(found.length, 1, `one rule "${selector}"`)
 	const out = {}
 	for (const m of found[0].body.matchAll(/([a-z-]+):\s*([^;]+);/g)) out[m[1]] = m[2].replace(/\s*!important$/, '').trim()
@@ -263,19 +270,19 @@ test('css calc helper: px, %, var with fallback, calc/max nesting', () => {
 	assert.equal(cssPx('max(10px, calc(var(--knorke-gap) * 2))'), 16)
 })
 
-test('M1 §6.6 (2) R17 K7: the vote bar docks flush on the bottom edge in every layout (wide: board bottom, narrow: viewport bottom), never floats above it', () => {
+test('M1 §6.6 (2) R17 K7: the vote bar (job 233: the session bar) docks flush on the bottom edge in every layout (wide: board bottom, narrow: viewport bottom), never floats above it', () => {
 	const h = cssPx('var(--knorke-votebar-h)')
 	assert.ok(h >= 44, 'the bar is a ≥ 44 px strip: ' + h)
-	const wide = decls('.knorke-votebar')
+	const wide = decls('.knorke-sessionbar')
 	assert.equal(wide.position, 'absolute', 'wide: inside the board, whose bottom edge is the viewport\'s in Nextcloud\'s layout ≤ 1024 px')
 	assert.equal(cssPx(wide.bottom), 0, 'wide: bottom 0 (was var(--knorke-gap): the bar ended 8 px above the bottom, r1-w1 E31@820x1180)')
 	assert.equal(wide.height, 'var(--knorke-votebar-h)')
-	assert.equal(wide['box-sizing'], 'border-box', 'the border lies inside the bar height')
+	assert.equal(wide['box-sizing'], 'border-box', 'padding lies inside the bar height')
 	assert.doesNotMatch(wide.transform ?? '', /translateY|translate\(|translate3d|matrix/, 'only a horizontal centring shift')
 	assert.ok(!('margin' in wide) && !('margin-bottom' in wide) && !('margin-block-end' in wide), 'no margin lifts the bar')
-	assert.match(wide['border-radius'] ?? '', /^var\(--knorke-radius\) var\(--knorke-radius\) 0 0$/, 'docked: only the top corners are round')
-	assert.match(wide['border-width'] ?? '', /^1px 1px 0$/, 'docked: no border on the bottom edge')
-	const narrow = decls('.knorke-votebar--narrow')
+	assert.match(wide['border-radius'] ?? '', /^var\(--k-radius-bar\) var\(--k-radius-bar\) 0 0$/, 'docked: only the top corners are round')
+	assert.ok(!('border' in wide) && !('border-width' in wide), 'job 226: no border at all (the level rule sets border: 0 and a transparent outline)')
+	const narrow = decls('.knorke-sessionbar--narrow')
 	assert.equal(narrow.position, 'fixed')
 	assert.equal(cssPx(narrow.bottom), 0)
 	assert.ok(!('transform' in narrow) || narrow.transform === 'none')
@@ -285,31 +292,40 @@ test('M1 §6.6 (2) R17 K7: the vote bar docks flush on the bottom edge in every 
 	assert.ok(barBottom >= vh - 1, `bottom edge ${barBottom} ≥ ${vh - 1} (§6.6 (5))`)
 })
 
-test('M1 §6.6 (2): zoom controls, toolbar and the open vote panel stand above the docked vote bar, never over it', () => {
+test('M1 §6.6 (2): zoom controls, (job 229) the undo island, toolbar and the open vote panel stand above the docked vote bar, never over it', () => {
 	const gap = cssPx('var(--knorke-gap)')
 	const barH = cssPx('var(--knorke-votebar-h)')
-	const barTop = barH + cssPx(decls('.knorke-votebar').bottom) // distance of the bar's top edge from the board bottom
+	const barTop = barH + cssPx(decls('.knorke-sessionbar').bottom) // distance of the bar's top edge from the board bottom
 	const zoom = decls('.knorke-board--votebar .knorke-zoom')
 	assert.ok(cssPx(zoom.bottom) >= barTop + gap, `zoom bottom ${cssPx(zoom.bottom)} ≥ ${barTop + gap}`)
 	const zoomNarrow = decls('.knorke-board--narrow.knorke-board--votebar .knorke-zoom')
 	assert.equal(zoomNarrow.position, 'fixed')
 	assert.ok(cssPx(zoomNarrow.bottom ?? zoom.bottom) >= barH + gap)
-	const panel = decls('.knorke-votepanel')
-	assert.ok(cssPx(panel.bottom) >= barTop + gap, `panel bottom ${cssPx(panel.bottom)} ≥ ${barTop + gap}`)
-	// the toolbar is centred vertically (top 50 %, translateY(-50 %)); its max-height keeps both ends clear
+	// job 229: the undo island on the zoom controls' bottom edge, in every layout
+	assert.deepEqual(decls('.knorke-board--votebar .knorke-undo'), zoom)
+	assert.deepEqual(decls('.knorke-board--narrow.knorke-board--votebar .knorke-undo'), zoomNarrow)
+	// job 233: the vote list ends where the comment panel ends, above the zoom controls standing on the bar
+	const panel = decls('.knorke-board--votebar .knorke-votepanel:not(.knorke-votepanel--sheet)')
+	assert.ok(cssPx(panel.bottom) >= cssPx(zoom.bottom) + cssPx('var(--knorke-bar-h)') + gap - 0.01, `panel bottom ${cssPx(panel.bottom)} above the zoom controls`)
+	assert.deepEqual(panel, decls('.knorke-board--votebar .knorke-comments:not(.knorke-comments--sheet)'), 'the same bottom as the comment panel')
+	// job 226 (round 2): the toolbar never reaches into its two reserves (top: the top bar; bottom: job 229 the
+	// undo island above the vote bar): max-height fills the room, then it scrolls; job 229: it stands at the
+	// top, under the left island, not centred
 	const tb = decls('.knorke-toolbar')
-	assert.equal(tb.top, '50%')
-	assert.equal(tb.transform, 'translateY(-50%)')
+	assert.equal(tb.top, 'var(--knorke-tools-top)')
+	assert.ok(!('bottom' in tb) && !('margin-block' in tb), 'not centred any more')
+	assert.equal(tb['max-height'], 'calc(100% - var(--knorke-tools-top) - var(--knorke-tools-bottom))')
+	assert.equal(tb['overflow-y'], 'auto')
+	assert.ok(!('transform' in tb), 'no centring shift')
 	const top = decls('.knorke-topbar')
-	// min-height plus the 1 px border above and below (measured 13.10.: top bar 8 … 52 px in the board)
-	const topBottom = cssPx(top.top) + cssPx(top['min-height']) + 2
-	const limit = decls('.knorke-board--votebar .knorke-toolbar')['max-height']
-	for (const board of [1130, 850, 794, 600, 420]) {
-		const maxH = cssPx(limit, board)
-		const [upper, lower] = [board / 2 - maxH / 2, board / 2 + maxH / 2]
-		assert.ok(upper >= topBottom + gap - 0.01, `board ${board}: toolbar top ${upper} clear of the top bar (${topBottom} + gap)`)
-		assert.ok(lower <= board - barTop - gap + 0.01, `board ${board}: toolbar bottom ${lower} clear of the vote bar (top edge ${board - barTop})`)
-	}
+	// job 226: the bar height, no border (44 px with a mouse: top bar 8 … 52 px in the board)
+	const topBottom = cssPx(top.top) + cssPx('var(--knorke-bar-h)')
+	const reserveTop = cssPx(tb['--knorke-tools-top'])
+	const reserveBottom = cssPx(decls('.knorke-board--votebar .knorke-toolbar')['--knorke-tools-bottom'])
+	assert.ok(reserveTop >= topBottom + gap - 0.01, `toolbar top reserve ${reserveTop} clear of the top bar (${topBottom} + gap)`)
+	assert.ok(reserveBottom >= barTop + gap - 0.01, `toolbar bottom reserve ${reserveBottom} clear of the vote bar (top edge ${barTop} above the bottom)`)
+	const undoTop = cssPx(decls('.knorke-board--votebar .knorke-undo').bottom) + cssPx('var(--knorke-bar-h)')
+	assert.ok(reserveBottom >= undoTop + gap - 0.01, `toolbar bottom reserve ${reserveBottom} clear of the undo island over the vote bar (${undoTop})`)
 })
 
 // ---- SPEC-M1 §6.3: the look of the text editor per kind ------------------------------
@@ -366,8 +382,14 @@ function forcedColors() {
 	return blocksOf(css, FORCED_COLORS)
 }
 
-test('M1 §6.3 shape, note and text editor: no frame around the text field (outline none, transparent, no border, no shadow; all !important over the inline defaults; no other outline*)', () => {
-	for (const kind of ['shape', 'note', 'text']) {
+/** The editor kinds that show only the caret (job 150: the frame title joined note, shape and text). */
+const CARET_ONLY = ['shape', 'note', 'text', 'title']
+
+/** The declarations of the bodies starting with `prop`, whitespace normalised. */
+const declsOf = (bodies, prop) => bodies.join(';').split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter((d) => d.startsWith(prop))
+
+test('M1 §6.3 shape, note, text and (job 150) frame title editor: no frame around the text field (outline none, transparent, no border, no shadow; all !important over the inline defaults; no other outline*)', () => {
+	for (const kind of CARET_ONLY) {
 		const bodies = bodiesFor(editorOf(kind))
 		assert.ok(bodies.length > 0, 'a rule for the ' + kind + ' editor')
 		assert.ok(bodies.some((b) => /outline:\s*none\s*!important/.test(b)), kind + ': outline: none !important (TextEditor.open sets a 2 px outline inline)')
@@ -379,24 +401,31 @@ test('M1 §6.3 shape, note and text editor: no frame around the text field (outl
 		const outlines = all.split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter((d) => /^outline/.test(d))
 		for (const d of outlines) assert.equal(d, 'outline: none !important', kind)
 	}
+	// (job 150) the title lost its white field with rounded corners and shadow: nothing of it may stay
+	const title = bodiesFor(editorOf('title'))
+	assert.match(title.join(';'), /border-radius:\s*0\s*!important/, 'title: border-radius: 0 !important')
+	for (const d of declsOf(title, 'border-radius')) assert.equal(d, 'border-radius: 0 !important', 'title')
+	for (const d of declsOf(title, 'background')) assert.equal(d, 'background: transparent !important', 'title')
+	for (const d of declsOf(title, 'box-shadow')) assert.equal(d, 'box-shadow: none !important', 'title')
 })
 
-test('M1 §6.3 frame title and connector label keep their outline (title, label and the base rule never switch it off)', () => {
+test('M1 §6.3 the connector label keeps its outline and its light background (label and the base rule never switch the outline off)', () => {
 	const off = [/outline(-style)?:\s*none/, /outline(-width)?:\s*0/]
-	for (const kind of ['title', 'label']) {
+	for (const kind of ['label']) {
 		const bodies = bodiesFor(editorOf(kind))
 		assert.ok(bodies.length > 0, 'a rule for the ' + kind + ' editor')
 		for (const body of bodies) for (const re of off) assert.doesNotMatch(body, re, kind)
 	}
+	assert.match(bodiesFor(editorOf('label')).join(';'), /background:\s*#f3f2f0\s*!important/, 'the label keeps its background')
 	const base = bodiesFor('textarea[data-knorke-editor]')
 	assert.ok(base.length > 0, 'the base rule textarea[data-knorke-editor]')
 	for (const body of base) for (const re of off) assert.doesNotMatch(body, re, 'base rule')
 })
 
-test('M1 §6.3 forced colors: the focused shape, note and text editor show a 2 px Highlight outline (WCAG 2.4.7)', () => {
+test('M1 §6.3 forced colors: the focused shape, note, text and (job 150) frame title editor show a 2 px Highlight outline (WCAG 2.4.7)', () => {
 	const { inside, blocks } = forcedColors()
 	assert.ok(blocks >= 1, 'an @media (forced-colors: active) block in knorke.css')
-	for (const kind of ['shape', 'note', 'text']) {
+	for (const kind of CARET_ONLY) {
 		const bodies = bodiesFor(editorOf(kind) + ':focus', inside)
 		assert.ok(bodies.length > 0, 'a forced-colors rule for the focused ' + kind + ' editor')
 		const outlines = outlinesIn(bodies)
@@ -405,9 +434,9 @@ test('M1 §6.3 forced colors: the focused shape, note and text editor show a 2 p
 	}
 })
 
-test('M1 §6.3 outside forced colors: no outline for the shape, note and text editor in any state', () => {
+test('M1 §6.3 outside forced colors: no outline for the shape, note, text and (job 150) frame title editor in any state', () => {
 	const { outside } = forcedColors()
-	for (const kind of ['shape', 'note', 'text']) {
+	for (const kind of CARET_ONLY) {
 		// every state: the bare editor, :focus, :focus-visible, [data-knorke-editor-state=…]
 		const own = rules(outside).filter((r) => r.selector.split(',').some((x) => x.trim().startsWith(editorOf(kind))))
 		assert.ok(own.length > 0, 'a rule for the ' + kind + ' editor outside forced colors')
@@ -430,9 +459,8 @@ test('M1 §6.6 context menu (UX B9): border-box with !important, so max-height a
 	assert.equal(d['max-height'], 'calc(100vh - 16px)', 'the fallback until ContextMenu.vue sets it from the bounds')
 	assert.equal(d.overflow, 'auto', 'what does not fit scrolls')
 	assert.equal(d.padding, '4px')
-	const border = cssPx(d.border.split(/\s+/)[0])
-	assert.equal(border, 1)
-	assert.equal(cssPx(d['min-width']) - 2 * cssPx(d.padding) - 2 * border, 190, 'border-box: the content of the narrowest menu is 200 − 2 × 4 − 2 × 1 px, as in NC on main')
+	assert.ok(!('border' in d), 'job 226: no border (the level rule: border 0 and a transparent outline)')
+	assert.equal(cssPx(d['min-width']) - 2 * cssPx(d.padding), 192, 'border-box: the content of the narrowest menu is 200 − 2 × 4 px (2 px wider than with the old 1 px border)')
 })
 
 // ---- SPEC-M1 §6.3 (R38): the hold ring of the touch marquee ------------------------------
@@ -463,7 +491,7 @@ test('R38 hold ring: fixed colours in the light and the dark theme (marquee blue
 	assert.doesNotMatch(base[0], /var\(--color-/, 'no theme variable: the canvas stays light in the dark theme')
 	assert.doesNotMatch(base[0], /var\(/)
 	assert.equal(MARQUEE_STROKE, '#0082c9', 'the ring has the colour of the marquee')
-	assert.ok(contrast('#0082c9', '#f1f1ec') >= 3, 'on the board background ' + contrast('#0082c9', '#f1f1ec').toFixed(2))
+	assert.ok(contrast('#0082c9', '#f3f2f0') >= 3, 'on the board background ' + contrast('#0082c9', '#f3f2f0').toFixed(2))
 	assert.ok(contrast('#0082c9', '#ffffff') >= 3, 'on white ' + contrast('#0082c9', '#ffffff').toFixed(2))
 	const kf = blocksOf(css, /@keyframes\s+knorke-hold-ring-in\s*\{/g)
 	assert.equal(kf.blocks, 1, '@keyframes knorke-hold-ring-in')
@@ -494,4 +522,17 @@ test('R38 hold ring with reduced motion: no animation, but still shown', () => {
 	assert.notEqual(d.visibility, 'hidden')
 	assert.notEqual(d.opacity, '0')
 	assert.ok(!('display' in d) && !('visibility' in d) && !('opacity' in d), 'nothing that hides it')
+})
+
+test('job 173 (round 2): the context menu entries are finger-sized (--knorke-touch) on phones and coarse pointers, 32 px elsewhere', () => {
+	assert.match(css, /@media \(max-width: 600px\), \(pointer: coarse\) \{\s*button\.knorke-contextmenu__item \{\s*min-height: var\(--knorke-touch\) !important;\s*\}\s*\}/)
+	const base = rules().find((r) => r.selector === 'button.knorke-contextmenu__item' && /min-height: 32px !important/.test(r.body))
+	assert.ok(base, 'the desktop size stays 32 px')
+	assert.match(css, /--knorke-touch: 44px;/)
+})
+
+test('job 227 (round 1): the font size chips (Auto, S, M, L) are finger-sized (--knorke-touch) on phones and coarse pointers, 30 px elsewhere', () => {
+	assert.match(css, /@media \(max-width: 600px\), \(pointer: coarse\) \{\s*button\.knorke-chip\[data-knorke-style='style\.fontSize'\] \{\s*min-width: var\(--knorke-touch\) !important;\s*height: var\(--knorke-touch\) !important;\s*\}\s*\}/)
+	const chip = bodiesFor('button.knorke-chip').join(';')
+	assert.match(chip, /height: 30px !important/, 'with a mouse the chip stays 30 px high')
 })

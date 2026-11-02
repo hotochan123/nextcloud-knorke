@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Factory job 205: a process in the style of the Camunda Modeler 5 (bpmn-js), written by hand for the tests. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_0x7k2p1" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.28.0" modeler:executionPlatform="Camunda Platform" modeler:executionPlatformVersion="7.22.0">
+  <bpmn:collaboration id="Collaboration_1s8w2cq">
+    <bpmn:participant id="Participant_order" name="Bestellung" processRef="Process_order" />
+    <bpmn:participant id="Participant_customer" name="Kunde" />
+    <bpmn:messageFlow id="Flow_message" name="Absage &amp; Grund" sourceRef="Event_reject" targetRef="Participant_customer" />
+  </bpmn:collaboration>
+  <bpmn:process id="Process_order" isExecutable="true" camunda:historyTimeToLive="180">
+    <bpmn:laneSet id="LaneSet_0abc">
+      <bpmn:lane id="Lane_sales" name="Vertrieb">
+        <bpmn:flowNodeRef>Event_start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Activity_check</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_ok</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Event_reject</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_stock" name="Lager">
+        <bpmn:flowNodeRef>Activity_reserve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Event_timeout</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_complex</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Event_done</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Event_start" name="Bestellung&#10;eingegangen">
+      <bpmn:documentation>Signal from the shop</bpmn:documentation>
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="SignalEventDefinition_1" />
+    </bpmn:startEvent>
+    <bpmn:userTask id="Activity_check" name="Bestellung prüfen" camunda:assignee="${sales}">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="ok" label="OK?" type="boolean" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_ok" name="OK?">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Activity_reserve" name="Ware reservieren" camunda:class="shop.Reserve">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+      <bpmn:dataOutputAssociation id="DataOutputAssociation_1">
+        <bpmn:targetRef>DataStore_db</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="Event_timeout" name="2 Tage" attachedToRef="Activity_reserve">
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">P2D</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:complexGateway id="Gateway_complex">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:complexGateway>
+    <bpmn:endEvent id="Event_done" name="Fertig">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Event_reject" name="Absage">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:messageEventDefinition id="MessageEventDefinition_1" camunda:class="shop.Notify" />
+    </bpmn:endEvent>
+    <bpmn:dataStoreReference id="DataStore_db" name="Lager-DB" />
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Event_start" targetRef="Activity_check" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Activity_check" targetRef="Gateway_ok" />
+    <bpmn:sequenceFlow id="Flow_3" name="ja" sourceRef="Gateway_ok" targetRef="Activity_reserve">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><![CDATA[${ok && stock > 0}]]></bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_4" name="nein" sourceRef="Gateway_ok" targetRef="Event_reject" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Activity_reserve" targetRef="Gateway_complex" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Gateway_complex" targetRef="Event_done" />
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Event_timeout" targetRef="Event_done" />
+    <bpmn:textAnnotation id="TextAnnotation_1">
+      <bpmn:text>Kundendaten &lt;vollständig&gt; prüfen</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="Association_1" associationDirection="None" sourceRef="TextAnnotation_1" targetRef="Activity_check" />
+    <bpmn:group id="Group_1" categoryValueRef="CategoryValue_1" />
+  </bpmn:process>
+  <bpmn:category id="Category_1">
+    <bpmn:categoryValue id="CategoryValue_1" value="Prüfung" />
+  </bpmn:category>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_1s8w2cq">
+      <bpmndi:BPMNShape id="Participant_order_di" bpmnElement="Participant_order" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="900" height="400" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_sales_di" bpmnElement="Lane_sales" isHorizontal="true">
+        <dc:Bounds x="190" y="80" width="870" height="200" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_stock_di" bpmnElement="Lane_stock" isHorizontal="true">
+        <dc:Bounds x="190" y="280" width="870" height="200" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_start_di" bpmnElement="Event_start" bioc:stroke="#205022" bioc:fill="#c8e6c9" color:background-color="#c8e6c9" color:border-color="#205022">
+        <dc:Bounds x="232" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="215" y="205" width="70" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_check_di" bpmnElement="Activity_check">
+        <dc:Bounds x="320" y="140" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ok_di" bpmnElement="Gateway_ok" isMarkerVisible="true">
+        <dc:Bounds x="475" y="155" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="488" y="125" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_reserve_di" bpmnElement="Activity_reserve">
+        <dc:Bounds x="580" y="320" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_complex_di" bpmnElement="Gateway_complex">
+        <dc:Bounds x="735" y="335" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_done_di" bpmnElement="Event_done">
+        <dc:Bounds x="842" y="342" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="845" y="318" width="30" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_reject_di" bpmnElement="Event_reject">
+        <dc:Bounds x="842" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="841" y="205" width="38" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DataStore_db_di" bpmnElement="DataStore_db">
+        <dc:Bounds x="725" y="410" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="728" y="467" width="45" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="TextAnnotation_1_di" bpmnElement="TextAnnotation_1">
+        <dc:Bounds x="310" y="90" width="130" height="40" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Group_1_di" bpmnElement="Group_1">
+        <dc:Bounds x="300" y="120" width="260" height="140" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_timeout_di" bpmnElement="Event_timeout">
+        <dc:Bounds x="612" y="382" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="607" y="425" width="46" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Participant_customer_di" bpmnElement="Participant_customer" isHorizontal="true">
+        <dc:Bounds x="160" y="520" width="900" height="60" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="268" y="180" />
+        <di:waypoint x="320" y="180" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="420" y="180" />
+        <di:waypoint x="475" y="180" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="500" y="205" />
+        <di:waypoint x="500" y="360" />
+        <di:waypoint x="580" y="360" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="509" y="273" width="13" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="525" y="180" />
+        <di:waypoint x="842" y="180" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="672" y="162" width="23" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="680" y="360" />
+        <di:waypoint x="735" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="785" y="360" />
+        <di:waypoint x="842" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_7_di" bpmnElement="Flow_7">
+        <di:waypoint x="630" y="418" />
+        <di:waypoint x="630" y="450" />
+        <di:waypoint x="860" y="450" />
+        <di:waypoint x="860" y="378" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Association_1_di" bpmnElement="Association_1">
+        <di:waypoint x="370" y="130" />
+        <di:waypoint x="370" y="140" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DataOutputAssociation_1_di" bpmnElement="DataOutputAssociation_1">
+        <di:waypoint x="680" y="380" />
+        <di:waypoint x="725" y="428" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_message_di" bpmnElement="Flow_message">
+        <di:waypoint x="878" y="180" />
+        <di:waypoint x="960" y="180" />
+        <di:waypoint x="960" y="520" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

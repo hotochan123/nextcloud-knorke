@@ -166,14 +166,14 @@ describe('AK2: a drag with the grid shown and gridSnap off', () => {
 })
 
 describe('AK3: a resize with the grid shown and gridSnap off', () => {
-	/** A shape A (100, 100, 200 × 120) selected, the grid on; press on its handle r and move to x, one frame. */
+	/** A shape A (100, 100, 200 × 120) selected, the grid on; press on its corner br (job 231: no edge handle r) and move to x, one frame. */
 	function pull(x, { snapOff = true, items = [] } = {}) {
 		h = setupScene([shapeItem(A, { x: 100, y: 100 }), ...items])
 		h.scene.setSelection([A])
 		h.scene.setGrid(true)
 		if (snapOff) h.scene.setGridSnap(false)
-		h.pointer('pointerdown', 300, 160)
-		h.pointer('pointermove', x, 160)
+		h.pointer('pointerdown', 300, 220)
+		h.pointer('pointermove', x, 220)
 		h.frame()
 	}
 
@@ -182,7 +182,7 @@ describe('AK3: a resize with the grid shown and gridSnap off', () => {
 		assert.equal(h.model.get(A).w, 233)
 		assert.equal(h.scene.stats().snapGuides, 0)
 		assert.deepEqual(shownGuides(), [])
-		h.pointer('pointerup', 333, 160)
+		h.pointer('pointerup', 333, 220)
 		const it = h.intents('transform')
 		assert.equal(it.length, 1)
 		assert.equal(it[0].after.get(A).w, 233)
@@ -198,7 +198,7 @@ describe('AK3: a resize with the grid shown and gridSnap off', () => {
 		pull(333, { snapOff: false })
 		assert.equal(h.scene.getGridSnap(), true)
 		assert.equal(h.model.get(A).w, 240)
-		h.pointer('pointerup', 333, 160)
+		h.pointer('pointerup', 333, 220)
 		assert.deepEqual(h.intents('transform').map((i) => i.after.get(A).w), [240])
 	})
 })

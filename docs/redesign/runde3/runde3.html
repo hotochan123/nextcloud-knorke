@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knorke · Runde 3 · Notizen, Grundformen, Verbinder</title>
+<style>/* Runde 3 · Seite (gleicher Rahmen wie Runde 2) */
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", sans-serif; color: #222; background: oklch(0.975 0.002 250); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid #222; outline-offset: 2px; }
+.hdr { position: sticky; top: 0; z-index: 50; background: #fff; border-bottom: 1px solid #e3e4e6; }
+.hrow { max-width: 1440px; margin: 0 auto; padding: 10px 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 16px; white-space: nowrap; }
+.brand span { font-weight: 400; color: #5d5f63; }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: #eef0f2; }
+.seg button { border: 0; background: none; padding: 7px 14px; border-radius: 8px; font-size: 14px; white-space: nowrap; }
+.seg button[aria-selected="true"] { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.16); font-weight: 600; }
+.seg button:hover:not([aria-selected="true"]) { background: #e2e5e8; }
+.pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.pills button { border: 1px solid #d7d9dc; background: #fff; border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+.pills button.code { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 52px; }
+.pills button:hover { background: #f1f3f5; }
+.pills button[aria-current="true"] { background: #191b1d; border-color: #191b1d; color: #fff; }
+.main { max-width: 1440px; margin: 0 auto; padding: 24px 40px 40px; }
+.hero { display: flex; gap: 32px; align-items: flex-start; padding: 8px 0 20px; border-bottom: 1px solid #e3e4e6; margin-bottom: 8px; }
+.bigcode { font-size: 120px; line-height: .9; font-weight: 800; letter-spacing: -3px; color: #191b1d; min-width: 190px; font-variant-numeric: tabular-nums; }
+.hero h2 { margin: 6px 0 8px; font-size: 26px; font-weight: 650; }
+.hero p { margin: 0; max-width: 860px; font-size: 16px; color: #33363a; }
+.sec { padding: 20px 0 8px; }
+.sec h3 { font-size: 18px; margin: 0 0 12px; font-weight: 650; }
+.tiles { display: flex; flex-wrap: wrap; gap: 20px; }
+.tile { margin: 0; background: #fff; border-radius: 12px; padding: 0 0 10px; box-shadow: 0 0 0 1px #e3e4e6; overflow: hidden; }
+.tile canvas { display: block; }
+.tile.full { width: 1360px; }
+.tile.half { width: 670px; }
+.tile.wide { width: 900px; }
+.tile.narrow { width: 440px; }
+.tile figcaption { padding: 8px 14px 0; font-size: 13px; color: #33363a; }
+.vlist { list-style: none; margin: 0; padding: 0; }
+.vlist li { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid #e9eaec; }
+.vlist p { margin: 4px 0 0; max-width: 900px; color: #33363a; font-size: 14px; }
+.code-s { font-size: 48px; font-weight: 800; color: #191b1d; text-decoration: none; letter-spacing: -1px; line-height: 1; }
+.code-s:hover { text-decoration: underline; text-underline-offset: 6px; }
+.foot { max-width: 1440px; margin: 0 auto; padding: 16px 40px 40px; color: #5d5f63; font-size: 13px; }
+</style>
+</head>
+<body>
+<header class="hdr" id="hdr" data-od-id="switcher"></header>
+<main class="main" id="main" data-od-id="variant"></main>
+<footer class="foot">Alle Leinwand-Ausschnitte sind mit Canvas 2D gezeichnet – nur mit dem, was Konva auch kann: Rechtecke mit Radius, Pfade, Kreise, Linien mit Strichmuster, Text in Arial, Deckkraft und Schatten. Schatten und Verbinder-Beschriftungen fallen unter 30 % Zoom weg, wie heute in Knorke. Die Seite braucht kein Internet. Tasten ← → blättern durch die Varianten.</footer>
+<script>/* Runde 3 · Leinwand-Bausteine in Canvas 2D – nur, was Konva auch kann:
+   Rechtecke mit Radius, Pfade, Kreise, Linien mit Strichmuster, Text (Arial), Deckkraft, Schatten (shadowBlur/Offset). */
+const PAL = {
+	hellblau: ['#a2d9fe', '#0275a9'], tuerkis: ['#8fe7e1', '#087c77'], salbei: ['#b3e8b3', '#307d37'], gelb: ['#faea89', '#7e6f01'],
+	orange: ['#febf87', '#a25d04'], koralle: ['#ffaaa7', '#c43e45'], rosa: ['#f9b7d6', '#b94082'], lila: ['#d9b9ee', '#9550bb'],
+	indigo: ['#b9c8fc', '#5165d3'], sand: ['#e1ceb0', '#816b46'], weiss: ['#ffffff', '#6f6f6d'], grau: ['#e0e0dd', '#6f6f6d'], schwarz: ['#191b1d', '#191b1d'],
+};
+const BG = '#f3f2f0', INK = '#191b1d', SEL = '#0082c9', FRAME_LINE = '#8a8c8e';
+const FONT = 'Arial, "Liberation Sans", Helvetica, sans-serif';
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+
+/* ── Zeichenfläche: z = Zoom, alles in Leinwand-Einheiten ── */
+function withShadow(c, sh, fn) {
+	/* Konva: Schatten wird mit dem Zoom skaliert und fällt in Bildschirm-Richtung */
+	c.save(); c.shadowColor = `rgba(0,0,0,${sh.a})`; c.shadowBlur = sh.blur * c.Z * c.DPR; c.shadowOffsetX = (sh.x || 0) * c.Z * c.DPR; c.shadowOffsetY = sh.y * c.Z * c.DPR; fn(); c.restore();
+}
+function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect ? c.roundRect(x, y, w, h, r) : (c.moveTo(x + r, y), c.arcTo(x + w, y, x + w, y + h, r), c.arcTo(x + w, y + h, x, y + h, r), c.arcTo(x, y + h, x, y, r), c.arcTo(x, y, x + w, y, r), c.closePath()); }
+/* Vieleck mit gerundeten Ecken (arcTo) */
+function poly(c, pts, r = 0) {
+	c.beginPath();
+	if (!r) { pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); return; }
+	const n = pts.length, mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+	const s = mid(pts[n - 1], pts[0]); c.moveTo(s[0], s[1]);
+	for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; c.arcTo(p[0], p[1], q[0], q[1], r); }
+	c.closePath();
+}
+/* ── Text wie Knorke: umbrechen, verkleinern, ab ≤16 lange Wörter trennen ── */
+function font(c, s, wt = 400) { c.font = `${wt} ${s}px ${FONT}`; }
+function wrapLines(c, text, maxW, s, wt, hyph) {
+	font(c, s, wt); const words = text.split(/\s+/), out = []; let cur = '';
+	const push = w => { const t = cur ? cur + ' ' + w : w; if (c.measureText(t).width <= maxW) cur = t; else { if (cur) out.push(cur); cur = w; } };
+	for (const w of words) {
+		if (c.measureText(w).width > maxW) {
+			if (!hyph) return null;
+			let rest = w; if (cur) { out.push(cur); cur = ''; }
+			while (c.measureText(rest).width > maxW) { let k = rest.length - 1; while (k > 1 && c.measureText(rest.slice(0, k) + '-').width > maxW) k--; out.push(rest.slice(0, k) + '-'); rest = rest.slice(k); }
+			cur = rest; continue;
+		}
+		push(w);
+	}
+	if (cur) out.push(cur); return out;
+}
+function fitText(c, text, maxW, maxH, start, lh, wt = 400, min = 10) {
+	for (let s = start; s >= min; s--) { const L = wrapLines(c, text, maxW, s, wt, s <= 16); if (L && L.length * s * lh <= maxH) return { s, L }; }
+	return { s: min, L: wrapLines(c, text, maxW, min, wt, true) };
+}
+function drawText(c, text, box, o = {}) {
+	const lh = o.lh || 1.2, wt = o.wt || 400, al = o.align || 'center', va = o.valign || 'middle';
+	let { s, L } = o.fixed ? { s: o.size, L: null } : fitText(c, text, box.w, box.h, o.size || 22, lh, wt, o.min || 10);
+	if (o.fixed) { /* feste Schriftgröße: was nicht passt, endet mit … */ L = wrapLines(c, text, box.w, s, wt, true); const max = Math.max(1, Math.floor(box.h / (s * lh) + 1e-6)); if (L.length > max) { L = L.slice(0, max); let l = L[max - 1].replace(/-$/, ''); while (l.length > 1 && c.measureText(l + '…').width > box.w) l = l.slice(0, -1); L[max - 1] = l + '…'; } }
+	font(c, s, wt); c.fillStyle = o.color || INK; c.textBaseline = 'middle'; c.textAlign = al === 'left' ? 'left' : al === 'right' ? 'right' : 'center';
+	const tx = al === 'left' ? box.x : al === 'right' ? box.x + box.w : box.x + box.w / 2, th = L.length * s * lh;
+	const y0 = va === 'top' ? box.y : va === 'bottom' ? box.y + box.h - th : box.y + (box.h - th) / 2;
+	L.forEach((l, i) => c.fillText(l, tx, y0 + (i + .5) * s * lh));
+	return s;
+}
+/* ── Auswahl, Tags, Abstimmung, Reaktion (nicht Thema, muss Platz haben) ── */
+function selection(c, x, y, w, h) {
+	const z = c.Z, o = 4 / z, hs = 9 / z; c.save(); c.strokeStyle = SEL; c.lineWidth = 1.5 / z; c.strokeRect(x - o, y - o, w + 2 * o, h + 2 * o);
+	for (const [a, b] of [[x - o, y - o], [x + w + o, y - o], [x - o, y + h + o], [x + w + o, y + h + o]]) { c.fillStyle = '#fff'; c.fillRect(a - hs / 2, b - hs / 2, hs, hs); c.lineWidth = 2 / z; c.strokeRect(a - hs / 2, b - hs / 2, hs, hs); }
+	c.restore();
+}
+function tags(c, x, y, w, list) {
+	let tx = x; font(c, 13, 400);
+	for (const [t, col] of list) { const tw = c.measureText(t).width + 14; rr(c, tx, y, tw, 22, 11); c.fillStyle = PAL[col][1]; c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, tx + 7, y + 11.5); tx += tw + 6; }
+}
+function voteDot(c, cx, cy, n) { const z = c.Z, r = 14 / z; c.save(); c.beginPath(); c.arc(cx, cy, r, 0, 7); c.fillStyle = SEL; c.fill(); c.strokeStyle = '#fff'; c.lineWidth = 2 / z; c.stroke(); font(c, 13 / z, 700); c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(n), cx, cy + .5 / z); c.restore(); }
+function reactions(c, x, y) { rr(c, x, y, 76, 28, 14); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = '#e0e0dd'; c.lineWidth = 1; c.stroke(); font(c, 15); c.fillStyle = INK; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText('👍 3', x + 10, y + 14.5); c.fillText('🎉', x + 50, y + 14.5); }
+
+/* ── Notizen ── */
+function note(c, n, NS) {
+	const S = n.size || NS.size || 200, x = n.x, y = n.y, col = PAL[n.color || 'hellblau'], r = NS.radius;
+	c.save();
+	if (n.rot) { c.translate(x + S / 2, y + S / 2); c.rotate(n.rot * Math.PI / 180); c.translate(-x - S / 2, -y - S / 2); }
+	const shapePath = () => { if (NS.ear) { const e = NS.ear; c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + S, y, x + S, y + S, r); c.lineTo(x + S, y + S - e); c.lineTo(x + S - e, y + S); c.arcTo(x, y + S, x, y, r); c.arcTo(x, y, x + S, y, r); c.closePath(); } else rr(c, x, y, S, S, r); };
+	const shadows = c.Z >= .3 ? NS.shadow : [];
+	/* abstehende Ecken: zwei kleine, schräge Flächen unter der Notiz – nur ihr Schatten ist zu sehen */
+	if (NS.lift && c.Z >= .3) for (const side of [-1, 1]) withShadow(c, NS.lift, () => { c.save(); const cx = side < 0 ? x + 30 : x + S - 30; c.translate(cx, y + S - 14); c.rotate(side * 4 * Math.PI / 180); c.fillStyle = col[0]; c.fillRect(-26, -10, 52, 20); c.restore(); });
+	if (!shadows.length) { shapePath(); c.fillStyle = col[0]; c.fill(); }
+	for (const sh of shadows) withShadow(c, sh, () => { shapePath(); c.fillStyle = col[0]; c.fill(); });
+	if (NS.edge) { shapePath(); c.strokeStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], NS.edge.a); c.lineWidth = NS.edge.w; c.stroke(); }
+	if (NS.highlight) { c.save(); shapePath(); c.clip(); c.fillStyle = 'rgba(255,255,255,.45)'; c.fillRect(x, y, S, 1.5); c.restore(); }
+	if (NS.ear) { const e = NS.ear; c.beginPath(); c.moveTo(x + S, y + S - e); c.lineTo(x + S - e, y + S - e + 2); c.lineTo(x + S - e, y + S); c.closePath(); withShadow(c, { y: 1, blur: 2, a: .12 }, () => { c.fillStyle = col[0]; c.fill(); }); c.fillStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], .22); c.fill(); }
+	if (NS.tape) { c.save(); c.translate(x + S / 2, y + 2); c.rotate(-2.5 * Math.PI / 180); c.fillStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], .22); c.fillRect(-36, -11, 72, 22); c.restore(); }
+	const T = NS.text, pad = T.pad, tagH = n.tags ? 30 : 0;
+	if (n.text) drawText(c, n.text, { x: x + pad, y: y + pad, w: S - 2 * pad, h: S - 2 * pad - tagH }, { size: n.fs || 22, lh: T.lh, wt: T.wt, align: n.align || T.align, valign: n.valign || T.valign, color: n.color === 'schwarz' ? '#ffffff' : INK });
+	if (n.tags) tags(c, x + 10, y + S - 30, S, n.tags);
+	c.restore();
+	if (n.vote) voteDot(c, x + S - 2, y + 2, n.vote);
+	if (n.react) reactions(c, x, y + S + 8);
+	if (n.sel) selection(c, x, y, S, S);
+}
+
+/* ── Grundformen und Flussdiagramm ── */
+function shapePath(c, k, x, y, w, h, FS) {
+	const pr = FS.polyR || 0;
+	switch (k) {
+		case 'rect': return FS.rectR ? rr(c, x, y, w, h, FS.rectR) : (c.beginPath(), c.rect(x, y, w, h));
+		case 'round': return rr(c, x, y, w, h, FS.roundR === 'pct' ? Math.min(w, h) * .15 : FS.roundR);
+		case 'ellipse': c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7); return;
+		case 'diamond': return poly(c, [[x + w / 2, y], [x + w, y + h / 2], [x + w / 2, y + h], [x, y + h / 2]], pr);
+		case 'triangle': return poly(c, [[x + w / 2, y], [x + w, y + h], [x, y + h]], pr);
+		case 'arrow': return poly(c, [[x, y + h * .25], [x + w * .65, y + h * .25], [x + w * .65, y], [x + w, y + h / 2], [x + w * .65, y + h], [x + w * .65, y + h * .75], [x, y + h * .75]], pr);
+		case 'doc': { const r = FS.rectR || 0; c.beginPath(); c.moveTo(x, y + h * .85); c.lineTo(x, y + r); c.arcTo(x, y, x + w, y, r); c.arcTo(x + w, y, x + w, y + h, r); c.lineTo(x + w, y + h * .85); c.bezierCurveTo(x + w * .75, y + h * .65, x + w * .5, y + h * 1.05, x + w * .25, y + h * .95); c.quadraticCurveTo(x + w * .1, y + h * .9, x, y + h * .85); c.closePath(); return; }
+		case 'db': { const e = h * .12; c.beginPath(); c.moveTo(x, y + e); c.ellipse(x + w / 2, y + e, w / 2, e, 0, Math.PI, 0); c.lineTo(x + w, y + h - e); c.ellipse(x + w / 2, y + h - e, w / 2, e, 0, 0, Math.PI); c.closePath(); return; }
+	}
+}
+/* Textfeld je Form (Anteil der Fläche) */
+function textBox(k, x, y, w, h, FS) {
+	const better = FS.field === 'better';
+	/* neu: Raute 58 × 38 %, Dreieck unten ab 60 % der Höhe, 58 % breit, Innenabstand 4 (die Ecken des Felds liegen schon innen an der Kontur); Ellipse 84 × 54 %, Innenabstand 8 */
+	const B = better ? { ellipse: [.84, .54], diamond: [.58, .38], tri: [.58, .4, .6] } : { ellipse: [.71, .71], diamond: [.5, .5], tri: [.5, .5, .5] };
+	const p = better ? ({ diamond: 4, triangle: 4, ellipse: 8 }[k] ?? FS.pad) : FS.pad;
+	let b;
+	if (k === 'ellipse' || k === 'diamond') { const [fw, fh] = B[k]; b = { x: x + w * (1 - fw) / 2, y: y + h * (1 - fh) / 2, w: w * fw, h: h * fh }; }
+	else if (k === 'triangle') { const [fw, , t] = B.tri; b = { x: x + w * (1 - fw) / 2, y: y + h * t, w: w * fw, h: h * (1 - t) }; }
+	else if (k === 'arrow') b = { x, y: y + h * .25, w: w * .65, h: h * .5 };
+	else if (k === 'db') b = { x, y: y + h * .24, w, h: h * .7 };
+	else if (k === 'doc') b = { x, y, w, h: h * .8 };
+	else b = { x, y, w, h };
+	return { x: b.x + p, y: b.y + p, w: Math.max(4, b.w - 2 * p), h: Math.max(4, b.h - 2 * p) };
+}
+function shape(c, s, FS) {
+	const hue = s.color || FS.fill || "weiss", fill = PAL[hue][0], w = s.sw ?? FS.sw;
+	const strokeCol = s.stroke || (FS.tone && hue !== "weiss" ? PAL[hue][1] : FS.ink);
+	const P = () => shapePath(c, s.k, s.x, s.y, s.w, s.h, FS);
+	c.save(); c.globalAlpha = 1;
+	if (FS.shadow && c.Z >= .3 && (s.alpha ?? 1) > 0) withShadow(c, FS.shadow, () => { P(); c.fillStyle = (s.alpha ?? 1) < 1 ? rgba(fill, .001) : fill; c.fill(); });
+	P(); c.fillStyle = (s.alpha ?? 1) < 1 ? rgba(fill, s.alpha) : fill; c.fill();
+	if (w > 0) { P(); c.strokeStyle = strokeCol; c.lineWidth = w; c.lineJoin = FS.polyR || FS.rectR ? 'round' : 'miter'; if (s.dash === 'dash') c.setLineDash([4 * w, 3 * w]); if (s.dash === 'dot') { c.setLineDash([0.01, 2.5 * w]); c.lineCap = 'round'; } c.stroke(); c.setLineDash([]); c.lineCap = 'butt'; }
+	if (s.db) { c.beginPath(); const e = s.h * .12; c.ellipse(s.x + s.w / 2, s.y + e, s.w / 2, e, 0, 0, Math.PI); c.strokeStyle = strokeCol; c.lineWidth = w; c.stroke(); }
+	if (s.showField) { const b = textBox(s.k, s.x, s.y, s.w, s.h, FS); c.setLineDash([4 / c.Z, 3 / c.Z]); c.strokeStyle = SEL; c.lineWidth = 1 / c.Z; c.strokeRect(b.x, b.y, b.w, b.h); c.setLineDash([]); }
+	if (s.text) drawText(c, s.text, textBox(s.k, s.x, s.y, s.w, s.h, FS), { size: s.fs || FS.fs, lh: FS.lh, color: INK, min: 8, fixed: s.fixed });
+	c.restore();
+	if (s.sel) selection(c, s.x, s.y, s.w, s.h);
+}
+/* Andockpunkt einer Form: Mitte der Seite */
+function anchor(s, side) {
+	const m = { r: [s.x + s.w, s.y + s.h / 2, 1, 0], l: [s.x, s.y + s.h / 2, -1, 0], t: [s.x + s.w / 2, s.y, 0, -1], b: [s.x + s.w / 2, s.y + s.h, 0, 1] }[side];
+	return { x: m[0], y: m[1], dx: m[2], dy: m[3] };
+}
+
+/* ── Verbinder ── */
+function elbowPts(a, b, out = 20) {
+	const A = [a.x + a.dx * out, a.y + a.dy * out], Bp = [b.x + b.dx * out, b.y + b.dy * out], pts = [[a.x, a.y], A];
+	const ah = a.dx !== 0, bh = b.dx !== 0;
+	if (ah && bh) { const mx = (A[0] + Bp[0]) / 2; pts.push([mx, A[1]], [mx, Bp[1]]); }
+	else if (!ah && !bh) { const my = (A[1] + Bp[1]) / 2; pts.push([A[0], my], [Bp[0], my]); }
+	else if (ah) pts.push([Bp[0], A[1]]); else pts.push([A[0], Bp[1]]);
+	pts.push(Bp, [b.x, b.y]);
+	return clean(pts);
+}
+function clean(p) { const o = [p[0]]; for (let i = 1; i < p.length; i++) { const q = o[o.length - 1]; if (Math.abs(q[0] - p[i][0]) < .01 && Math.abs(q[1] - p[i][1]) < .01) continue; o.push(p[i]); } for (let i = o.length - 2; i > 0; i--) { const a = o[i - 1], b = o[i], d = o[i + 1]; if ((Math.abs(a[0] - b[0]) < .01 && Math.abs(b[0] - d[0]) < .01) || (Math.abs(a[1] - b[1]) < .01 && Math.abs(b[1] - d[1]) < .01)) o.splice(i, 1); } return o; }
+/* Pfeilspitze: Länge L und halbe Breite B je nach Variante */
+function tipSize(w, VS) { if (VS.tip === 'fine') { const L = 6 + 4 * Math.sqrt(w); return [L, L * .36]; } const L = 3 * w + 4; return [L, L / 2]; }
+const CUT = { arrow: 0, none: 0, triangle: 1, triangleOpen: 1, diamond: 1, dot: .9, circleOpen: .875 }; /* Anteil von L bis zum hinteren Rand des Endes (Raute: ×2) */
+function drawEnd(c, type, tip, dir, w, VS, color) {
+	if (type === 'none') return;
+	const [L, B] = tipSize(w, VS), ux = dir[0], uy = dir[1], px = -uy, py = ux, X = tip[0], Y = tip[1];
+	c.save(); c.fillStyle = color; c.strokeStyle = color; c.setLineDash([]); c.lineJoin = VS.tip === 'fine' ? 'miter' : 'miter'; c.lineCap = 'round';
+	const bx = X - ux * L, by = Y - uy * L;
+	if (type === 'arrow') { c.beginPath(); c.moveTo(bx + px * B, by + py * B); c.lineTo(X, Y); c.lineTo(bx - px * B, by - py * B); c.lineWidth = w; c.stroke(); }
+	else if (type === 'triangle' || type === 'triangleOpen') { c.beginPath(); c.moveTo(X, Y); c.lineTo(bx + px * B, by + py * B); c.lineTo(bx - px * B, by - py * B); c.closePath(); if (type === 'triangle') c.fill(); else { c.fillStyle = BG; c.fill(); c.lineWidth = Math.max(1, w * .75); c.stroke(); } }
+	else if (type === 'diamond') { const mx = X - ux * L, my = Y - uy * L, ex = X - ux * 2 * L, ey = Y - uy * 2 * L; c.beginPath(); c.moveTo(X, Y); c.lineTo(mx + px * B, my + py * B); c.lineTo(ex, ey); c.lineTo(mx - px * B, my - py * B); c.closePath(); c.fill(); }
+	else { const r = L / 2; c.beginPath(); c.arc(X - ux * r, Y - uy * r, r * (type === 'dot' ? .8 : .75), 0, 7); if (type === 'dot') c.fill(); else { c.fillStyle = BG; c.fill(); c.lineWidth = Math.max(1, w * .75); c.stroke(); } }
+	c.restore();
+	return CUT[type] * L * (type === 'diamond' ? 1 : 1);
+}
+function connector(c, k, VS) {
+	const w = k.w || 2, color = k.color || '#3d4044', end = k.end || VS.defEnd, start = k.start || 'none';
+	let a = { ...k.a }, b = { ...k.b };
+	const g = VS.gap || 0; a.x += a.dx * g; a.y += a.dy * g; b.x += b.dx * (VS.tipGap ?? g); b.y += b.dy * (VS.tipGap ?? g);
+	const route = k.route || 'elbow';
+	c.save(); c.strokeStyle = color; c.lineWidth = w; c.lineJoin = 'miter'; c.lineCap = 'butt';
+	if (k.dash === 'dash') c.setLineDash([4 * w, 3 * w]); if (k.dash === 'dot') { c.setLineDash([0.01, 2.5 * w]); c.lineCap = 'round'; }
+	let pts, mid, dirEnd, dirStart;
+	const [L] = tipSize(w, VS), cut = (CUT[end] || 0) * L * (end === 'diamond' ? 2 : 1), cutS = (CUT[start] || 0) * L * (start === 'diamond' ? 2 : 1);
+	if (route === 'curve') {
+		const d = Math.hypot(b.x - a.x, b.y - a.y), kk = VS.curve === 'tense' ? Math.max(60, .6 * d) : Math.max(40, .4 * d);
+		let c1 = [a.x + a.dx * kk, a.y + a.dy * kk], c2 = [b.x + b.dx * kk, b.y + b.dy * kk];
+		if (VS.curve === 's') { const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2; c1 = a.dx ? [mx, a.y] : [a.x, my]; c2 = b.dx ? [mx, b.y] : [b.x, my]; }
+		const P = t => { const u = 1 - t; return [u * u * u * a.x + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * b.x, u * u * u * a.y + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * b.y]; };
+		pts = []; for (let i = 0; i <= 40; i++) pts.push(P(i / 40));
+		const pe = pts[pts.length - 1], pq = P(.97), dl = Math.hypot(pe[0] - pq[0], pe[1] - pq[1]); dirEnd = [(pe[0] - pq[0]) / dl, (pe[1] - pq[1]) / dl];
+		c.beginPath(); c.moveTo(a.x, a.y); c.bezierCurveTo(c1[0], c1[1], c2[0], c2[1], b.x - dirEnd[0] * cut, b.y - dirEnd[1] * cut); c.stroke();
+		mid = P(.5);
+	} else {
+		pts = route === 'straight' ? [[a.x, a.y], [b.x, b.y]] : (k.pts || elbowPts(a, b));
+		if (k.pts && (VS.gap || VS.tipGap)) { pts = pts.map(p => p.slice()); pts[0] = [a.x, a.y]; pts[pts.length - 1] = [b.x, b.y]; }
+		const n = pts.length, e = pts[n - 1], f = pts[n - 2], dl = Math.hypot(e[0] - f[0], e[1] - f[1]); dirEnd = [(e[0] - f[0]) / dl, (e[1] - f[1]) / dl];
+		const s0 = pts[0], s1 = pts[1], sl = Math.hypot(s1[0] - s0[0], s1[1] - s0[1]); dirStart = [(s0[0] - s1[0]) / sl, (s0[1] - s1[1]) / sl];
+		const draw = pts.map(p => p.slice()); draw[n - 1] = [e[0] - dirEnd[0] * cut, e[1] - dirEnd[1] * cut]; draw[0] = [s0[0] - dirStart[0] * cutS, s0[1] - dirStart[1] * cutS];
+		c.beginPath(); c.moveTo(draw[0][0], draw[0][1]);
+		for (let i = 1; i < n - 1; i++) {
+			if (VS.corner && route === 'elbow') { const p = draw[i], q = draw[i + 1], o = draw[i - 1], r = Math.min(VS.corner, Math.hypot(p[0] - o[0], p[1] - o[1]) / 2, Math.hypot(q[0] - p[0], q[1] - p[1]) / 2); c.arcTo(p[0], p[1], q[0], q[1], r); }
+			else c.lineTo(draw[i][0], draw[i][1]);
+		}
+		c.lineTo(draw[n - 1][0], draw[n - 1][1]); c.stroke();
+		/* halbe Länge */
+		let tot = 0; const seg = []; for (let i = 1; i < n; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); tot += l; }
+		let h = tot / 2; mid = pts[0]; for (let i = 0; i < seg.length; i++) { if (h <= seg[i]) { const t = h / seg[i]; mid = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t, Math.abs(pts[i + 1][0] - pts[i][0]) > Math.abs(pts[i + 1][1] - pts[i][1])]; break; } h -= seg[i]; }
+	}
+	c.setLineDash([]);
+	if (k.sel) { c.save(); c.globalAlpha = .28; c.strokeStyle = SEL; c.lineWidth = w + 8 / c.Z; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.stroke(); c.restore(); }
+	drawEnd(c, end, [b.x, b.y], dirEnd, w, VS, color);
+	if (start !== 'none' && dirStart) drawEnd(c, start, [a.x, a.y], [-dirStart[0], -dirStart[1]], w, VS, color);
+	c.restore();
+	if (k.sel) for (const p of [[k.a.x, k.a.y], [k.b.x, k.b.y]]) { c.beginPath(); c.arc(p[0], p[1], 6 / c.Z, 0, 7); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = SEL; c.lineWidth = 2 / c.Z; c.stroke(); }
+	if (k.label && c.Z >= .3) label(c, k.label, mid, VS, k.under);
+}
+function label(c, t, mid, VS, under) {
+	const L = VS.label || {}, size = L.size || 16, pad = L.pad ?? 4;
+	const lines = wrapLines(c, t, 240 - 2 * pad, size, 400, true), lw = Math.max(...lines.map(l => (font(c, size), c.measureText(l).width))), lh = size * 1.2;
+	const bw = lw + 2 * pad + (L.kind === 'pill' ? 8 : 0), bh = lines.length * lh + 2 * pad;
+	let cx = mid[0], cy = mid[1];
+	if (L.kind === 'above') cy -= (mid[2] === false ? 0 : bh / 2 + 3), cx += (mid[2] === false ? bw / 2 + 6 : 0);
+	c.save();
+	if (L.kind === 'pill') { rr(c, cx - bw / 2, cy - bh / 2, bw, bh, Math.min(bh / 2, 12)); c.fillStyle = '#ffffff'; c.fill(); c.strokeStyle = 'rgba(25,27,29,.28)'; c.lineWidth = 1; c.stroke(); }
+	else if (L.kind !== 'above') { rr(c, cx - bw / 2, cy - bh / 2, bw, bh, 3); c.fillStyle = BG; c.fill(); }
+	font(c, size); c.fillStyle = INK; c.textAlign = 'center'; c.textBaseline = 'middle';
+	lines.forEach((l, i) => c.fillText(l, cx, cy - bh / 2 + pad + (i + .5) * lh));
+	c.restore();
+	void under;
+}
+/* Frame mit Reiter A2 (Runde 2) */
+function frameA2(c, f) {
+	const { x, y, w, h } = f, col = PAL[f.color || 'weiss'], mid = { weiss: '#d1d1ce', gelb: '#e8ce49', hellblau: '#6bbef2' }[f.color || 'weiss'], r = 6, TH = 40;
+	font(c, 22, 600); const tw = c.measureText(f.title).width + 28;
+	const P = () => { c.beginPath(); c.moveTo(x, y + h - r); c.lineTo(x, y - TH + r); c.arcTo(x, y - TH, x + r, y - TH, r); c.lineTo(x + tw - r, y - TH); c.arcTo(x + tw, y - TH, x + tw, y - TH + r, r); c.lineTo(x + tw, y); c.lineTo(x + w - r, y); c.arcTo(x + w, y, x + w, y + r, r); c.lineTo(x + w, y + h - r); c.arcTo(x + w, y + h, x + w - r, y + h, r); c.lineTo(x + r, y + h); c.arcTo(x, y + h, x, y + h - r, r); c.closePath(); };
+	P(); c.fillStyle = col[0]; c.fill();
+	c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - TH + r); c.arcTo(x, y - TH, x + r, y - TH, r); c.lineTo(x + tw - r, y - TH); c.arcTo(x + tw, y - TH, x + tw, y - TH + r, r); c.lineTo(x + tw, y); c.closePath(); c.fillStyle = mid; c.fill();
+	P(); c.strokeStyle = FRAME_LINE; c.lineWidth = 1.5 / c.Z; c.stroke();
+	font(c, 22, 600); c.fillStyle = INK; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(f.title, x + 14, y - TH / 2 + 1);
+}
+/* Kachel zeichnen: Canvas mit Pixeldichte, Hintergrund, Zoom */
+function paint(cv, spec) {
+	const dpr = Math.min(2, window.devicePixelRatio || 1), W = spec.w, H = spec.h;
+	cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+	const c = cv.getContext('2d'); c.DPR = dpr; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = BG; c.fillRect(0, 0, W, H);
+	(spec.panels || [{ x: 0, y: 0, w: W, h: H, z: spec.z || 1, ox: spec.ox || 0, oy: spec.oy || 0, draw: spec.draw, label: spec.label }]).forEach(p => {
+		c.save(); c.beginPath(); c.rect(p.x, p.y, p.w, p.h); c.clip(); c.translate(p.x + (p.ox || 0), p.y + (p.oy || 0)); c.scale(p.z, p.z); c.Z = p.z; p.draw(c); c.restore();
+		if (p.label) { c.font = '12px system-ui, sans-serif'; c.fillStyle = '#5c5f63'; c.textAlign = 'left'; c.textBaseline = 'alphabetic'; c.fillText(p.label, p.x + 10, p.y + p.h - 10); }
+		if (spec.panels) { c.strokeStyle = '#e3e4e6'; c.lineWidth = 1; c.strokeRect(p.x + .5, p.y + .5, p.w - 1, p.h - 1); }
+	});
+}
+Object.assign(window, { PAL, note, shape, connector, anchor, elbowPts, frameA2, paint, drawText, selection, rr, font, INK, BG, tipSize, drawEnd });
+</script>
+<script>/* Runde 3 · Varianten und Kacheln für N (Notizen), F (Grundformen), V (Verbinder), D (zusammen) */
+let TILES = [];
+const FULL = 1360, HALF = 670;
+function T(cap, spec, cls = 'full') { const id = TILES.length; TILES.push(spec); return `<figure class="tile ${cls}"><canvas data-t="${id}" role="img" aria-label="${cap.replace(/"/g, '')}"></canvas><figcaption>${cap}</figcaption></figure>`; }
+/* gleich breite Felder nebeneinander */
+function row(w, h, items) { const pw = w / items.length; return { w, h, panels: items.map((it, i) => ({ x: i * pw, y: 0, w: pw, h, z: it.z || 1, ox: it.ox || 0, oy: it.oy || 0, draw: it.draw, label: it.label })) }; }
+
+/* ── Varianten ── */
+const TXT0 = { lh: 1.2, pad: 16, wt: 400, align: 'center', valign: 'middle' }, TXT1 = { lh: 1.25, pad: 18, wt: 400, align: 'center', valign: 'middle' };
+const NV = {
+	N0: { name: 'Heute', radius: 6, shadow: [{ y: 2, blur: 8, a: .12 }], text: TXT0,
+		desc: 'Ein einzelner, eher harter Schatten nach unten, Ecken 6, Text mittig mit Zeilenabstand 1,2 und Innenabstand 16. Wirkt sauber, aber flach wie ein aufgeklebter Farbfleck; weiße Notizen verschwinden fast auf der Leinwand, und unter 30 % Zoom fehlt der Schatten ganz.' },
+	N1: { name: 'Papier', radius: 6, shadow: [{ y: 1, blur: 2, a: .10 }, { y: 6, blur: 16, a: .10 }], text: TXT1,
+		desc: 'Zwei Schatten: ein naher, kleiner (0/1/2, 10 %) gibt eine Kante, ein ferner, weicher (0/6/16, 10 %) lässt das Blatt leicht abstehen. Text etwas luftiger (Zeilenabstand 1,25, Innenabstand 18). Die Werte aus tokens.css (Runde 1) sind zu schwach – der ferne Schatten ist dort kaum zu sehen (siehe Vergleich). Bauen: in Konva hat eine Form nur einen Schatten, der zweite braucht eine zweite Fläche darunter – pro Notiz ein Knoten mehr.' },
+	N2: { name: 'Haftzettel', radius: 6, shadow: [{ y: 1, blur: 2, a: .10 }, { y: 6, blur: 16, a: .10 }], lift: { y: 6, blur: 8, a: .22 }, text: TXT1,
+		desc: 'Wie N1, dazu ein Merkmal echter Haftnotizen. Drei getrennt zum Auswählen: N2a die unteren Ecken heben sich (stärkerer Schatten an den Ecken), N2b ein angedeuteter Klebestreifen oben im kräftigen Ton mit 22 % Deckkraft, N2c ein Eselsohr unten rechts. Die übrigen Kacheln zeigen N2a. Bauen: N2a zwei kleine Flächen unter der Notiz, N2b ein Rechteck, N2c ein anderer Umriss plus Dreieck – alles einfach; das Eselsohr nimmt der Schrift aber eine Ecke.' },
+	N3: { name: 'Rand statt Schatten', radius: 6, shadow: [{ y: 1, blur: 1, a: .06 }], edge: { w: 1.5, a: .35 }, text: TXT1,
+		desc: 'Eine feine Kante im kräftigen Ton derselben Farbe mit 35 % Deckkraft, fast kein Schatten. Ruhig, modern, eher Karte als Papier; weiße Notizen sind klar abgegrenzt, auch bei 25 %. Dagegen: wirkt noch weniger „Papier“ als heute – gegen „flach“ hilft es nicht. Bauen: nur ein Rand – am billigsten.' },
+	N4: { name: 'Vorschlag: Papier mit feiner Kante', radius: 6, shadow: [{ y: 1, blur: 2, a: .10 }, { y: 5, blur: 14, a: .09 }], edge: { w: 1, a: .18 }, text: TXT1,
+		desc: 'Der Papier-Schatten aus N1, etwas leiser, dazu eine sehr feine Kante (kräftiger Ton, 18 %). Die Kante trägt dort, wo der Schatten nicht hilft: weiße Notizen auf heller Leinwand, viele Notizen dicht beieinander und Zoom unter 30 %, wo Knorke keine Schatten zeichnet. Bauen: wie N1 plus ein Rand.' },
+};
+const FV = {
+	F0: { name: 'Heute', sw: 2, ink: '#191b1d', rectR: 0, roundR: 'pct', polyR: 0, field: 'today', pad: 8, fs: 20, lh: 1.2, sizes: 'today',
+		desc: 'Schwarzer 2er-Rand, weiße Fläche, spitze Ecken, alle Formen 200 × 120. Klar, aber hart; Raute und Ellipse wirken gestaucht, und in Raute und Dreieck passt kaum Text.' },
+	F1: { name: 'Weicher Rand', sw: 2, ink: '#3d4044', rectR: 4, roundR: 16, polyR: 4, field: 'today', pad: 8, fs: 20, lh: 1.2, sizes: 'today',
+		desc: 'Rand dunkelgrau (#3d4044, dieselbe Farbe wie Verbinder) statt schwarz, dadurch wirkt die 2er-Linie feiner. Alle Ecken leicht gerundet (4), das abgerundete Rechteck mit festem Radius 16 statt 15 %. Bestehende Boards: schwarze Ränder bleiben schwarz (gespeicherter Wert), nur die Ecken werden weicher.' },
+	F2: { name: 'Farbig gefüllt', sw: 2, ink: '#191b1d', rectR: 0, roundR: 'pct', polyR: 0, fill: 'indigo', tone: true, field: 'today', pad: 8, fs: 20, lh: 1.2, sizes: 'today',
+		desc: 'Neue Formen bekommen einen hellen Palettenton als Fläche und den kräftigen Ton derselben Farbe als Rand (Ton-in-Ton, hier Indigo, damit sie sich von hellblauen Notizen unterscheiden). Lebendig, aber bunte Flussdiagramme werden schnell unruhig und sehen Notizen ähnlich. Weiß bleibt wählbar. Nur neue Formen.' },
+	F3: { name: 'Leichter Schatten', sw: 2, ink: '#191b1d', rectR: 0, roundR: 'pct', polyR: 0, shadow: { y: 1, blur: 4, a: .10 }, field: 'today', pad: 8, fs: 20, lh: 1.2, sizes: 'today',
+		desc: 'Wie heute plus ein schwacher Schatten (0/1/4, 10 %), damit Formen sich von der Leinwand lösen. Mit Rand und Schatten zugleich wirkt es doppelt; Formen und Notizen sehen sich dann ähnlicher (beide „liegen auf“). Bestehende Boards sähen anders aus. Bauen: nur Schattenwerte.' },
+	F4: { name: 'Vorschlag: weich, Ton-in-Ton, bessere Maße', sw: 2, ink: '#3d4044', rectR: 4, roundR: 16, polyR: 4, tone: true, field: 'better', pad: 12, fs: 20, lh: 1.2, sizes: 'new',
+		desc: 'F1 (dunkelgrauer Rand, Ecken 4) mit drei Regeln: Wer eine Farbe wählt, bekommt den passenden kräftigen Ton als Rand (Ton-in-Ton); Weiß bleibt Standard, damit Flussdiagramme ruhig bleiben. Neue Grundgrößen je Form (Ellipse und Raute 160 × 160, Dreieck 160 × 140). Textfelder so berechnet, dass Raute und Dreieck bei gleicher Schrift mindestens so viel fassen wie heute (Innenabstand dort 4, sonst 12). Kein Schatten – der gehört den Notizen.' },
+};
+const VV = {
+	V0: { name: 'Heute', corner: 0, tip: 'today', defEnd: 'arrow', label: { kind: 'canvas', size: 16, pad: 4 }, curve: 'today',
+		desc: 'Spitze Knicke, offener Winkel als Ende (Größe 3 × Stärke + 4), Linie direkt auf der Kante, Beschriftung auf einem Fleck in Leinwandfarbe. Bei Stärke 8 und 12 werden die Spitzen sehr groß; über farbigen Flächen sieht der Fleck wie ein Loch aus.' },
+	V1: { name: 'Runde Knicke', corner: 12, tip: 'today', defEnd: 'arrow', label: { kind: 'canvas', size: 16, pad: 4 }, curve: 'today',
+		desc: 'Eckige Route mit gerundeten Knicken (Radius 12, höchstens die Hälfte des kürzeren Stücks). Wirkt weicher und leichter zu verfolgen; bleibt aber klar rechtwinklig. Bestehende Boards: alle eckigen Verbinder bekommen runde Knicke. Bauen: arcTo statt lineTo – klein.' },
+	V2: { name: 'Feinere Spitzen', corner: 0, tip: 'fine', defEnd: 'triangle', label: { kind: 'canvas', size: 16, pad: 4 }, curve: 'today',
+		desc: 'Pfeilenden schlanker und nicht mehr proportional: Länge 6 + 4 × √Stärke (bei 2 etwa 12, bei 8 etwa 17, heute 28), Breite gut ein Drittel der Länge. Neues Standard-Ende: gefülltes, spitzes Dreieck statt offener Winkel – liest sich auch dünn deutlich. Bestehende Boards: Spitzen werden kleiner, das gewählte Ende bleibt.' },
+	V3: { name: 'Abstand zur Form', corner: 0, tip: 'today', defEnd: 'arrow', gap: 6, tipGap: 6, label: { kind: 'canvas', size: 16, pad: 4 }, curve: 'today',
+		desc: 'Die Linie beginnt und endet 6 Einheiten vor der Kante. Wirkt luftiger, Pfeil und Rand verschmelzen nicht. Dagegen: es sieht schnell aus, als hinge der Verbinder lose; der Vergleich zeigt „Anfang mit Abstand, Spitze berührt“ als Mittelweg. Bauen: Endpunkte verschieben – klein.' },
+	V4: { name: 'Beschriftung', corner: 0, tip: 'today', defEnd: 'arrow', label: { kind: 'pill', size: 15, pad: 5 }, curve: 'today',
+		desc: 'Vier Wege für den Text auf der Linie: Fleck in Leinwandfarbe (heute), kleine weiße Plakette mit feinem Rand, Text über der Linie ohne Hintergrund, kleiner (14) oder größer (18). Über einem gelben Frame ist der Leinwand-Fleck falsch, die Plakette passt überall. Die übrigen Kacheln zeigen die Plakette (15).' },
+	V5: { name: 'Kurven', corner: 0, tip: 'today', defEnd: 'arrow', label: { kind: 'canvas', size: 16, pad: 4 }, curve: 'tense',
+		desc: 'Die gebogene Route mit mehr Spannung (Griffe 60 % des Abstands, mindestens 60) oder als S-Kurve (Griffe waagrecht bis zur Mitte). Mehr Spannung wirkt runder und großzügiger, die S-Kurve ruhiger bei versetzten Formen, aber bei Formen übereinander ungewohnt. Die übrigen Kacheln zeigen 60 %.' },
+	V6: { name: 'Vorschlag: rund, fein, Plakette', corner: 10, tip: 'fine', defEnd: 'triangle', gap: 0, tipGap: 0, label: { kind: 'pill', size: 15, pad: 5 }, curve: 'tense',
+		desc: 'Zusammen aus V1, V2, V4 und V5: Knicke Radius 10, feine Spitzen mit gefülltem Dreieck als Standard, Beschriftung als weiße Plakette in 15, Kurven mit 60 % Spannung. Farbe (#3d4044) und Stärke 2 bleiben, kein Abstand zur Form – die feine Spitze liegt sauber auf der Kante.' },
+};
+const SZ = { today: { rect: [200, 120], round: [200, 120], ellipse: [200, 120], diamond: [200, 120], triangle: [200, 120], arrow: [200, 120] }, new: { rect: [200, 120], round: [200, 120], ellipse: [160, 160], diamond: [160, 160], triangle: [160, 140], arrow: [200, 100] } };
+const KINDS = [['rect', 'Rechteck'], ['round', 'Abgerundet'], ['ellipse', 'Ellipse'], ['diamond', 'Raute'], ['triangle', 'Dreieck'], ['arrow', 'Pfeil']];
+
+/* ── Teil N ── */
+const TX = { short: 'Kunden anrufen', three: 'Wöchentliche Abstimmung mit dem Vertrieb', long: 'Bis Freitag alle offenen Fragen aus dem Workshop sammeln, nach Thema sortieren und an das Team schicken, damit wir am Montag entscheiden können', word: 'Datenschutzgrundverordnung' };
+function notesRow(NS, list, gap = 30) { return c => list.forEach((n, i) => note(c, { x: 20 + i * ((n.size || 200) + gap), y: n.y ?? 20, ...n }, NS)); }
+function partN(code) {
+	const NS = NV[code];
+	const NSa = code === 'N2' ? NS : NS;
+	let t = '';
+	const cols = ['hellblau', 'gelb', 'koralle', 'salbei', 'weiss', 'schwarz'], ctext = ['Kunden anrufen', 'Retro vorbereiten', 'Server-Update', 'Umfrage erledigt', 'Weiße Notiz', 'Schwarze Notiz'];
+	if (code === 'N2') t += T('N2a · Ecken heben sich · N2b · Klebestreifen · N2c · Eselsohr', row(FULL, 300, [
+		{ z: 1, ox: 120, oy: 40, label: 'N2a · Ecken heben sich', draw: c => note(c, { x: 0, y: 0, text: TX.short }, NS) },
+		{ z: 1, ox: 120, oy: 40, label: 'N2b · Klebestreifen', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'gelb' }, { ...NS, lift: null, tape: true }) },
+		{ z: 1, ox: 120, oy: 40, label: 'N2c · Eselsohr', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'koralle' }, { ...NS, lift: null, ear: 26 }) }]));
+	t += T('Farben: Hellblau, Gelb, Koralle, Salbei, Weiß, Schwarz (weißer Text) · Zoom 85 %', { w: FULL, h: 230, z: .85, ox: 10, oy: 4, draw: notesRow(NSa, cols.map((c, i) => ({ color: c, text: ctext[i] }))) });
+	const four = (al) => notesRow(NSa, [{ text: TX.short }, { text: TX.three, color: 'gelb' }, { text: TX.long, color: 'salbei' }, { text: TX.word, color: 'koralle' }].map(n => ({ ...n, align: al === 'left' ? 'left' : 'center', valign: al === 'left' ? 'top' : 'middle' })), 24);
+	t += T('Text mittig (heute): kurz · drei Zeilen · sehr lang · langes Wort · Größe M (22)', { w: HALF, h: 170, z: .6, ox: 4, oy: 4, draw: four('c') }, 'half');
+	t += T('Text oben links: dieselben vier', { w: HALF, h: 170, z: .6, ox: 4, oy: 4, draw: four('left') }, 'half');
+	t += T('Grundgröße: 200 (heute) gegen 180 (Runde 1) · drei Zeilen, M', { w: HALF, h: 260, z: 1, ox: 10, oy: 10, draw: c => { note(c, { x: 20, y: 10, text: TX.three, color: 'gelb' }, NSa); note(c, { x: 260, y: 10, size: 180, text: TX.three, color: 'gelb' }, NSa); } }, 'half');
+	t += T('Fünf Notizen dicht als Gruppe und überlappend · Zoom 60 %', { w: HALF, h: 260, z: .6, ox: 10, oy: 10, draw: c => { [['hellblau', 'Idee A'], ['gelb', 'Idee B'], ['salbei', 'Idee C']].forEach(([cl, tx], i) => note(c, { x: 20 + i * 212, y: 20, color: cl, text: tx }, NSa)); note(c, { x: 120, y: 200, color: 'koralle', text: 'Risiko' }, NSa); note(c, { x: 230, y: 160, color: 'weiss', text: 'Notiz darüber' }, NSa); } }, 'half');
+	t += T('Mit Tags · mit Abstimmung und Reaktionen · ausgewählt · gedreht 5°', { w: FULL, h: 300, z: .9, ox: 10, oy: 16, draw: c => {
+		note(c, { x: 20, y: 10, text: 'Onboarding verbessern', tags: [['UX', 'indigo'], ['Q4', 'koralle']] }, NSa);
+		note(c, { x: 330, y: 10, text: 'Mehr Kundeninterviews', color: 'gelb', vote: 3, react: true }, NSa);
+		note(c, { x: 640, y: 10, text: 'Preisseite überarbeiten', color: 'salbei', sel: true }, NSa);
+		note(c, { x: 950, y: 10, text: 'Gedrehte Notiz', color: 'koralle', rot: 5 }, NSa); } });
+	t += zoomN(NSa);
+	if (code === 'N1') t += T('Prüfung: Schatten aus tokens.css (Runde 1) gegen N1', row(HALF, 280, [
+		{ ox: 70, oy: 30, label: 'tokens.css: 0/1/2 10 % + 0/3/8 8 %', draw: c => note(c, { x: 0, y: 0, text: 'Weiße Notiz', color: 'weiss' }, { ...NS, shadow: [{ y: 1, blur: 2, a: .10 }, { y: 3, blur: 8, a: .08 }] }) },
+		{ ox: 70, oy: 30, label: 'N1: 0/1/2 10 % + 0/6/16 10 %', draw: c => note(c, { x: 0, y: 0, text: 'Weiße Notiz', color: 'weiss' }, NS) }]), 'half');
+	if (code === 'N4' || code === 'N3') t += T('Bei 25 % zeichnet Knorke keine Schatten: heute gegen ' + code, row(HALF, 200, [
+		{ z: .25, ox: 40, oy: 40, label: 'N0 · 25 %', draw: notesRow(NV.N0, [{ color: 'weiss', text: 'A' }, { color: 'weiss', text: 'B' }, { color: 'gelb', text: 'C' }], 20) },
+		{ z: .25, ox: 40, oy: 40, label: code + ' · 25 %', draw: notesRow(NS, [{ color: 'weiss', text: 'A' }, { color: 'weiss', text: 'B' }, { color: 'gelb', text: 'C' }], 20) }]), 'half');
+	return t;
+}
+function zoomN(NS) {
+	return T('Zoom 25 % · 100 % · 200 %', row(FULL, 300, [
+		{ z: .25, ox: 60, oy: 90, label: '25 %', draw: notesRow(NS, [{ text: TX.short }, { color: 'gelb', text: TX.three }, { color: 'salbei', text: 'Erledigt' }], 30) },
+		{ z: 1, ox: 110, oy: 30, label: '100 %', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'gelb' }, NS) },
+		{ z: 2, ox: 60, oy: 40, label: '200 % · Ausschnitt', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'gelb' }, NS) }]));
+}
+
+/* ── Teil F ── */
+function shapesRow(FS, text, y = 20, gap = 24, extra = {}) {
+	return c => { let x = 20; KINDS.forEach(([k], i) => { const [w, h] = SZ[FS.sizes][k]; shape(c, { k, x, y: y + (160 - h) / 2, w, h, text: Array.isArray(text) ? text[i] : text, ...extra }, FS); x += w + gap; }); };
+}
+function flow(FS, VS) {
+	return c => {
+		const P = { k: 'rect', x: 20, y: 120, w: 180, h: 90, text: 'Bestellung prüfen' }, D = { k: 'diamond', x: 280, y: 95, w: 140, h: 140, text: 'Bezahlt?' };
+		const Do = { k: 'doc', x: 520, y: 20, w: 180, h: 100, text: 'Rechnung' }, Db = { k: 'db', x: 520, y: 210, w: 160, h: 110, text: 'Lager', db: true };
+		[P, D, Do, Db].forEach(s => shape(c, s, FS));
+		connector(c, { a: anchor(P, 'r'), b: anchor(D, 'l') }, VS);
+		connector(c, { a: anchor(D, 't'), b: anchor(Do, 'l'), label: 'ja' }, VS);
+		connector(c, { a: anchor(D, 'b'), b: anchor(Db, 'l'), label: 'nein' }, VS);
+	};
+}
+function partF(code) {
+	const FS = FV[code];
+	let t = '';
+	t += T('Alle sechs Formen mit kurzem Text · Grundgröße beim Klick', { w: FULL, h: 200, z: 1, ox: 0, oy: 0, draw: shapesRow(FS, ['Start', 'Prüfen', 'Idee', 'OK?', 'Achtung', 'Weiter']) });
+	t += T('Alle sechs mit langem Text: „Bestellung prüfen und Kunden informieren“', { w: FULL, h: 200, z: 1, draw: shapesRow(FS, 'Bestellung prüfen und Kunden informieren') });
+	t += T('Rand 1 · 2 · 4 · gestrichelt · gepunktet', { w: FULL, h: 170, z: .9, ox: 10, oy: 10, draw: c => [1, 2, 4].forEach((w, i) => shape(c, { k: 'rect', x: 20 + i * 290, y: 20, w: 200, h: 120, sw: w, text: 'Rand ' + w }, FS)) || shape(c, { k: 'round', x: 890, y: 20, w: 200, h: 120, dash: 'dash', text: 'gestrichelt' }, FS) || shape(c, { k: 'ellipse', x: 1180, y: 10, w: 140, h: 140, dash: 'dot', text: 'gepunktet' }, FS) });
+	t += T('Füllung 0 % · 50 % · Farben Salbei, Gelb, Koralle', { w: FULL, h: 170, z: .9, ox: 10, oy: 10, draw: c => { shape(c, { k: 'rect', x: 20, y: 20, w: 200, h: 120, alpha: 0, color: 'salbei', text: 'Füllung 0 %' }, FS); shape(c, { k: 'rect', x: 290, y: 20, w: 200, h: 120, alpha: .5, color: 'salbei', text: 'Füllung 50 %' }, FS); ['salbei', 'gelb', 'koralle'].forEach((cl, i) => shape(c, { k: i === 1 ? 'diamond' : 'round', x: 560 + i * 270, y: i === 1 ? 5 : 20, w: i === 1 ? 160 : 200, h: i === 1 ? 150 : 120, color: cl, text: ['Salbei', 'Gelb', 'Koralle'][i] }, FS)); } });
+	t += T('Flussdiagramm: Prozess, Entscheidung, Dokument, Datenbank · Verbinder wie heute', { w: 900, h: 360, z: 1, ox: 20, oy: 10, draw: flow(FS, VV.V0) }, 'wide');
+	t += T('Ausgewählt', { w: 440, h: 360, z: 1, draw: c => shape(c, { k: 'round', x: 110, y: 120, w: 200, h: 120, text: 'Ausgewählte Form', sel: true }, FS) }, 'narrow');
+	t += T('Zoom 25 % · 100 % · 200 %', row(FULL, 280, [
+		{ z: .25, ox: 40, oy: 100, label: '25 %', draw: shapesRow(FS, ['Start', 'Prüfen', 'Idee', 'OK?', 'Achtung', 'Weiter']) },
+		{ z: 1, ox: 100, oy: 60, label: '100 %', draw: c => shape(c, { k: 'diamond', x: 0, y: 0, w: SZ[FS.sizes].diamond[0], h: SZ[FS.sizes].diamond[1], text: 'Bezahlt?' }, FS) },
+		{ z: 2, ox: 30, oy: 30, label: '200 % · Ausschnitt', draw: c => shape(c, { k: 'round', x: 0, y: 0, w: 200, h: 120, text: 'Prüfen' }, FS) }]));
+	if (code === 'F4' || code === 'F0') t += fieldTile(FS, code);
+	return t;
+}
+function fieldTile(FS, code) {
+	const txt = 'Bestellung prüfen und Kunden informieren';
+	return T(`Textfeld (gestrichelt) in Ellipse, Raute, Dreieck · Schrift fest 16 bzw. 20, kein Verkleinern · ${code === 'F0' ? 'heute (200 × 120): Ellipse 71 × 71 %, Raute 50 × 50 %, Dreieck untere Hälfte, Innenabstand 8 → Textfläche 126 × 69 · 84 × 44 · 84 × 44' : 'neu (160 × 160, 160 × 140): Ellipse 84 × 54 % (Abstand 8), Raute 58 × 38 %, Dreieck ab 60 % der Höhe 58 % breit (Abstand 4) → Textfläche 118 × 70 · 85 × 53 · 85 × 48'}`, { w: FULL, h: 220, z: .88, ox: 0, oy: 8, draw: c => { let x = 30; ['ellipse', 'diamond', 'triangle'].forEach(k => { const [w, h] = SZ[FS.sizes][k]; shape(c, { k, x, y: 10 + (180 - h) / 2, w, h, text: txt, fs: 16, fixed: true, showField: true }, FS); x += w + 36; }); ['ellipse', 'diamond', 'triangle'].forEach(k => { const [w, h] = SZ[FS.sizes][k]; shape(c, { k, x, y: 10 + (180 - h) / 2, w, h, text: 'Idee', fs: 20, fixed: true, showField: true }, FS); x += w + 36; }); } });
+}
+
+/* ── Teil V ── */
+const box = (x, y, w = 120, h = 64, text) => ({ k: 'round', x, y, w, h, text });
+const FSv = { ...FV.F0, fs: 16 };
+function pair(VS, A, B, sa, sb, route, extra = {}) { return c => { shape(c, A, FSv); shape(c, B, FSv); connector(c, { a: anchor(A, sa), b: anchor(B, sb), route, ...extra }, VS); }; }
+function routesTile(VS) {
+	const sc = [['nebeneinander', box(30, 60, 120, 64, 'A'), box(290, 60, 120, 64, 'B'), 'r', 'l'], ['untereinander, leicht versetzt', box(60, 12, 120, 64, 'A'), box(200, 128, 120, 64, 'B'), 'b', 't'], ['schräg versetzt', box(30, 16, 120, 64, 'A'), box(290, 120, 120, 64, 'B'), 'r', 'l']];
+	const items = []; for (const route of [['straight', 'gerade'], ['elbow', 'eckig'], ['curve', 'gebogen']]) for (const s of sc) items.push({ label: route[1] + ' · ' + s[0], draw: pair(VS, s[1], s[2], s[3], s[4], route[0]) });
+	const pw = FULL / 3, ph = 210;
+	return T('Drei Routen (Spalten: nebeneinander, untereinander, schräg)', { w: FULL, h: ph * 3, panels: items.map((it, i) => ({ x: (i % 3) * pw, y: Math.floor(i / 3) * ph, w: pw, h: ph, z: 1, ox: 0, oy: 0, draw: it.draw, label: it.label })) });
+}
+function partV(code) {
+	const VS = VV[code];
+	let t = routesTile(VS);
+	t += T('Eckig mit Ausweichen um ein Hindernis · kurze Verbindung (Formen nah)', row(FULL, 240, [
+		{ label: 'Ausweichen', draw: c => { const A = box(20, 60, 110, 64, 'A'), O = box(220, 40, 110, 104, 'Hindernis'), B = box(420, 60, 110, 64, 'B'); [A, O, B].forEach(s => shape(c, s, FSv)); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l'), pts: [[130, 92], [150, 92], [150, 176], [400, 176], [400, 92], [420, 92]] }, VS); } },
+		{ label: 'kurz: eckig und gebogen', draw: c => { const A = box(40, 30, 110, 64, 'A'), B = box(190, 60, 110, 64, 'B'), C = box(360, 30, 110, 64, 'C'), D = box(400, 130, 110, 64, 'D'); [A, B, C, D].forEach(s => shape(c, s, FSv)); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l') }, VS); connector(c, { a: anchor(C, 'b'), b: anchor(D, 't'), route: 'curve' }, VS); } }]));
+	t += T('Stärke 1 · 2 · 4 · 8 · gestrichelt · gepunktet · zwei Farben', { w: FULL, h: 210, z: 1, draw: c => {
+		[1, 2, 4, 8].forEach((w, i) => { const y = 30 + i * 46; connector(c, { a: { x: 40, y, dx: 1, dy: 0 }, b: { x: 380, y, dx: -1, dy: 0 }, route: 'straight', w }, VS); font(c, 13); c.fillStyle = '#5c5f63'; c.textAlign = 'left'; c.fillText('Stärke ' + w, 400, y + 1); });
+		connector(c, { a: { x: 520, y: 40, dx: 1, dy: 0 }, b: { x: 860, y: 40, dx: -1, dy: 0 }, route: 'straight', dash: 'dash' }, VS);
+		connector(c, { a: { x: 520, y: 90, dx: 1, dy: 0 }, b: { x: 860, y: 90, dx: -1, dy: 0 }, route: 'straight', dash: 'dot' }, VS);
+		connector(c, { a: { x: 920, y: 30, dx: 1, dy: 0 }, b: { x: 1300, y: 150, dx: -1, dy: 0 }, color: PAL.koralle[1] }, VS);
+		connector(c, { a: { x: 920, y: 170, dx: 1, dy: 0 }, b: { x: 1300, y: 60, dx: -1, dy: 0 }, color: PAL.indigo[1], route: 'curve', dash: 'dash' }, VS); } });
+	t += endsTile(VS, code);
+	t += T('Beschriftung kurz und lang · über einem farbigen Frame', row(FULL, 260, [
+		{ label: 'kurz', draw: pair(VS, box(20, 90), box(300, 90), 'r', 'l', 'elbow', { label: 'ja' }) },
+		{ label: 'lang (Umbruch bei 240)', draw: pair(VS, box(20, 20), box(300, 160), 'r', 'l', 'elbow', { label: 'nur wenn die Zahlung bestätigt und die Ware im Lager ist' }) },
+		{ label: 'über gelbem Frame', draw: c => { frameA2(c, { x: 10, y: 50, w: 430, h: 190, title: 'Ablauf', color: 'gelb' }); const A = box(30, 110), B = box(300, 110); shape(c, A, FSv); shape(c, B, FSv); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l'), label: 'weiter' }, VS); } }]));
+	t += T('Ausgewählt', { w: HALF, h: 220, draw: pair(VS, box(40, 40), box(440, 120), 'r', 'l', 'elbow', { sel: true, label: 'prüfen' }) }, 'half');
+	t += T('Zoom 25 % · 100 % · 200 %', row(HALF, 220, [
+		{ z: .25, ox: 20, oy: 70, label: '25 %', draw: pair(VS, box(20, 40), box(420, 140), 'r', 'l', 'elbow', { label: 'ja' }) },
+		{ z: 1, ox: 0, oy: 0, label: '100 %', draw: pair(VS, box(10, 30, 80, 50, 'A'), box(130, 120, 80, 50, 'B'), 'r', 'l', 'elbow', { label: 'ja' }) },
+		{ z: 2, ox: -165, oy: -134, label: '200 %', draw: pair(VS, box(10, 30, 80, 50, 'A'), box(130, 120, 80, 50, 'B'), 'r', 'l', 'elbow', { label: 'ja' }) }]), 'half');
+	if (code === 'V4') t += labelsTile();
+	if (code === 'V5') t += curvesTile();
+	if (code === 'V3') t += T('Abstand: überall 6 · nur am Anfang 6, Spitze berührt · heute', row(FULL, 200, [
+		{ label: 'Abstand 6 an beiden Enden', draw: pair(VS, box(30, 60), box(300, 60), 'r', 'l', 'straight') },
+		{ label: 'Anfang 6, Spitze berührt', draw: pair({ ...VS, tipGap: 0 }, box(30, 60), box(300, 60), 'r', 'l', 'straight') },
+		{ label: 'heute: direkt auf der Kante', draw: pair(VV.V0, box(30, 60), box(300, 60), 'r', 'l', 'straight') }]));
+	return t;
+}
+const ENDS = [['arrow', 'Winkel'], ['triangle', 'Dreieck'], ['triangleOpen', 'Dreieck offen'], ['diamond', 'Raute'], ['dot', 'Punkt'], ['circleOpen', 'Kreis offen'], ['none', 'keins']];
+function endsTile(VS, code) {
+	return T(`Alle sieben Enden bei Stärke 1 · 2 · 4 · 8 ${code === 'V2' || code === 'V6' ? '(fein: 6 + 4 × √Stärke)' : '(Größe 3 × Stärke + 4)'}`, { w: FULL, h: 260, draw: c => {
+		font(c, 13); c.fillStyle = '#5c5f63'; c.textAlign = 'center';
+		ENDS.forEach(([e, l], j) => { c.fillStyle = '#5c5f63'; font(c, 13); c.textAlign = 'center'; c.fillText(l, 150 + j * 180, 20); });
+		[1, 2, 4, 8].forEach((w, i) => { const y = 60 + i * 52; font(c, 13); c.fillStyle = '#5c5f63'; c.textAlign = 'left'; c.fillText(String(w), 20, y + 4); ENDS.forEach(([e], j) => connector(c, { a: { x: 80 + j * 180, y, dx: 1, dy: 0 }, b: { x: 220 + j * 180, y, dx: -1, dy: 0 }, route: 'straight', w, end: e }, VS)); });
+	} });
+}
+function labelsTile() {
+	const kinds = [[{ kind: 'canvas', size: 16, pad: 4 }, 'heute: Fleck in Leinwandfarbe'], [{ kind: 'pill', size: 15, pad: 5 }, 'Plakette mit Rand'], [{ kind: 'above', size: 16, pad: 2 }, 'über der Linie'], [{ kind: 'pill', size: 14, pad: 4 }, 'klein 14'], [{ kind: 'pill', size: 18, pad: 5 }, 'groß 18']];
+	const pw = FULL / kinds.length;
+	return T('Beschriftung in fünf Arten · oben auf der Leinwand, unten über einem gelben Frame', { w: FULL, h: 380, panels: kinds.flatMap(([L, lab], i) => [
+		{ x: i * pw, y: 0, w: pw, h: 170, z: 1, label: lab, draw: c => { const A = box(14, 50, 80, 56, 'A'), B = box(176, 50, 80, 56, 'B'); shape(c, A, FSv); shape(c, B, FSv); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l'), route: 'straight', label: 'ja, sofort' }, { ...VV.V0, label: L }); } },
+		{ x: i * pw, y: 170, w: pw, h: 210, z: 1, label: lab + ' · auf Gelb', draw: c => { frameA2(c, { x: 6, y: 50, w: 258, h: 140, title: 'Ablauf', color: 'gelb' }); const A = box(14, 90, 80, 56, 'A'), B = box(176, 90, 80, 56, 'B'); shape(c, A, FSv); shape(c, B, FSv); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l'), route: 'straight', label: 'ja, sofort' }, { ...VV.V0, label: L }); } }]) });
+}
+function curvesTile() {
+	const k = [['today', 'heute: 40 % (mind. 40)'], ['tense', '60 % (mind. 60)'], ['s', 'S-Kurve']];
+	const pw = FULL / 3;
+	return T('Kurven im Vergleich · oben schräg versetzt, unten übereinander', { w: FULL, h: 440, panels: k.flatMap(([cv, lab], i) => [
+		{ x: i * pw, y: 0, w: pw, h: 210, z: 1, label: lab, draw: pair({ ...VV.V0, curve: cv }, box(30, 20, 120, 64, 'A'), box(300, 120, 120, 64, 'B'), 'r', 'l', 'curve') },
+		{ x: i * pw, y: 210, w: pw, h: 230, z: 1, label: lab, draw: pair({ ...VV.V0, curve: cv }, box(60, 14, 120, 64, 'A'), box(240, 140, 120, 64, 'B'), 'b', 't', 'curve') }]) });
+}
+
+/* ── Teil D ── */
+function board(NS, FS, VS) {
+	return c => {
+		frameA2(c, { x: 30, y: 60, w: 680, h: 470, title: 'Retro Sprint 12', color: 'weiss' });
+		const S = 200 * .9;
+		[['hellblau', 'Deploys laufen jetzt automatisch', 50, 90], ['salbei', 'Pairing hat geholfen', 260, 90], ['gelb', 'Tests zu langsam', 470, 90], ['koralle', 'Unklare Prioritäten im Backlog', 50, 310], ['weiss', 'Datenschutzgrundverordnung prüfen', 260, 310, 2]].forEach(([cl, tx, x, y, v]) => note(c, { x, y, size: S, color: cl, text: tx, vote: v }, NS));
+		const sz = FS.sizes === 'new' ? { d: [150, 150] } : { d: [190, 114] };
+		const P = { k: 'round', x: 920, y: 100, w: 190, h: 100, text: 'Idee aufnehmen' }, D = { k: 'diamond', x: 920 + (190 - sz.d[0]) / 2, y: 280, w: sz.d[0], h: sz.d[1], text: 'Wichtig genug?' };
+		const Y = { k: 'rect', x: 1200, y: 280 + (sz.d[1] - 100) / 2, w: 190, h: 100, text: 'In den Sprint', color: FS.tone ? 'salbei' : undefined }, N = { k: 'doc', x: 920, y: 500, w: 190, h: 100, text: 'Später ansehen' };
+		[P, D, Y, N].forEach(s => shape(c, s, FS));
+		connector(c, { a: anchor(P, 'b'), b: anchor(D, 't') }, VS);
+		connector(c, { a: anchor(D, 'r'), b: anchor(Y, 'l'), label: 'ja' }, VS);
+		connector(c, { a: anchor(D, 'b'), b: anchor(N, 't'), label: 'nein' }, VS);
+		connector(c, { a: { x: 710, y: 180, dx: 1, dy: 0 }, b: anchor(P, 'l'), route: 'curve', label: 'aus der Retro' }, VS);
+	};
+}
+function partD() {
+	return T('Heute: N0 · F0 · V0 (mit Frame-Reiter A2 aus Runde 2)', { w: FULL, h: 640, z: .95, ox: 10, oy: 10, draw: board(NV.N0, FV.F0, VV.V0) })
+		+ T('Empfehlung: N4 · F4 · V6', { w: FULL, h: 640, z: .95, ox: 10, oy: 10, draw: board(NV.N4, FV.F4, VV.V6) });
+}
+
+/* ── Übersichten: Paare „heute / anders“ ── */
+function pairTile(cap, a, b, h = 230) { return T(cap, row(HALF, h, [a, b]), 'half'); }
+function overviewN() {
+	let t = '';
+	t += pairTile('Schatten: einer, hart (heute) · zwei, nah und fern (N1)', { ox: 70, oy: 20, label: 'heute', draw: c => note(c, { x: 0, y: 0, text: TX.short }, NV.N0) }, { ox: 70, oy: 20, label: 'N1', draw: c => note(c, { x: 0, y: 0, text: TX.short }, NV.N1) }, 260);
+	t += pairTile('Kante: keine (heute) · feine Kante (N4) – Weiß auf heller Leinwand', { ox: 70, oy: 20, label: 'heute', draw: c => note(c, { x: 0, y: 0, text: 'Weiße Notiz', color: 'weiss' }, NV.N0) }, { ox: 70, oy: 20, label: 'N4', draw: c => note(c, { x: 0, y: 0, text: 'Weiße Notiz', color: 'weiss' }, NV.N4) }, 260);
+	t += pairTile('Luft um den Text: 1,2 / 16 (heute) · 1,25 / 18', { ox: 70, oy: 20, label: 'heute', draw: c => note(c, { x: 0, y: 0, text: TX.three, color: 'gelb' }, NV.N0) }, { ox: 70, oy: 20, label: 'neu', draw: c => note(c, { x: 0, y: 0, text: TX.three, color: 'gelb' }, NV.N1) }, 260);
+	t += pairTile('Ein Merkmal echter Haftzettel: flach (heute) · Ecken heben sich (N2a)', { ox: 70, oy: 20, label: 'heute', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'salbei' }, NV.N0) }, { ox: 70, oy: 20, label: 'N2a', draw: c => note(c, { x: 0, y: 0, text: TX.short, color: 'salbei' }, NV.N2) }, 260);
+	t += T('Alle Varianten nebeneinander · Hellblau, Weiß, Gelb mit langem Text', { w: FULL, h: 270, panels: Object.keys(NV).map((k, i) => ({ x: i * FULL / 5, y: 0, w: FULL / 5, h: 270, z: .55, ox: 22, oy: 16, label: k + ' · ' + NV[k].name, draw: c => { note(c, { x: 0, y: 0, text: TX.short }, NV[k]); note(c, { x: 220, y: 0, text: 'Weiß', color: 'weiss' }, NV[k]); note(c, { x: 110, y: 220, text: TX.three, color: 'gelb' }, NV[k]); } })) });
+	return t;
+}
+function overviewF() {
+	let t = '';
+	t += pairTile('Rand: schwarz, spitz (heute) · dunkelgrau, Ecken 4 (F1)', { ox: 40, oy: 50, label: 'heute', draw: c => { shape(c, { k: 'rect', x: 0, y: 0, w: 140, h: 90, text: 'Prüfen' }, FV.F0); shape(c, { k: 'diamond', x: 160, y: -10, w: 110, h: 110, text: 'OK?' }, FV.F0); } }, { ox: 40, oy: 50, label: 'F1', draw: c => { shape(c, { k: 'rect', x: 0, y: 0, w: 140, h: 90, text: 'Prüfen' }, FV.F1); shape(c, { k: 'diamond', x: 160, y: -10, w: 110, h: 110, text: 'OK?' }, FV.F1); } }, 200);
+	t += pairTile('Fläche: weiß (heute) · Ton-in-Ton (F2/F4 bei gewählter Farbe)', { ox: 20, oy: 50, label: 'heute, Farbe gewählt', draw: c => { shape(c, { k: 'round', x: 0, y: 0, w: 130, h: 90, text: 'Salbei', color: 'salbei' }, FV.F0); shape(c, { k: 'round', x: 150, y: 0, w: 130, h: 90, text: 'Indigo', color: 'indigo' }, FV.F0); } }, { ox: 20, oy: 50, label: 'Ton-in-Ton', draw: c => { shape(c, { k: 'round', x: 0, y: 0, w: 130, h: 90, text: 'Salbei', color: 'salbei' }, FV.F4); shape(c, { k: 'round', x: 150, y: 0, w: 130, h: 90, text: 'Indigo', color: 'indigo' }, FV.F4); } }, 200);
+	t += T('Grundgrößen beim Klick: oben heute (alle 200 × 120) · unten Vorschlag 200×120 · 200×120 · 160×160 · 160×160 · 160×140 · 200×100', { w: FULL, h: 400, panels: [
+		{ x: 0, y: 0, w: FULL, h: 200, z: .9, ox: 0, oy: 4, label: 'heute', draw: shapesRow({ ...FV.F0, sizes: 'today' }, ['Rechteck', 'Abgerundet', 'Ellipse', 'Raute', 'Dreieck', 'Pfeil'], 20, 24) },
+		{ x: 0, y: 200, w: FULL, h: 200, z: .9, ox: 0, oy: 4, label: 'Vorschlag', draw: shapesRow(FV.F4, ['Rechteck', 'Abgerundet', 'Ellipse', 'Raute', 'Dreieck', 'Pfeil'], 20, 24) }] });
+	t += fieldTile(FV.F0, 'F0') + fieldTile(FV.F4, 'F4');
+	t += T('Alle Varianten nebeneinander', { w: FULL, h: 260, panels: Object.keys(FV).map((k, i) => ({ x: i * FULL / 5, y: 0, w: FULL / 5, h: 260, z: .6, ox: 20, oy: 20, label: k + ' · ' + FV[k].name, draw: c => { shape(c, { k: 'rect', x: 0, y: 0, w: 180, h: 100, text: 'Prüfen' }, FV[k]); shape(c, { k: 'diamond', x: 200, y: -10, w: SZ[FV[k].sizes].diamond[0] * .7, h: SZ[FV[k].sizes].diamond[1] * .7, text: 'OK?' }, FV[k]); shape(c, { k: 'ellipse', x: 0, y: 140, w: SZ[FV[k].sizes].ellipse[0], h: SZ[FV[k].sizes].ellipse[1], text: 'Idee sammeln', color: 'gelb' }, FV[k]); } })) });
+	return t;
+}
+function overviewV() {
+	let t = '';
+	const pr = (VS, extra = {}) => pair(VS, box(20, 40, 110, 60, 'A'), box(200, 120, 110, 60, 'B'), 'r', 'l', 'elbow', extra);
+	t += pairTile('Knicke: spitz (heute) · rund 12 (V1)', { label: 'heute', ox: 0, draw: pr(VV.V0) }, { label: 'V1', draw: pr(VV.V1) }, 210);
+	t += pairTile('Spitze bei Stärke 8: 28 lang (heute) · 17 lang, gefüllt (V2)', { label: 'heute', draw: pr(VV.V0, { w: 8 }) }, { label: 'V2', draw: pr(VV.V2, { w: 8 }) }, 210);
+	t += pairTile('Beschriftung auf Farbe: Leinwand-Fleck (heute) · Plakette (V4)', { label: 'heute', draw: c => { frameA2(c, { x: 10, y: 50, w: 310, h: 150, title: 'Ablauf', color: 'gelb' }); pr(VV.V0, { label: 'ja' })(c); } }, { label: 'V4', draw: c => { frameA2(c, { x: 10, y: 50, w: 310, h: 150, title: 'Ablauf', color: 'gelb' }); pr(VV.V4, { label: 'ja' })(c); } }, 220);
+	t += pairTile('Kurve: 40 % (heute) · 60 % Spannung (V5)', { label: 'heute', draw: pair(VV.V0, box(20, 20, 110, 60, 'A'), box(200, 130, 110, 60, 'B'), 'r', 'l', 'curve') }, { label: 'V5', draw: pair(VV.V5, box(20, 20, 110, 60, 'A'), box(200, 130, 110, 60, 'B'), 'r', 'l', 'curve') }, 220);
+	t += T('Alle Varianten nebeneinander · eckig mit Beschriftung', { w: FULL, h: 230, panels: Object.keys(VV).map((k, i) => ({ x: i * FULL / 7, y: 0, w: FULL / 7, h: 230, z: .55, ox: 6, oy: 30, label: k, draw: pair(VV[k], box(10, 30, 110, 60, 'A'), box(200, 200, 110, 60, 'B'), 'r', 'l', 'elbow', { label: 'ja' }) })) });
+	return t;
+}
+Object.assign(window, { NV, FV, VV, partN, partF, partV, partD, overviewN, overviewF, overviewV, resetTiles: () => { TILES = []; } });
+</script>
+<script>/* Runde 3 · Seite: Umschalter N / F / V / D, Varianten, Links wie #N2 */
+const PARTS = {
+	N: { label: 'N · Notizen', V: NV, ov: overviewN, one: partN, title: 'Notizen', intro: 'Was eine Notiz flach oder lebendig macht: der Schatten (einer oder zwei, hart oder weich), eine feine Kante, Luft um den Text und kleine Merkmale echter Haftzettel. Fünf Varianten, N0 wie heute. Darunter: je ein Paar „heute / anders“ und alle Varianten nebeneinander.' },
+	F: { label: 'F · Grundformen', V: FV, ov: overviewF, one: partF, title: 'Grundformen', intro: 'Was eine Form plump oder fein macht: Farbe und Stärke des Rands, Ecken, Füllung, Schatten, die Grundgröße beim Klick und wie viel Text hineinpasst. Fünf Varianten, F0 wie heute.' },
+	V: { label: 'V · Verbinder', V: VV, ov: overviewV, one: partV, title: 'Verbinder', intro: 'Was einen Verbinder grob oder fein macht: spitze oder runde Knicke, die Größe der Pfeilspitze im Verhältnis zur Linie, Abstand zur Form, die Beschriftung und die Spannung der Kurve. Sieben Varianten, V0 wie heute.' },
+	D: { label: 'D · Zusammen', title: 'Zusammen', intro: 'Ein Ausschnitt eines echten Boards – Retro mit Frame-Reiter A2 aus Runde 2, ein paar Notizen und ein kleines Flussdiagramm mit beschrifteten Verbindern –, einmal wie heute und einmal mit den Empfehlungen N4, F4 und V6. Sie passen zusammen, weil alle drei dieselbe Sprache sprechen: weiche, aber kleine Rundungen, Dunkelgrau statt Schwarz, Farbe nur Ton-in-Ton, und der Schatten bleibt den Notizen vorbehalten – so sieht man sofort, was Zettel und was Diagramm ist.' },
+};
+let ST = { p: 'N', v: 'O' };
+function parseHash() {
+	const h = (location.hash || '').slice(1).toUpperCase();
+	if (h === 'D') return { p: 'D', v: 'D' };
+	if (/^[NFV]$/.test(h)) return { p: h, v: 'O' };
+	if (/^[NFV]\d$/.test(h) && PARTS[h[0]].V[h]) return { p: h[0], v: h };
+	return null;
+}
+function go(p, v) { ST = { p, v }; try { history.replaceState(null, '', '#' + (v === 'O' ? p : v)); localStorage.setItem('knorke-r3', JSON.stringify(ST)); } catch (e) { } render(); window.scrollTo(0, 0); }
+function header() {
+	const P = PARTS[ST.p], list = P.V ? Object.keys(P.V) : [];
+	return `<div class="hrow"><div class="brand">Knorke <span>· Runde 3 · Leinwand</span></div>
+	<div class="seg" role="tablist" aria-label="Teil">${Object.entries(PARTS).map(([k, v]) => `<button role="tab" aria-selected="${ST.p === k}" data-part="${k}">${v.label}</button>`).join('')}</div>
+	${list.length ? `<nav class="pills" aria-label="Varianten"><button data-v="O" aria-current="${ST.v === 'O'}">Übersicht</button>${list.map(c => `<button data-v="${c}" aria-current="${ST.v === c}" class="code">${c}</button>`).join('')}</nav>` : ''}</div>`;
+}
+const hero = (code, name, desc) => `<div class="hero"><div class="bigcode" aria-label="Variante ${code}">${code}</div><div><h2>${name}</h2><p>${desc}</p></div></div>`;
+function render() {
+	resetTiles();
+	document.getElementById('hdr').innerHTML = header();
+	const P = PARTS[ST.p], m = document.getElementById('main');
+	if (ST.p === 'D') m.innerHTML = hero('D', P.title, P.intro) + `<section class="sec"><div class="tiles">${partD()}</div></section>`;
+	else if (ST.v === 'O') m.innerHTML = hero(ST.p, P.title, P.intro) + `<section class="sec"><h3>Heute und anders, als Paare</h3><div class="tiles">${P.ov()}</div></section>
+		<section class="sec"><h3>Varianten</h3><ul class="vlist">${Object.entries(P.V).map(([k, v]) => `<li><a class="code-s" href="#${k}" data-go="${k}">${k}</a><div><b>${v.name}</b><p>${v.desc}</p></div></li>`).join('')}</ul></section>`;
+	else { const v = P.V[ST.v]; m.innerHTML = hero(ST.v, v.name, v.desc) + `<section class="sec"><h3>Alle Zustände</h3><div class="tiles">${P.one(ST.v)}</div></section>`; }
+	const specs = TILES;
+	m.querySelectorAll('canvas[data-t]').forEach(cv => paint(cv, specs[+cv.dataset.t]));
+}
+document.addEventListener('click', e => {
+	const p = e.target.closest('[data-part]'); if (p) return go(p.dataset.part, p.dataset.part === 'D' ? 'D' : 'O');
+	const v = e.target.closest('[data-v]'); if (v) return go(ST.p, v.dataset.v);
+	const g = e.target.closest('[data-go]'); if (g) { e.preventDefault(); return go(g.dataset.go[0], g.dataset.go); }
+});
+document.addEventListener('keydown', e => {
+	if (e.altKey || e.ctrlKey || e.metaKey || ST.p === 'D' || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+	const list = ['O', ...Object.keys(PARTS[ST.p].V)], i = list.indexOf(ST.v);
+	go(ST.p, list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length]);
+});
+window.addEventListener('hashchange', () => { const h = parseHash(); if (h && (h.p !== ST.p || h.v !== ST.v)) { ST = h; render(); } });
+{ let s = parseHash(); if (!s) { try { s = JSON.parse(localStorage.getItem('knorke-r3')); } catch (e) { } } if (s && PARTS[s.p]) ST = s; render(); }
+</script>
+</body>
+</html>

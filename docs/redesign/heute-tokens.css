@@ -1,0 +1,126 @@
+/*
+ * Knorke heute: die Werte, mit denen die App jetzt zeichnet (Stand 2026-10-29, Version nach 0.4.0).
+ * Teil 1: Rollen-Token der Bedienleisten (src/styles/knorke.css). Sie hängen an Nextcloud-Variablen,
+ *         die Werte nach dem Komma sind nur Ersatz, wenn Nextcloud nichts liefert.
+ * Teil 2: Farben und Maße der Leinwand (src/model/tokens.js). Die Leinwand ist ein Canvas (Konva),
+ *         kein HTML; diese Werte sind fest im Code.
+ */
+
+/* Teil 1: Bedienleisten */
+:root {
+	--knorke-surface: var(--color-main-background, #ffffff);
+	--knorke-surface-blur: var(--color-main-background-blur, rgba(255, 255, 255, 0.9));
+	--knorke-text: var(--color-main-text, #222222);
+	--knorke-text-muted: var(--color-text-maxcontrast, #6b6b6b);
+	--knorke-border: var(--color-border, #ededed);
+	--knorke-border-strong: var(--color-border-maxcontrast, #7f7f7f);
+	--knorke-primary: var(--color-primary-element, #00679e);
+	--knorke-primary-text: var(--color-primary-element-text, #ffffff);
+	--knorke-hover: var(--color-background-hover, #f5f5f5);
+	/* Status colours: Nextcloud's --color-error/-warning/-success are pastel
+	   BACKGROUNDS (NC 34/35: #ffe7e7, #ffeec5, #d8f3da), paired with a dark
+	   --color-*-text. Always use them as such a pair, never with white text. */
+	--knorke-error: var(--color-error, #ffe7e7);
+	--knorke-error-text: var(--color-error-text, #8a0000);
+	--knorke-warning: var(--color-warning, #ffeec5);
+	--knorke-warning-text: var(--color-warning-text, #664700);
+	--knorke-success: var(--color-success, #d8f3da);
+	--knorke-success-text: var(--color-success-text, #005416);
+	--knorke-radius: var(--border-radius-large, 10px);
+	--knorke-radius-small: var(--border-radius, 6px);
+	--knorke-shadow: 0 2px 8px var(--color-box-shadow, rgba(0, 0, 0, 0.18));
+	--knorke-clickable: var(--default-clickable-area, 34px);
+	--knorke-gap: 8px;
+	/* SPEC-M1 §6.6 (stage 3): height of the vote bar docked at the bottom */
+	--knorke-votebar-h: 52px;
+	/* touch targets (§6.12: steppers, vote list, chip) */
+	--knorke-touch: 44px;
+	/* The canvas stays light even in Nextcloud dark mode. */
+	--knorke-board-bg: #f1f1ec;
+}
+
+/* Teil 2: Leinwand */
+:root {
+  --heute-board-bg: #f1f1ec;
+  --heute-text: #1a1a1a;
+  --heute-font: Arial, "Liberation Sans", Helvetica, sans-serif;
+  --heute-note-default: #a8d8f8;
+  --heute-note-radius: 3px;
+  --heute-note-padding: 12px;
+  --heute-note-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  --heute-frame-fill: #ffffff;
+  --heute-frame-stroke: #d5d8dc;
+  --heute-frame-stroke-width: 2px;
+  --heute-frame-title-size: 28px;
+  --heute-frame-title-color: #55606b;
+  --heute-lane-head-fill: rgba(0, 0, 0, 0.05);
+  /* Notiztext: automatisch eine dieser Größen (px), je nach Textmenge: 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64 */
+
+  /* NOTE (14) */
+  --heute-note-1: #fff6b6;
+  --heute-note-2: #f5d76e;
+  --heute-note-3: #d4e98a;
+  --heute-note-4: #b8f0a0;
+  --heute-note-5: #a8d8f8;
+  --heute-note-6: #7fd3cc;
+  --heute-note-7: #6cc6ea;
+  --heute-note-8: #ffb27a;
+  --heute-note-9: #f2a7c8;
+  --heute-note-10: #f58a98;
+  --heute-note-11: #c8a5d6;
+  --heute-note-12: #dfe98a;
+  --heute-note-13: #e4e4e4;
+  --heute-note-14: #ffd8e6;
+
+  /* SHAPE (16) */
+  --heute-shape-1: #ffffff;
+  --heute-shape-2: #e4e4e4;
+  --heute-shape-3: #fff6b6;
+  --heute-shape-4: #ffe8cc;
+  --heute-shape-5: #ffc9c9;
+  --heute-shape-6: #e5dbff;
+  --heute-shape-7: #a8d8f8;
+  --heute-shape-8: #d3f9d8;
+  --heute-shape-9: #1a1a1a;
+  --heute-shape-10: #868e96;
+  --heute-shape-11: #f08c00;
+  --heute-shape-12: #e03131;
+  --heute-shape-13: #c2255c;
+  --heute-shape-14: #7048e8;
+  --heute-shape-15: #0082c9;
+  --heute-shape-16: #2f9e44;
+
+  /* CONNECTOR (8) */
+  --heute-connector-1: #1a1a1a;
+  --heute-connector-2: #868e96;
+  --heute-connector-3: #e03131;
+  --heute-connector-4: #f08c00;
+  --heute-connector-5: #2f9e44;
+  --heute-connector-6: #0082c9;
+  --heute-connector-7: #7048e8;
+  --heute-connector-8: #c2255c;
+
+  /* MINDMAP (8) */
+  --heute-mindmap-1: #1864ab;
+  --heute-mindmap-2: #c92a2a;
+  --heute-mindmap-3: #2b7a39;
+  --heute-mindmap-4: #862e9c;
+  --heute-mindmap-5: #b35900;
+  --heute-mindmap-6: #0b7285;
+  --heute-mindmap-7: #5f3dc4;
+  --heute-mindmap-8: #a61e4d;
+
+  /* TAG (12) */
+  --heute-tag-1: #e53935;
+  --heute-tag-2: #fb8c00;
+  --heute-tag-3: #fdd835;
+  --heute-tag-4: #7cb342;
+  --heute-tag-5: #43a047;
+  --heute-tag-6: #00897b;
+  --heute-tag-7: #039be5;
+  --heute-tag-8: #1e88e5;
+  --heute-tag-9: #5e35b1;
+  --heute-tag-10: #8e24aa;
+  --heute-tag-11: #d81b60;
+  --heute-tag-12: #6d4c41;
+}

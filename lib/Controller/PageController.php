@@ -16,6 +16,7 @@ use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\AppFramework\Http\ContentSecurityPolicy;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\AppFramework\Services\IInitialState;
+use OCP\IAppConfig;
 use OCP\IConfig;
 use OCP\IRequest;
 
@@ -43,6 +44,11 @@ final class PageController extends Controller {
      * on the admin page. privacyAdmin = the admin form's data
      * (PrivacyNotice::adminState()) on the admin page only, else null.
      * page: 'user' | 'public' | 'admin'.
+     *
+     * legal = {"imprintUrl": string, "privacyUrl": string} (theming, only
+     * absolute http(s) URLs, else '') on the guest page and, since factory
+     * job 228 (the board menu's "Legal"), on routes 1–3 as well; null on the
+     * admin page.
      */
     public const INITIAL_STATE_KEYS = ['page', 'boardId', 'joinToken', 'linkToken', 'linkState', 'debug', 'protocol', 'limits', 'legal', 'linkInfo', 'privacy', 'privacyAdmin'];
 
@@ -52,6 +58,7 @@ final class PageController extends Controller {
         private IConfig $config,
         private Limits $limits,
         private PrivacyNotice $privacy,
+        private IAppConfig $appConfig,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -132,6 +139,7 @@ final class PageController extends Controller {
     /** @param array<string, mixed> $values */
     private function render(array $values): TemplateResponse {
         $values['privacy'] = $this->privacy->forPage();
+        $values['legal'] = PublicPageController::legalLinks($this->appConfig);
         self::provideState($this->initialState, self::initialStateFor($this->config, $this->limits, $values));
         $response = new TemplateResponse(Application::APP_ID, 'main');
         // The default policy is enough: the app talks same-origin only and

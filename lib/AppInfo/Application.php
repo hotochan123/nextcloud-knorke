@@ -7,13 +7,17 @@ declare(strict_types=1);
 
 namespace OCA\Knorke\AppInfo;
 
+use OCA\Knorke\Listener\AiTaskListener;
 use OCA\Knorke\Listener\GroupListener;
 use OCA\Knorke\Listener\TeamListener;
 use OCA\Knorke\Listener\UserDeletedListener;
+use OCA\Knorke\Listener\UserEnabledListener;
 use OCA\Knorke\Notification\Notifier;
+use OCA\Knorke\Reference\BoardReferenceProvider;
 use OCA\Knorke\Search\BoardSearchProvider;
 use OCA\Knorke\Settings\Admin;
 use OCA\Knorke\Settings\AdminSection;
+use OCA\Knorke\Teams\BoardTeamResourceProvider;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -21,7 +25,11 @@ use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\Group\Events\GroupDeletedEvent;
 use OCP\Group\Events\UserRemovedEvent;
 use OCP\Settings\IManager;
+use OCP\TaskProcessing\Events\TaskFailedEvent;
+use OCP\TaskProcessing\Events\TaskSuccessfulEvent;
+use OCP\User\Events\UserChangedEvent;
 use OCP\User\Events\UserDeletedEvent;
+use Psr\Container\ContainerInterface;
 
 final class Application extends App implements IBootstrap {
     public const APP_ID = 'knorke';
@@ -48,6 +56,11 @@ final class Application extends App implements IBootstrap {
         // Circles events are named by STRING: a disabled Circles app loads
         // nothing, and no Circles type appears anywhere in Knorke.
         $context->registerEventListener(UserDeletedEvent::class, UserDeletedListener::class);
+        // factory job 267: an AI task of Knorke ended (the AI worker), its result goes onto the board
+        $context->registerEventListener(TaskSuccessfulEvent::class, AiTaskListener::class);
+        $context->registerEventListener(TaskFailedEvent::class, AiTaskListener::class);
+        // Job 245: a disabled owner closes its boards, enabling opens them again.
+        $context->registerEventListener(UserChangedEvent::class, UserEnabledListener::class);
         $context->registerEventListener(UserRemovedEvent::class, GroupListener::class);
         $context->registerEventListener(GroupDeletedEvent::class, GroupListener::class);
         $context->registerEventListener(TeamListener::MEMBERSHIPS_REMOVED, TeamListener::class);
@@ -61,6 +74,18 @@ final class Application extends App implements IBootstrap {
         // "Board shared with you" (M2, SPEC-M1 §1.2): named here, built by
         // Nextcloud's notification manager whenever it prepares notifications.
         $context->registerNotifierService(Notifier::class);
+        // Link previews and the Smart Picker (M2, SPEC-M1 §1.2): named here,
+        // built by Nextcloud's ReferenceManager through the app container for
+        // every request that resolves a link or lists the picker's providers.
+        // The factory (a closure: nothing is loaded before it runs) gives an
+        // account the search serves the picker entry; not shared, so every
+        // build asks again.
+        $context->registerReferenceProvider(BoardReferenceProvider::class);
+        $context->registerService(BoardReferenceProvider::class, static fn (ContainerInterface $c): BoardReferenceProvider => BoardReferenceProvider::create($c), false);
+        // Boards shared with a team among the team's resources (factory job
+        // 222): named here, built by Nextcloud's TeamManager only when its
+        // team API is called, and never while Circles is off.
+        $context->registerTeamResourceProvider(BoardTeamResourceProvider::class);
     }
 
     public function boot(IBootContext $context): void {

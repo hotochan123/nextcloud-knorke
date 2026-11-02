@@ -35,7 +35,7 @@
  *   node ipad/check.mjs [--pkg /out/ipad-ra] [--browsers chromium,webkit] [--label <x>]
  */
 import { chromium, devices, webkit } from 'playwright'
-import { mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LABEL_RE, reportFiles } from '../names.js'
@@ -48,6 +48,8 @@ const opt = (name, def) => {
 	return i < 0 || argv[i + 1] === undefined ? def : argv[i + 1]
 }
 const PKG = opt('pkg', '/out/ipad-ra')
+// a package from run.sh ipad with KNORKE_BENCH_HTML=none has no bench (factory job 280): its steps are skipped
+const HAS_BENCH = existsSync(join(PKG, 'bench', 'bench-standalone.html'))
 const OUT = process.env.KNORKE_LAB_OUT || '/out'
 const BROWSERS = String(opt('browsers', 'chromium,webkit')).split(',').filter(Boolean)
 // --label <x> (run.sh KNORKE_LAB_LABEL): appended to the report names
@@ -146,32 +148,35 @@ async function checkBrowser(name) {
 		stepOk('start page links bench and lab', await page.locator('a[href="bench/bench-standalone.html"]').count() === 1 &&
 			await page.locator('a[href="lab/?panel=1"]').count() === 1)
 
-		await page.goto(BASE + 'bench/bench-standalone.html', { waitUntil: 'load' })
-		const shown = await page.evaluate(() => {
-			const opts = (id) => [...document.querySelectorAll(`#${id} option`)].map((o) => ({ value: o.value, text: o.textContent }))
-			return { engine: opts('engine'), scenario: opts('scenario'), scale: opts('scale'), reps: opts('reps'), shadows: !!document.getElementById('shadows')?.checked }
-		})
-		const missing = Object.entries(SHEET_BENCH).filter(([id, [value, text]]) => !shown[id].some((o) => o.value === value && o.text === text))
-			.map(([id, [, text]]) => `${id}: ${text}`)
-		for (const s of SHEET_SCENARIOS) if (!shown.scenario.some((o) => o.text === s)) missing.push(`scenario: ${s}`)
-		if (!shown.shadows) missing.push('shadows on')
-		const scenarioIds = shown.scenario.map((o) => o.value).filter((v) => v !== 'all')
-		const reps = shown.reps.map((o) => o.text)
-		// The sheets name only the repetition option "1" (SHEET_BENCH.reps, checked through `missing`);
-		// a further "3" is not required (SPEC-M1 §18, F4).
-		stepOk('bench: the options the sheet names are on the page (engine, scenarios, scale, repetitions, shadows)', missing.length === 0 &&
-			Number.parseInt(SHEET_DONE, 10) === scenarioIds.length, { missing, scenarios: scenarioIds, reps })
+		if (!HAS_BENCH) stepOk('bench: none in this package (KNORKE_BENCH_HTML=none), its steps skipped', true)
+		else {
+			await page.goto(BASE + 'bench/bench-standalone.html', { waitUntil: 'load' })
+			const shown = await page.evaluate(() => {
+				const opts = (id) => [...document.querySelectorAll(`#${id} option`)].map((o) => ({ value: o.value, text: o.textContent }))
+				return { engine: opts('engine'), scenario: opts('scenario'), scale: opts('scale'), reps: opts('reps'), shadows: !!document.getElementById('shadows')?.checked }
+			})
+			const missing = Object.entries(SHEET_BENCH).filter(([id, [value, text]]) => !shown[id].some((o) => o.value === value && o.text === text))
+				.map(([id, [, text]]) => `${id}: ${text}`)
+			for (const s of SHEET_SCENARIOS) if (!shown.scenario.some((o) => o.text === s)) missing.push(`scenario: ${s}`)
+			if (!shown.shadows) missing.push('shadows on')
+			const scenarioIds = shown.scenario.map((o) => o.value).filter((v) => v !== 'all')
+			const reps = shown.reps.map((o) => o.text)
+			// The sheets name only the repetition option "1" (SHEET_BENCH.reps, checked through `missing`);
+			// a further "3" is not required (SPEC-M1 §18, F4).
+			stepOk('bench: the options the sheet names are on the page (engine, scenarios, scale, repetitions, shadows)', missing.length === 0 &&
+				Number.parseInt(SHEET_DONE, 10) === scenarioIds.length, { missing, scenarios: scenarioIds, reps })
 
-		// one pass as in the sheet, on a smaller scene: every scenario in one run
-		await page.selectOption('#engine', SHEET_BENCH.engine[0])
-		await page.selectOption('#scenario', SHEET_BENCH.scenario[0])
-		await page.selectOption('#scale', '0.1')
-		await page.selectOption('#reps', SHEET_BENCH.reps[0])
-		await page.getByRole('button', { name: 'Messung starten' }).click()
-		await page.getByText(SHEET_DONE).waitFor({ timeout: 600000 })
-		const ran = await page.$$eval('#panel tbody tr', (rows) => rows.map((r) => ({ scenario: r.cells[1]?.textContent, error: r.classList.contains('err') })))
-		stepOk(`bench: "Alle Szenarien" (Konva, 10 %) measures every scenario in one run, "${SHEET_DONE}"`, ran.length === scenarioIds.length &&
-			scenarioIds.every((id) => ran.some((r) => r.scenario === id && !r.error)), { rows: ran.length, errors: ran.filter((r) => r.error).map((r) => r.scenario) })
+			// one pass as in the sheet, on a smaller scene: every scenario in one run
+			await page.selectOption('#engine', SHEET_BENCH.engine[0])
+			await page.selectOption('#scenario', SHEET_BENCH.scenario[0])
+			await page.selectOption('#scale', '0.1')
+			await page.selectOption('#reps', SHEET_BENCH.reps[0])
+			await page.getByRole('button', { name: 'Messung starten' }).click()
+			await page.getByText(SHEET_DONE).waitFor({ timeout: 600000 })
+			const ran = await page.$$eval('#panel tbody tr', (rows) => rows.map((r) => ({ scenario: r.cells[1]?.textContent, error: r.classList.contains('err') })))
+			stepOk(`bench: "Alle Szenarien" (Konva, 10 %) measures every scenario in one run, "${SHEET_DONE}"`, ran.length === scenarioIds.length &&
+				scenarioIds.every((id) => ran.some((r) => r.scenario === id && !r.error)), { rows: ran.length, errors: ran.filter((r) => r.error).map((r) => r.scenario) })
+		}
 
 		await page.goto(BASE + 'lab/?panel=1', { waitUntil: 'load' })
 		await page.waitForFunction(() => window.__lab && window.__lab.settled, null, { timeout: 120000 })

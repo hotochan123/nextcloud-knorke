@@ -416,6 +416,9 @@ function num(v) {
  *   Gruppieren; otherwise a compacted remove + revive would lose it)
  * - data/style per key on level 1, with the whole cleaned value; a key that is
  *   absent in after (or empty) becomes null
+ * - never data.react (job 172): reactions travel only as reaction patches of
+ *   their own (model/reactions.js), any other patch on them is bad; a
+ *   compacted remove + revive keeps the reactions the server has
  * - t is never patched (a type does not change)
  *
  * @param {object} before WireItem before
@@ -454,6 +457,9 @@ export function diffPatch(before, after) {
 			}
 		}
 		for (const k of keys) {
+			if (root === 'data' && k === 'react') {
+				continue
+			}
 			const bv = hasOwn(bm, k) ? bm[k] : null
 			const av = hasOwn(am, k) ? am[k] : null
 			if (!sameValue(bv, av)) {

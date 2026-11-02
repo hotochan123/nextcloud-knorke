@@ -6,9 +6,11 @@
  * Minimal DOM for Node tests of the scene's DOM overlays (helper, not a test
  * file; the glob only runs *.test.mjs). Just what SceneManager, CursorLayer,
  * TextEditor, InputController and GestureController touch: elements with
- * attributes, inline styles, children, bubbling events with stopPropagation,
- * focus/blur, plus a manual requestAnimationFrame queue and a manual clock
- * behind performance.now(). No rendering, no layout.
+ * attributes, inline styles, children, bubbling events with stopPropagation
+ * and (job 172) stopImmediatePropagation, dispatchEvent and a PointerEvent
+ * constructor (the scene sends a handed-over pointerdown again), focus/blur,
+ * plus a manual requestAnimationFrame queue and a manual clock behind
+ * performance.now(). No rendering, no layout.
  */
 
 export class FakeNode {}
@@ -124,6 +126,18 @@ export class FakeElement extends FakeNode {
 	setPointerCapture() {}
 	setSelectionRange() {}
 
+	/**
+	 * (job 172) Dispatches an event made with the fake PointerEvent (its fields
+	 * are copied into a fresh fake event).
+	 *
+	 * @param {object} ev event
+	 * @return {boolean} not cancelled
+	 */
+	dispatchEvent(ev) {
+		const { type, ...props } = ev
+		return !dispatch(this, type, props, { bubbles: ev.bubbles !== false }).defaultPrevented
+	}
+
 	focus() {
 		this.ownerDocument.focusOn(this)
 	}
@@ -191,12 +205,19 @@ export function dispatch(target, type, props = {}, { bubbles = true } = {}) {
 		...props,
 		preventDefault() { this.defaultPrevented = true },
 		stopPropagation() { this.propagationStopped = true },
+		stopImmediatePropagation() {
+			this.immediateStopped = true
+			this.propagationStopped = true
+		},
 	}
 	const path = []
 	for (let n = target; n; n = bubbles ? n.parentNode : null) path.push(n)
 	for (const n of path) {
 		e.currentTarget = n
-		for (const fn of [...(n.listeners.get(type) ?? [])]) fn(e)
+		for (const fn of [...(n.listeners.get(type) ?? [])]) {
+			fn(e)
+			if (e.immediateStopped) return e
+		}
 		if (e.propagationStopped) return e
 	}
 	if (bubbles && target.isConnected) {
@@ -213,7 +234,7 @@ export function dispatch(target, type, props = {}, { bubbles = true } = {}) {
  */
 export function installDom() {
 	const saved = {}
-	for (const k of ['document', 'window', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance']) {
+	for (const k of ['document', 'window', 'Node', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'PointerEvent']) {
 		saved[k] = Object.getOwnPropertyDescriptor(globalThis, k)
 	}
 	const doc = new FakeDocument()
@@ -244,6 +265,13 @@ export function installDom() {
 	})
 	define('cancelAnimationFrame', (id) => queue.delete(id))
 	define('performance', { now: () => clock.t })
+	// (job 172) the scene sends a handed-over pointerdown again through dispatchEvent
+	define('PointerEvent', class FakePointerEvent {
+		constructor(type, init = {}) {
+			Object.assign(this, init)
+			this.type = type
+		}
+	})
 	return {
 		doc,
 		clock,

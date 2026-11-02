@@ -6,9 +6,14 @@
  * Locked items in the scene (job 023, M2 SPEC-M1 §1.2 "(R20) Sperren";
  * AK10), on the fake DOM with the real SceneManager and InputController
  * (sceneHarness.mjs) and, for the symbol, pure in Node:
- * - a press on a locked note selects it, a move past the threshold starts
- *   no drag and no marquee; a drag of a mixed selection moves only the free
- *   items
+ * - (job 151, like background) a mouse or pen drag from a locked item draws
+ *   the marquee (never taking it), Shift keeps the earlier selection, Esc
+ *   and pointercancel end it; a click selects at the release by the click
+ *   rules (Shift, narrowing, groups); a finger pans, taps select, a hold
+ *   draws the touch marquee, a "+" handle stays a handle, a second finger
+ *   pinches, a pen goes first (lockModes.test.mjs: the symbol only in mode
+ *   edit, with the real renderer); a drag of a mixed selection moves only
+ *   the free items
  * - the marquee and Ctrl+A skip locked items, Tab reaches them
  * - handles: a locked shape keeps only plus-t/r/b/l; a locked frame, a
  *   locked connector and a mixed selection with a lock have no transformer
@@ -23,11 +28,11 @@
  *   left of the top-left corner, for text items, frames and shapes with text
  *   at the top left (it never covers their text or the content of a frame);
  *   left of the label box of a connector (never on the label) at zoom 1 and
- *   0.5; a finger on a locked note selects it and moves nothing: no drag, no
- *   move intent, no pan
+ *   0.5
  */
-import { test, describe, afterEach } from 'node:test'
+import { test, describe, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { LONG_PRESS_MS } from '../../../src/scene/GestureController.js'
 import { KonvaRenderer } from '../../../src/scene/KonvaRenderer.js'
 import { boxPlace, buildLocks, lockSquare, paintLocks, planLocks, topLeft } from '../../../src/scene/nodes/locks.js'
 import { SceneModel } from '../../../src/model/SceneModel.js'
@@ -50,6 +55,7 @@ let h
 afterEach(() => {
 	h?.restore()
 	h = null
+	mock.timers.reset()
 })
 
 /** @param {string[]} ids the scene's own selection changes (onSelection) */
@@ -67,62 +73,289 @@ function setLock(id, lock) {
 	h.scene.update(summary)
 }
 
-describe('press, drag and marquee', () => {
-	test('a press on a locked note selects it; a move past the threshold starts no drag and no marquee (mouse; the finger below)', () => {
-		h = setupScene([note(A, { x: 100, y: 100, lock: LOCK }), note(B, { x: 400, y: 100 })])
-		h.pointer('pointerdown', 150, 150)
-		assert.deepEqual(h.scene.getSelection(), [A], 'selected')
-		h.pointer('pointermove', 250, 250)
-		h.frame()
-		h.pointer('pointermove', 350, 300)
-		h.frame()
-		h.pointer('pointerup', 350, 300)
-		assert.equal(activities('drag').length, 0, 'no beginDrag')
-		assert.equal(callsOf('beginDrag').length, 0)
-		assert.equal(callsOf('setMarquee').filter((c) => c[0] !== null).length, 0, 'no marquee')
-		assert.deepEqual(h.intents('move'), [])
-		assert.deepEqual([h.model.get(A).x, h.model.get(A).y], [100, 100], 'the note stays')
+/*
+ * (job 151) A locked item is background: the template L (0, 0) 800 × 600,
+ * locked, with the free notes A (100, 100) and B (500, 100), 150 × 150, on
+ * it; P is a point on L beside both. Camera at the origin, scale 1.
+ */
+const L = '01JA00000000000000000000L1'
+const P = [50, 450]
+const template = (extra = []) => [
+	note(L, { x: 0, y: 0, w: 800, h: 600, z: 'a1', lock: LOCK }),
+	note(A, { x: 100, y: 100, w: 150, h: 150, z: 'a2' }),
+	note(B, { x: 500, y: 100, w: 150, h: 150, z: 'a3' }),
+	...extra,
+]
+const marquees = () => callsOf('setMarquee').filter((c) => c[0] !== null)
+const userCameras = () => h.log.filter((e) => e[0] === 'onUserCamera').length
+const boxOf = (id) => {
+	const it = h.model.get(id)
+	return [it.x, it.y, it.w, it.h]
+}
+
+describe('job 151 AK1: a drag from a locked item draws the marquee (mouse and pen)', () => {
+	for (const [name, input] of [['mouse', { pointerType: 'mouse', pointerId: 1 }], ['pen', { pointerType: 'pen', pointerId: 9 }]]) {
+		test(`${name}: from L over A → [A]; L stays out; no drag, no move, no camera; L keeps its box`, () => {
+			h = setupScene(template())
+			const cam = h.scene.getCamera()
+			h.pointer('pointerdown', ...P, input)
+			assert.deepEqual(h.scene.getSelection(), [], 'the press changes nothing')
+			h.pointer('pointermove', 120, 400, input)
+			h.frame()
+			assert.deepEqual(marquees()[0], [{ x: 50, y: 400, w: 70, h: 50 }, 'select'], 'the marquee from the press point')
+			h.pointer('pointermove', 200, 200, input)
+			h.frame()
+			assert.deepEqual(h.scene.getSelection(), [A], 'live: A is covered')
+			h.pointer('pointerup', 200, 200, input)
+			h.frame()
+			assert.deepEqual(h.scene.getSelection(), [A], 'L stays out')
+			assert.equal(callsOf('setMarquee').at(-1)[0], null, 'the marquee is cleared at the release')
+			assert.equal(callsOf('beginDrag').length, 0, 'no drag')
+			assert.equal(activities('drag').length, 0)
+			assert.deepEqual(h.intents('move'), [], 'no drag intent')
+			assert.deepEqual(h.intents(), [])
+			assert.deepEqual(h.scene.getCamera(), cam, 'no camera move')
+			assert.equal(userCameras(), 0)
+			assert.deepEqual(boxOf(L), [0, 0, 800, 600], 'L keeps place and size')
+		})
+
+		test(`${name}: with B selected, Shift keeps it ([B, A]); without Shift B goes as soon as the marquee starts`, () => {
+			h = setupScene(template())
+			h.scene.setSelection([B])
+			h.pointer('pointerdown', ...P, { ...input, shiftKey: true })
+			assert.deepEqual(h.scene.getSelection(), [B])
+			h.pointer('pointermove', 120, 400, { ...input, shiftKey: true })
+			assert.deepEqual(h.scene.getSelection(), [B], 'Shift: the selection from before the press stays')
+			h.pointer('pointermove', 200, 200, { ...input, shiftKey: true })
+			h.pointer('pointerup', 200, 200, { ...input, shiftKey: true })
+			assert.deepEqual(h.scene.getSelection(), [B, A])
+			h.scene.setSelection([B])
+			h.pointer('pointerdown', ...P, input)
+			assert.deepEqual(h.scene.getSelection(), [B], 'the press alone keeps B')
+			h.pointer('pointermove', 120, 400, input)
+			assert.deepEqual(h.scene.getSelection(), [], 'B goes when the marquee starts')
+			h.pointer('pointermove', 200, 200, input)
+			h.pointer('pointerup', 200, 200, input)
+			assert.deepEqual(h.scene.getSelection(), [A], 'B is no longer selected')
+			assert.deepEqual(h.intents(), [])
+		})
+	}
+
+	test('a move within DRAG_THRESHOLD_PX is still a click; a marquee over L alone selects nothing, not L', () => {
+		h = setupScene(template())
+		h.pointer('pointerdown', ...P)
+		h.pointer('pointermove', 52, 451)
+		h.pointer('pointerup', 52, 451)
+		assert.deepEqual(h.scene.getSelection(), [L], '3 px or less: the click')
+		assert.deepEqual(marquees(), [])
+		h.pointer('pointerdown', ...P)
+		h.pointer('pointermove', 300, 550)
+		h.pointer('pointerup', 300, 550)
+		assert.deepEqual(h.scene.getSelection(), [], 'the marquee never takes L, also not as its start')
+	})
+
+	test('Esc and pointercancel end the marquee as on empty canvas: the marquee goes, the selection shown stays, no intent', () => {
+		h = setupScene(template())
+		h.pointer('pointerdown', ...P)
+		h.pointer('pointermove', 200, 200)
 		assert.deepEqual(h.scene.getSelection(), [A])
-		// a click into a multi selection with a locked item narrows it on release, like any click
-		h.scene.setSelection([A, B])
+		h.key('Escape')
+		assert.equal(callsOf('setMarquee').at(-1)[0], null, 'Esc clears the marquee')
+		const n = callsOf('setMarquee').length
+		h.pointer('pointermove', 600, 200)
+		h.pointer('pointerup', 600, 200)
+		assert.equal(callsOf('setMarquee').length, n, 'no marquee again')
+		assert.deepEqual(h.scene.getSelection(), [A])
+		h.scene.setSelection([])
+		h.pointer('pointerdown', ...P)
+		h.pointer('pointermove', 200, 200)
+		h.pointer('pointercancel', 200, 200)
+		assert.equal(callsOf('setMarquee').at(-1)[0], null, 'pointercancel clears the marquee')
+		h.pointer('pointermove', 600, 200)
+		h.pointer('pointerup', 600, 200)
+		assert.deepEqual(h.scene.getSelection(), [A])
+		assert.deepEqual(h.intents(), [])
+	})
+
+	test('a mixed selection [L, A]: a drag on A moves only A; (job 163) a drag on its locked part, in the selection frame, moves only the free part', () => {
+		h = setupScene(template())
+		h.scene.setSelection([L, A])
+		h.pointer('pointerdown', 175, 175)
+		h.pointer('pointermove', 195, 185)
+		h.frame()
+		h.pointer('pointermove', 225, 195)
+		h.frame()
+		h.pointer('pointerup', 225, 195)
+		assert.deepEqual(h.intents('move').map((m) => m.ids), [[A]], 'pressed on the free A: only A moves')
+		h.scene.setSelection([L, B])
+		h.pointer('pointerdown', ...P)
+		h.pointer('pointermove', 120, 400)
+		h.frame()
+		h.pointer('pointermove', 300, 200)
+		h.frame()
+		h.pointer('pointerup', 300, 200)
+		assert.deepEqual(h.intents('move').map((m) => m.ids), [[A], [B]], 'pressed on the locked L: the free B moves')
+		assert.deepEqual(h.scene.getSelection(), [L, B], 'the selection stays')
+		assert.deepEqual(marquees(), [], 'no marquee')
+		assert.deepEqual(boxOf(L), [0, 0, 800, 600])
+	})
+})
+
+describe('job 151 AK2: a click on a locked item selects it at the release', () => {
+	test('a click on L selects [L]; onSelection comes only with the pointerup', () => {
+		h = setupScene(template())
+		h.pointer('pointerdown', ...P)
+		assert.deepEqual(selections(), [], 'nothing at the pointerdown')
+		assert.deepEqual(h.scene.getSelection(), [])
+		h.pointer('pointerup', ...P)
+		assert.deepEqual(selections(), [[L]], 'one onSelection at the pointerup')
+		assert.deepEqual(h.scene.getSelection(), [L])
+	})
+
+	test('Shift+click adds L and takes it out again; a click on L in [L, A] narrows to [L]', () => {
+		h = setupScene(template())
+		h.scene.setSelection([A])
+		h.pointer('pointerdown', ...P, { shiftKey: true })
+		assert.deepEqual(h.scene.getSelection(), [A])
+		h.pointer('pointerup', ...P, { shiftKey: true })
+		assert.deepEqual(h.scene.getSelection(), [A, L], 'Shift adds L')
+		h.pointer('pointerdown', ...P, { shiftKey: true })
+		h.pointer('pointerup', ...P, { shiftKey: true })
+		assert.deepEqual(h.scene.getSelection(), [A], 'Shift takes L out')
+		h.scene.setSelection([L, A])
+		h.pointer('pointerdown', ...P)
+		assert.deepEqual(h.scene.getSelection(), [L, A], 'the press keeps the multi-selection')
+		h.pointer('pointerup', ...P)
+		assert.deepEqual(h.scene.getSelection(), [L], 'the release narrows it')
+	})
+
+	test('a click on a locked member of a group selects the whole group (groupOf/expandGroups); a pen click too', () => {
+		const G = '01JG0000000000000000000001'
+		const M = '01JA00000000000000000000M1'
+		h = setupScene([
+			note(L, { x: 0, y: 0, w: 300, h: 300, z: 'a1', lock: LOCK, group: G }),
+			note(M, { x: 500, y: 0, w: 200, h: 200, z: 'a2', group: G }),
+		])
 		h.pointer('pointerdown', 150, 150)
+		assert.deepEqual(h.scene.getSelection(), [])
 		h.pointer('pointerup', 150, 150)
-		assert.deepEqual(h.scene.getSelection(), [A])
+		assert.deepEqual(h.scene.getSelection(), [M, L], 'the members, the clicked one last')
+		h.scene.setSelection([])
+		h.pointer('pointerdown', 150, 150, { pointerType: 'pen', pointerId: 9 })
+		h.pointer('pointerup', 150, 150, { pointerType: 'pen', pointerId: 9 })
+		assert.deepEqual(h.scene.getSelection(), [M, L])
+	})
+})
+
+describe('job 151 AK3: a finger on a locked item is background (the real GestureController)', () => {
+	const finger = (id = 5) => ({ pointerType: 'touch', pointerId: id })
+	const down = (x, y, id = 5) => h.pointer('pointerdown', x, y, finger(id))
+	const move = (x, y, id = 5) => {
+		h.pointer('pointermove', x, y, finger(id))
+		h.frame()
+	}
+	const up = (x, y, id = 5) => {
+		h.pointer('pointerup', x, y, finger(id))
+		h.frame()
+	}
+	let pans = 0
+	/** Fake timers first (the hold timer is the GestureController's setTimeout), then the scene. */
+	const setup = (items = template()) => {
+		mock.timers.enable({ apis: ['setTimeout'] })
+		pans = 0
+		h = setupScene(items, { on: { onTouchPan: () => { pans++ } } })
+	}
+
+	test('a drag on L pans the camera, keeps the selection, draws no marquee and calls onTouchPan once', () => {
+		setup()
+		h.scene.setSelection([B])
+		down(...P)
+		move(80, 480)
+		move(150, 550)
+		up(150, 550)
+		assert.deepEqual(h.scene.getCamera(), { x: -100, y: -100, scale: 1 }, 'panned by the way of the finger')
+		assert.deepEqual(h.scene.getSelection(), [B], 'the selection stays')
+		assert.deepEqual(marquees(), [], 'no marquee')
+		assert.equal(pans, 1, 'onTouchPan once')
+		assert.deepEqual(h.intents(), [])
+		assert.deepEqual(boxOf(L), [0, 0, 800, 600])
 	})
 
-	test('a finger on a locked note selects it; dragging it starts no drag, no move intent and no pan (review round 1, N8)', () => {
-		h = setupScene([note(A, { x: 100, y: 100, lock: LOCK }), note(B, { x: 400, y: 100 })])
-		const finger = { pointerType: 'touch', pointerId: 5 }
-		const cam = h.scene.getCamera()
-		h.pointer('pointerdown', 150, 150, finger)
-		h.pointer('pointerup', 150, 150, finger)
-		h.frame()
-		assert.deepEqual(h.scene.getSelection(), [A], 'a tap selects the locked note')
-		h.pointer('pointerdown', 150, 150, finger)
-		for (const [x, y] of [[170, 170], [220, 220], [300, 260]]) {
-			h.pointer('pointermove', x, y, finger)
-			h.frame()
-		}
-		h.pointer('pointerup', 300, 260, finger)
-		h.frame()
-		assert.equal(activities('drag').length, 0, 'no beginDrag')
-		assert.equal(callsOf('beginDrag').length, 0)
-		assert.deepEqual(h.intents('move'), [], 'no move intent')
-		assert.deepEqual(h.scene.getCamera(), cam, 'no pan')
-		assert.equal(h.scene.stats().gestureActive, false)
-		assert.deepEqual([h.model.get(A).x, h.model.get(A).y], [100, 100])
-		assert.deepEqual(h.scene.getSelection(), [A])
-		// a finger on free canvas still pans
-		h.pointer('pointerdown', 700, 600, finger)
-		for (const [x, y] of [[680, 580], [640, 540], [600, 500]]) {
-			h.pointer('pointermove', x, y, finger)
-			h.frame()
-		}
-		h.pointer('pointerup', 600, 500, finger)
-		h.frame()
-		assert.notDeepEqual(h.scene.getCamera(), cam, 'the free canvas pans as before')
+	test('a tap on L selects [L]; a tap on L in [L, A] narrows to [L]; a tap on empty canvas changes nothing', () => {
+		setup()
+		down(...P)
+		up(...P)
+		assert.deepEqual(h.scene.getSelection(), [L])
+		h.scene.setSelection([L, A])
+		down(...P)
+		up(...P)
+		assert.deepEqual(h.scene.getSelection(), [L])
+		down(900, 700)
+		up(900, 700)
+		assert.deepEqual(h.scene.getSelection(), [L], 'empty canvas: as before')
+		assert.equal(pans, 0)
+		assert.deepEqual(h.intents(), [])
 	})
 
+	test('held for LONG_PRESS_MS, then dragged: the hold ring, the touch marquee selects A, never L; held and released without a drag: nothing changes', () => {
+		setup()
+		h.scene.setSelection([B])
+		down(...P)
+		mock.timers.tick(LONG_PRESS_MS)
+		assert.deepEqual(h.scene.stats().holdRing, { x: 50, y: 450 }, 'the hold ring')
+		assert.deepEqual(h.scene.getSelection(), [B], 'the selection stays until the marquee starts')
+		move(120, 400)
+		move(200, 200)
+		up(200, 200)
+		assert.deepEqual(h.scene.getSelection(), [A], 'A, not L')
+		assert.equal(h.scene.stats().holdRing, null)
+		assert.deepEqual(h.scene.getCamera(), { x: 0, y: 0, scale: 1 }, 'no pan')
+		h.scene.setSelection([B])
+		down(...P)
+		mock.timers.tick(LONG_PRESS_MS)
+		assert.deepEqual(h.scene.stats().holdRing, { x: 50, y: 450 })
+		up(...P)
+		assert.deepEqual(h.scene.getSelection(), [B], 'a hold without a drag selects nothing')
+		assert.equal(h.scene.stats().holdRing, null)
+		assert.equal(pans, 0)
+		assert.deepEqual(h.intents(), [])
+	})
+
+	test('a tap on a "+" handle of the selected L gives the intent neighbour as before', () => {
+		setup()
+		h.scene.setSelection([L])
+		const plus = h.scene.handles().find((x) => x.name === 'plus-r')
+		assert.ok(plus, 'L has its "+" handles')
+		down(plus.x, plus.y)
+		up(plus.x, plus.y)
+		const n = h.intents('neighbour')
+		assert.equal(n.length, 1)
+		assert.deepEqual([n[0].id, n[0].side], [L, 'r'])
+		assert.deepEqual(h.scene.getCamera(), { x: 0, y: 0, scale: 1 })
+	})
+
+	test('a second finger pinches as before; a pen goes before a finger resting on L (no tap after it lifts)', () => {
+		setup()
+		const scale = h.scene.getCamera().scale
+		down(...P)
+		down(600, 500, 6)
+		move(750, 650, 6)
+		up(...P)
+		up(750, 650, 6)
+		assert.notEqual(h.scene.getCamera().scale, scale, 'the pinch zoomed')
+		assert.deepEqual(h.scene.getSelection(), [])
+		h.scene.setCamera({ x: 0, y: 0, scale: 1 })
+		h.frame()
+		const pen = { pointerType: 'pen', pointerId: 9 }
+		down(...P)
+		h.pointer('pointerdown', 175, 175, pen)
+		h.pointer('pointerup', 175, 175, pen)
+		up(...P)
+		assert.deepEqual(h.scene.getSelection(), [A], 'the pen tap selects A; the palm on L taps nothing')
+	})
+})
+
+describe('press, drag and marquee', () => {
 	test('a drag of a mixed selection moves only the free items; pressed on the free one', () => {
 		h = setupScene([note(A, { x: 100, y: 100, lock: LOCK }), note(B, { x: 400, y: 100 }), note(C, { x: 700, y: 100 })])
 		h.scene.setSelection([A, B, C])
@@ -178,7 +411,7 @@ describe('handles', () => {
 		h.scene.setSelection([A])
 		assert.deepEqual(h.scene.handles().map((x) => x.name), ['plus-t', 'plus-r', 'plus-b', 'plus-l'])
 		setLock(A, null)
-		assert.deepEqual(h.scene.handles().map((x) => x.name), ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot', 'plus-t', 'plus-r', 'plus-b', 'plus-l'])
+		assert.deepEqual(h.scene.handles().map((x) => x.name), ['tl', 'tr', 'br', 'bl', 'rot', 'plus-t', 'plus-r', 'plus-b', 'plus-l'])
 		setLock(A, LOCK)
 		assert.deepEqual(h.scene.handles().map((x) => x.name), ['plus-t', 'plus-r', 'plus-b', 'plus-l'], 'a lock change of the selected item: the handles follow at once')
 	})

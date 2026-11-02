@@ -36,8 +36,10 @@
  *       the badge, aria-expanded false; (d) alice on B1: badge, no card after
  *       2 s; (e) bob on B2: neither; (f) alice renews the link, bob reloads:
  *       the card again; (g) bob at 390 × 844 (touch, coarse pointer): the
- *       badge without visible text, aria-label "Open by link", a hit area of
- *       at least 44 × 44 px (elementFromPoint ±21 px around its centre).
+ *       badge is the title block (job 228), the board title with the subline
+ *       "Open by link" under it, named by that text (no aria-label), a hit
+ *       area of at least 44 × 44 px (elementFromPoint ±21 px around its
+ *       centre), a tap opens the account card.
  *   Admin page: admin opens /settings/admin/knorke, sets the default text,
  *   adds de through the <select>, sets its text, saves (PUT 200, "Saved."),
  *   both values after a reload; an invalid URL marks its field
@@ -49,7 +51,7 @@
  * (Nextcloud's CSP, ENTWICKLUNG trap 9.10).
  */
 import {
-	K, APP, BASE, ENV, PHONE, api, field, action, openBoard, waitReady, until, sleep,
+	K, APP, BASE, ENV, PHONE, api, field, action, openBoard, waitReady, until, sleep, openAdminSection,
 } from '../lib/harness.mjs'
 import { bridge } from '../lib/bridge.mjs'
 
@@ -309,13 +311,21 @@ export const E44 = {
 			await openBoard(bob, B1)
 			t.check(await until(() => visible(p, `${CARD}[data-knorke-privacy-kind=account]`), { timeout: 5000 }), '[C] nach dem Erneuern: die Karte erscheint wieder')
 
-			t.step('(g) bob bei 390 × 844: Abzeichen nur mit Symbol')
+			t.step('(g) bob bei 390 × 844: der Titelblock ist das Abzeichen')
 			const phone = await world.actor('bob-hinweis-handy', { user: 'bob', touch: true, viewport: PHONE })
 			await openBoard(phone, B1)
 			const pb = phone.page.locator(BADGE).first()
 			t.check(await until(() => pb.isVisible().catch(() => false), { timeout: 5000 }), '[C] schmal: Abzeichen sichtbar')
-			t.check((await pb.getAttribute('aria-label')) === 'Open by link', '[C] schmal: aria-label „Open by link“', await pb.getAttribute('aria-label'))
-			t.check((await pb.evaluate((el) => el.innerText.trim())) === '', '[C] schmal: kein sichtbarer Text', await pb.evaluate((el) => el.innerText))
+			const head = await pb.evaluate((el) => ({
+				cls: el.classList.contains('knorke-topbar__headbadge'),
+				label: el.getAttribute('aria-label'),
+				title: el.querySelector('.knorke-topbar__title-text')?.innerText.trim() ?? null,
+				subline: el.querySelector('.knorke-topbar__subline')?.innerText.trim() ?? null,
+			}))
+			t.check(head.cls && head.title !== null && head.title !== '', '[C] schmal: das Abzeichen ist der Titelblock mit dem Boardtitel', head)
+			t.check(head.subline === 'Open by link', '[C] schmal: Unterzeile „Open by link“', head)
+			const named = await phone.page.getByRole('button', { name: /Open by link/ }).and(phone.page.locator(BADGE)).count()
+			t.check(head.label === null && named === 1, '[C] schmal: zugänglicher Name aus dem Text, enthält „Open by link“', { ...head, named })
 			// grober Zeiger: Trefferfläche ≥ 44 × 44 px (elementFromPoint 21 px um die Mitte in alle vier Richtungen)
 			const hit = await pb.evaluate((el) => {
 				const r = el.getBoundingClientRect()
@@ -325,6 +335,11 @@ export const E44 = {
 				return { coarse: matchMedia('(pointer: coarse)').matches, up: on(cx, cy - 21), down: on(cx, cy + 21), left: on(cx - 21, cy), right: on(cx + 21, cy), box: { w: r.width, h: r.height } }
 			})
 			t.check(hit.coarse && hit.up && hit.down && hit.left && hit.right, '[C] schmal mit grobem Zeiger: Trefferfläche mindestens 44 × 44 px', hit)
+			// the one-time card of this fresh browser may stand; close it, then a tap on the title block opens it
+			if (await visible(phone.page, CARD)) await phone.page.locator('[data-knorke-action=privacy-close]').first().tap()
+			t.check(await until(async () => !(await visible(phone.page, CARD)), { timeout: 3000 }), '[C] schmal: keine Karte vor dem Tipp')
+			await pb.tap()
+			t.check(await until(() => visible(phone.page, `${CARD}[data-knorke-privacy-kind=account]`), { timeout: 3000 }), '[C] schmal: ein Tipp auf den Titelblock öffnet die Karte')
 			await world.drop(phone)
 
 			t.step('Admin-Abschnitt „Knorke“')
@@ -332,7 +347,9 @@ export const E44 = {
 			const ap = admin.page
 			await ap.goto(`${BASE}/index.php/settings/admin/knorke`, { waitUntil: 'domcontentloaded' })
 			const form = ap.locator('[data-knorke-admin=privacy]').first()
-			t.must(await form.waitFor({ state: 'visible', timeout: 20000 }).then(() => true, () => false), '[C] /settings/admin/knorke: [data-knorke-admin=privacy] sichtbar')
+			// job 281 (design A3): the privacy notice is a collapsible section, closed on load
+			t.must(await openAdminSection(ap, 'privacy'), '[C] /settings/admin/knorke: Bereich „Privacy notice“ aufgeklappt')
+			t.must(await form.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] /settings/admin/knorke: [data-knorke-admin=privacy] sichtbar')
 			const defText = ap.locator('[data-knorke-field=privacy-text][data-knorke-lang=default]').first()
 			await defText.fill('E44 Standardtext')
 			await ap.locator('[data-knorke-field=privacy-language]').first().selectOption('de')
@@ -342,11 +359,13 @@ export const E44 = {
 			await deText.fill('E44 Deutscher Text')
 			const [resp] = await Promise.all([
 				ap.waitForResponse((r) => /\/api\/v1\/settings\/privacy$/.test(r.url()) && r.request().method() === 'PUT', { timeout: 15000 }),
-				ap.locator('[data-knorke-action=privacy-save]').first().click(),
+				ap.locator('[data-knorke-action=admin-save]').first().click(),
 			])
 			t.check(resp.status() === 200, '[B] Speichern: PUT 200', resp.status())
 			t.check(await until(async () => (await textOf(ap, '[data-knorke-admin-status]')).trim() === 'Saved.', { timeout: 5000 }), '[C] Statuszeile „Saved.“', await textOf(ap, '[data-knorke-admin-status]'))
+			t.check(await until(async () => (await ap.locator('[data-knorke-admin-savebar]').count()) === 0, { timeout: 3000 }), '[C] nach dem Speichern: kein Speichern-Balken')
 			await ap.reload({ waitUntil: 'domcontentloaded' })
+			await openAdminSection(ap, 'privacy')
 			await form.waitFor({ state: 'visible', timeout: 20000 })
 			t.check((await defText.inputValue().catch(() => '')) === 'E44 Standardtext', '[C] nach dem Neuladen: Standardtext im Feld', await defText.inputValue().catch(() => null))
 			t.check((await deText.inputValue().catch(() => '')) === 'E44 Deutscher Text', '[C] nach dem Neuladen: Text von de im Feld', await deText.inputValue().catch(() => null))
@@ -354,8 +373,10 @@ export const E44 = {
 			t.step('ungültige URL: Feldhinweis mit aria-invalid')
 			const defUrl = ap.locator('[data-knorke-field=privacy-url][data-knorke-lang=default]').first()
 			await defUrl.fill('javascript:alert(1)')
-			await ap.locator('[data-knorke-action=privacy-save]').first().click()
+			// job 281: the browser checks the address at once; the save bar counts the error and blocks Save
 			t.check(await until(async () => (await defUrl.getAttribute('aria-invalid')) === 'true', { timeout: 5000 }), '[C] das URL-Feld trägt aria-invalid="true"')
+			t.check((await textOf(ap, '[data-knorke-admin-savebar-text]')).trim() === '1 error in Privacy notice', '[C] der Balken: „1 error in Privacy notice“', await textOf(ap, '[data-knorke-admin-savebar-text]'))
+			t.check(await ap.locator('[data-knorke-action=admin-save]').first().isDisabled().catch(() => false), '[C] „Save“ ist gesperrt')
 			t.check(await visible(ap, '[data-knorke-error=invalid_url]'), '[C] Feldhinweis [data-knorke-error=invalid_url] sichtbar')
 			const described = (await defUrl.getAttribute('aria-describedby')) || ''
 			t.check(described.split(' ').includes('knorke-privacy-default-error'), '[C] aria-describedby nennt den Feldhinweis', described)

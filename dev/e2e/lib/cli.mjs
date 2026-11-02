@@ -74,14 +74,16 @@ export function reportId(sc) {
 /**
  * Report ids of the scenarios of `all` that `only` selects, in execution
  * order; unknown ids in `only` are reported, never silently ignored. A case
- * id selects all its passes, a report id with "@" exactly that pass.
+ * id selects all its passes, a report id with "@" exactly that pass. A
+ * measurement (measure: true, job 214) is left out unless `only` names it.
  *
- * @param {Array<{id: string, pass?: string}>} all scenarios in execution order
+ * @param {Array<{id: string, pass?: string, measure?: boolean}>} all scenarios in execution order
  * @param {Set<string>|null} only upper-case ids or null
  * @return {{ids: string[], unknown: string[]}}
  */
 export function selectScenarios(all, only) {
-	if (!only) return { ids: all.map(reportId), unknown: [] }
+	// job 214: a measurement (measure: true) runs only when --only names it
+	if (!only) return { ids: all.filter((s) => s.measure !== true).map(reportId), unknown: [] }
 	const known = new Set(all.flatMap((s) => [s.id.toUpperCase(), reportId(s).toUpperCase()]))
 	return {
 		ids: all.filter((s) => only.has(s.id.toUpperCase()) || only.has(reportId(s).toUpperCase())).map(reportId),

@@ -70,7 +70,17 @@
  *   grid line over the same edges in the same order wins; one the clamp
  *   cuts gives the raw offset
  * - the grid draws no guide; items keep the priority on their axis
- * Nothing is rounded here (the scene stores on the 0.01 grid as before).
+ * Numbers of the guides (job 194, like Miro; the scene labels them):
+ * - snapMoveDetail is snapMove plus the length g of the winning gap per axis,
+ *   the number of every gap marker of that axis
+ * - guideMeasure: the measuring line of a guide from the snapped box to the
+ *   nearest candidate on the guide's line that lies wholly before or after
+ *   the box along the guide (one that overlaps it there does not count); on
+ *   a tie the one before (left/top); none when the nearest one touches the
+ *   box (≤ SAME_LINE) or there is none
+ * - distanceText / sizeText: whole board units, the 0.01 storage grid first
+ *   (the float error of 48.5 never rounds to 48)
+ * Nothing else is rounded here (the scene stores on the 0.01 grid as before).
  */
 import { resizeFrame } from './transform.js'
 
@@ -392,10 +402,27 @@ function markersOf(gaps, S, S2, axis, g) {
  *   the raw shift without guides and markers. Without markers and grid dx, dy and guides are those of snapDelta.
  */
 export function snapMove(box, dx, dy, index, tol, grid = 0) {
+	const r = snapMoveDetail(box, dx, dy, index, tol, grid)
+	return { dx: r.dx, dy: r.dy, guides: r.guides, gaps: r.gaps }
+}
+
+/**
+ * (job 194) snapMove with the length of the winning gap per axis, the number its gap markers show.
+ *
+ * @param {{x:number, y:number, w:number, h:number}|null} box dragged box before the drag (world)
+ * @param {number} dx raw shift x (world)
+ * @param {number} dy raw shift y (world)
+ * @param {SnapIndex|null} index candidates (buildSnapIndex)
+ * @param {number} tol tolerance per axis in world units (inclusive)
+ * @param {number} [grid] background grid step in world units (as snapMove)
+ * @return {{dx:number, dy:number, guides:SnapGuide[], gaps:GapMarker[], gapLen:{x:(number|null), y:(number|null)}}}
+ *   the result of snapMove and gapLen: the reference length g of the axes whose gap applies, else null
+ */
+export function snapMoveDetail(box, dx, dy, index, tol, grid = 0) {
 	const onGrid = gridOn(grid)
 	const onItems = itemsOn(index, tol)
 	if (!box || (!onItems && !onGrid) || !Number.isFinite(dx) || !Number.isFinite(dy)) {
-		return { dx, dy, guides: [], gaps: [] }
+		return { dx, dy, guides: [], gaps: [], gapLen: { x: null, y: null } }
 	}
 	const S = { minX: box.x + dx, minY: box.y + dy, maxX: box.x + box.w + dx, maxY: box.y + box.h + dy }
 	let lx = null
@@ -424,7 +451,69 @@ export function snapMove(box, dx, dy, index, tol, grid = 0) {
 	const gaps = []
 	if (px?.gap) gaps.push(...markersOf(gx, S, S2, 'x', wgx.g))
 	if (py?.gap) gaps.push(...markersOf(gy, S, S2, 'y', wgy.g))
-	return { dx: sdx, dy: sdy, guides, gaps }
+	return { dx: sdx, dy: sdy, guides, gaps, gapLen: { x: px?.gap ? wgx.g : null, y: py?.gap ? wgy.g : null } }
+}
+
+/**
+ * (job 194) The measuring line of a guide (see the module comment): along the guide from the snapped box to
+ * the nearest candidate with a line on it.
+ *
+ * @param {SnapIndex|null} index candidates (buildSnapIndex)
+ * @param {SnapGuide|null} guide a guide of snapMove or snapResize
+ * @param {SnapBox|null} box the snapped box (a drag) or frame (a resize)
+ * @return {GapMarker|null} on the guide (a vertical guide: axis 'y' at x = guide.at; a horizontal one: axis 'x'
+ *   at y = guide.at) from the edge of the box (or of the candidate before it) to the edge of the candidate (or of
+ *   the box); null without a candidate before or after the box, or when the nearest one touches it
+ */
+export function guideMeasure(index, guide, box) {
+	if (!index || !index.boxes || !guide || !box || !index[guide.axis]) return null
+	const ax = index[guide.axis]
+	// along the guide: a vertical guide (axis 'x') measures along y
+	const lo = guide.axis === 'x' ? 'minY' : 'minX'
+	const hi = guide.axis === 'x' ? 'maxY' : 'maxX'
+	const c = guide.at
+	let best = null
+	const end = c + SAME_LINE + SAME_EPS
+	for (let k = lowerBound(ax.v, c - SAME_LINE - SAME_EPS); k < ax.v.length && ax.v[k] <= end; k++) {
+		const b = index.boxes[ax.box[k]]
+		let m = null
+		if (b[hi] <= box[lo] + SAME_EPS) m = { d: box[lo] - b[hi], from: b[hi], to: box[lo], before: true }
+		else if (b[lo] >= box[hi] - SAME_EPS) m = { d: b[lo] - box[hi], from: box[hi], to: b[lo], before: false }
+		if (m === null) continue
+		// the smaller distance; on a tie the one before the box
+		if (best === null || m.d < best.d || (m.d === best.d && m.before && !best.before)) best = m
+	}
+	if (best === null || best.d <= SAME_LINE + SAME_EPS) return null
+	return { axis: guide.axis === 'x' ? 'y' : 'x', at: c, from: best.from, to: best.to }
+}
+
+/**
+ * @param {number} v length in world units
+ * @return {number} v in whole board units (first on the 0.01 storage grid; not finite: 0)
+ */
+function wholeUnits(v) {
+	return Number.isFinite(v) ? Math.round(Math.round(v * 100) / 100) + 0 : 0
+}
+
+/**
+ * (job 194) The text of a distance label.
+ *
+ * @param {number} len length in world units
+ * @return {string} whole board units, digits only ("955")
+ */
+export function distanceText(len) {
+	return String(wholeUnits(len))
+}
+
+/**
+ * (job 194) The text of the size label of a resize.
+ *
+ * @param {number} w width in world units
+ * @param {number} h height in world units
+ * @return {string} "240 × 180" (U+00D7), whole board units
+ */
+export function sizeText(w, h) {
+	return `${wholeUnits(w)} × ${wholeUnits(h)}`
 }
 
 /** Sides of the resize handles (as resizeFrame): [x, y], −1 left/top, 1 right/bottom, 0 none. */

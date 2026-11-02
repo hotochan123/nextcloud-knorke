@@ -29,6 +29,9 @@
  *   'locked' while a member of one of them is locked
  * - groupSummary(model, ids, {writable}): the fields of selection v2
  *   (groupable, groupBlock, grouped, ungroupBlock, oneGroup)
+ * - selectionKinds(model, ids) (job 144, "Filter selection"): the kinds of
+ *   a selection with their items; filterKinds(model, ids) the selection v2
+ *   key kinds ([] while no entry would make the selection smaller)
  *
  * The model is read through get, has, groupSize, membersOf and (groupPlan)
  * sortByOrder. Cost (round 1, code review): groupOf asks groupSize (the
@@ -38,7 +41,7 @@
  * notes costs linear time, never 5000 sorts of 5000 ids.
  */
 import { isLocked } from './locks.js'
-import { isGroupable, typeInfo } from './registry.js'
+import { canBeChildOf, isGroupable, typeInfo } from './registry.js'
 
 /**
  * @param {object} model SceneModel
@@ -291,4 +294,118 @@ export function groupSummary(model, ids, { writable = true } = {}) {
 		ungroupBlock: un.blocked,
 		oneGroup: isOneGroup(model, (ids ?? []).filter((id) => model.has(id))),
 	}
+}
+
+/** (Job 278) Margin of "Frame around" on every side, in board units. */
+export const FRAME_AROUND_MARGIN = 40
+
+/**
+ * (Job 278) What "Frame around" would do with a selection:
+ * - ids: expandGroups(ids), only items the model knows (whole groups)
+ * - frames: the selected frames among them (they stay frames of their own,
+ *   frames cannot lie in frames; the new frame goes behind them)
+ * - movers: the items that get the new frame as their parent: every item of
+ *   ids that may be a frame's child and is not a child of a selected frame
+ *   (those stay with their frame)
+ * - box: the union of the (rotated) boxes of ids (connectors with their
+ *   route), FRAME_AROUND_MARGIN on every side; null when there is none or
+ *   it would pass the frame's largest size (then nothing is offered)
+ * - blocked, the first reason wins: a locked mover ('locked': it could not
+ *   be moved into the frame); movers with different parents ('parent'), a
+ *   selected frame counting as outside frames
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids selected item ids
+ * @return {{ids: string[], frames: string[], movers: string[], box: ({x: number, y: number, w: number, h: number}|null),
+ *   blocked: (null|'locked'|'parent')}}
+ */
+export function frameAroundPlan(model, ids) {
+	const known = model ? expandGroups(model, ids).filter((id) => model.has(id)) : []
+	const frames = known.filter((id) => typeInfo(model.get(id).t).container)
+	const inFrame = new Set(frames)
+	const movers = known.filter((id) => {
+		const it = model.get(id)
+		return !typeInfo(it.t).container && canBeChildOf(it.t, 'frame') && !inFrame.has(it.parent ?? null)
+	})
+	// the parents of the movers; a selected frame (and so its children) counts as outside frames
+	const parents = new Set(movers.map((id) => {
+		const p = model.get(id).parent ?? null
+		return p !== null && model.has(p) ? p : null
+	}))
+	if (frames.length > 0) {
+		parents.add(null)
+	}
+	let blocked = null
+	if (movers.some((id) => isLocked(model.get(id)))) {
+		blocked = 'locked'
+	} else if (parents.size > 1) {
+		blocked = 'parent'
+	}
+	let box = known.length > 0 && typeof model.boundsOf === 'function' ? model.boundsOf(known) : null
+	if (box !== null) {
+		const m = FRAME_AROUND_MARGIN
+		box = { x: box.x - m, y: box.y - m, w: box.w + 2 * m, h: box.h + 2 * m }
+		const max = typeInfo('frame').size[1]
+		if (!(box.w <= max && box.h <= max)) {
+			box = null
+		}
+	}
+	return { ids: known, frames, movers, box, blocked }
+}
+
+/** The item kinds of "Filter selection" (job 144), in list order; 'group' follows them. */
+export const ITEM_KINDS = Object.freeze(['sticky', 'shape', 'text', 'connector', 'frame'])
+
+/**
+ * The kinds of a selection (job 144, "Filter selection"), in the order
+ * sticky, shape, text, connector, frame, group, only those with items:
+ * - an item kind: the selected items the model knows with that type t
+ *   (locked ones and group members included); count = their number;
+ * - group: the fully selected groups (wholeGroups); count = their number,
+ *   ids = their members.
+ * ids keep the selection order (the current item stays the last of its
+ * kind); an item of an unknown type gets no entry. Linear: membersOf at
+ * most once per group (wholeGroups), groupOf asks groupSize.
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids selected ids
+ * @return {Array<{kind: string, count: number, ids: string[]}>}
+ */
+export function selectionKinds(model, ids) {
+	const list = [...new Set(ids ?? [])].filter((id) => model?.has?.(id))
+	const byKind = new Map(ITEM_KINDS.map((k) => [k, []]))
+	for (const id of list) {
+		byKind.get(model.get(id)?.t)?.push(id)
+	}
+	const out = []
+	for (const [kind, of] of byKind) {
+		if (of.length > 0) {
+			out.push({ kind, count: of.length, ids: of })
+		}
+	}
+	const whole = wholeGroups(model, list)
+	if (whole.length > 0) {
+		const set = new Set(whole)
+		out.push({ kind: 'group', count: whole.length, ids: list.filter((id) => set.has(groupOf(model, id))) })
+	}
+	return out
+}
+
+/**
+ * Selection v2 kinds (job 144): the entries of selectionKinds without their
+ * ids, while the selection is filterable: at least two entries, and at least
+ * one of them holds fewer items than the selection has known ones (a button
+ * that changes nothing is never offered); else [].
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids selected ids
+ * @return {Array<{kind: string, count: number}>}
+ */
+export function filterKinds(model, ids) {
+	const kinds = selectionKinds(model, ids)
+	const known = new Set((ids ?? []).filter((id) => model?.has?.(id))).size
+	if (kinds.length < 2 || !kinds.some((k) => k.ids.length < known)) {
+		return []
+	}
+	return kinds.map(({ kind, count }) => ({ kind, count }))
 }

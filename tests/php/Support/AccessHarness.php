@@ -10,9 +10,14 @@ namespace OCA\Knorke\Tests\Support;
 use OC\Notification\Notification;
 use OC\RichObjectStrings\RichTextFormatter;
 use OC\RichObjectStrings\Validator;
+use OCA\Knorke\Db\ItemStore;
+use OCA\Knorke\Notification\CommentNotifications;
 use OCA\Knorke\Notification\ShareNotifications;
 use OCA\Knorke\Service\Access;
+use OCA\Knorke\Service\BoardMarks;
 use OCA\Knorke\Service\BoardService;
+use OCA\Knorke\Service\BoardSketch;
+use OCA\Knorke\Service\CommentService;
 use OCA\Knorke\Service\FastCache;
 use OCA\Knorke\Service\GuestsAppWhitelist;
 use OCA\Knorke\Service\GuestToken;
@@ -23,6 +28,7 @@ use OCA\Knorke\Service\LinkThrottle;
 use OCA\Knorke\Service\MetaService;
 use OCA\Knorke\Service\SharePolicy;
 use OCA\Knorke\Service\ShareService;
+use OCA\Knorke\Service\TagService;
 use OCP\App\IAppManager;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
@@ -82,11 +88,13 @@ use Psr\Log\LoggerInterface;
  *  - share manager settings: $share (shareApiEnabled, sharingDisabledFor,
  *    allowGroupSharing, groupMembersOnly, excludeGroups, linkPassword,
  *    expireDefault, expireEnforced, expireDays)
- *  - $search: what ISearch::search answers ([result, more]); $searchCalls
+ *  - $search: what ISearch::search answers ([result, more]); $searchCalls,
+ *    $searchFailWith (job 249) makes it throw
  *  - $systemValues: IConfig system values (sharing.*, ipv6 subnet size)
  *  - password policy: $passwordHint (non-null → HintException); IHasher
  *    hashes as 'h:' . password, $rehash = a new hash verify() hands back
  *  - user time zones $zones (uid → stored zone), default zone $defaultZone
+ *  - Knorke user preferences $prefs (BoardMarks, job 219) and their calls $prefCalls
  *  - Knorke app config $appValues (key → stored text, e.g. public_url, P7;
  *    read through getValueString/getValueInt), IURLGenerator answering
  *    https://cloud.example/index.php/apps/knorke/p/<token> (absolute) and
@@ -118,6 +126,8 @@ final class AccessHarness {
     public FakeShareStore $shareRows;
     /** @var array<string, bool> */
     public array $linksAllowed = [];
+    /** files_sharing hide_disabled_user_shares (job 245): a disabled OWNER ($disabledUsers) hides its boards. */
+    public bool $hideDisabled = true;
     /** @var list<string> */
     public array $policyCalls = [];
     public bool $fourByte = true;
@@ -143,6 +153,8 @@ final class AccessHarness {
     public array $limiterFull = [];
     /** @var array<string, int> identifier → calls before it is used up (user limiter) */
     public array $userLimits = [];
+    /** @var array<string, int> identifier → calls before it is used up (anonymous limiter, opt-in) */
+    public array $anonLimits = [];
     public int $misses = 0;
     /** @var list<string> */
     public array $throttleCalls = [];
@@ -171,7 +183,11 @@ final class AccessHarness {
     public array $share = [
         'shareApiEnabled' => true, 'sharingDisabledFor' => [], 'allowGroupSharing' => true, 'groupMembersOnly' => false,
         'excludeGroups' => [], 'linkPassword' => false, 'expireDefault' => false, 'expireEnforced' => false, 'expireDays' => 7,
+        // factory job 249: whom users may find (allowEnumeration, limitEnumerationToGroups, limitEnumerationToPhone)
+        'enumeration' => true, 'enumerationGroups' => false, 'enumerationPhone' => false,
     ];
+    /** factory job 249: ISearch::search throws it */
+    public ?\Throwable $searchFailWith = null;
     /** @var array{0: array, 1: bool} */
     public array $search = [[], false];
     /** @var list<array> */
@@ -185,6 +201,10 @@ final class AccessHarness {
     /** @var array<string, string> uid → stored time zone */
     public array $zones = [];
     public string $defaultZone = 'UTC';
+    /** @var array<string, array<string, array{0: bool|int, 1: bool}>> uid → Knorke preference key → [value, lazy] (job 219) */
+    public array $prefs = [];
+    /** @var list<string> IUserConfig calls of BoardMarks */
+    public array $prefCalls = [];
     /** @var list<array> jobs added to IJobList */
     public array $jobs = [];
     /** @var list<string> warnings logged */
@@ -221,6 +241,17 @@ final class AccessHarness {
     public IGroupManager $groupManager;
     public IAppManager $apps;
     public LoggerInterface $logger;
+    /** Factory job 189: Nextcloud's comment store, the item store and the comment services. */
+    public FakeComments $comments;
+    public FakeItemStore $items;
+    /** @var list<string> call log of $items */
+    public array $itemLog = [];
+    public CommentNotifications $commentNotes;
+    public CommentService $commentService;
+    /** factory job 249: the comments' mention finder over $comments */
+    public FakeCommentMentionStore $mentionStore;
+    /** Factory job 191: the tag list of a board (routes 44 and 45). */
+    public TagService $tagService;
     private int $rnd = 0;
     /** @var array<string, list<string>> uid → the manager's cached group ids ($groupCache) */
     private array $cachedUserGroups = [];
@@ -262,7 +293,9 @@ final class AccessHarness {
         $limiter = Fake::of(ILimiter::class, [
             'registerAnonRequest' => function (string $id, int $limit, int $period, string $ip) use ($limited): void {
                 $this->limiterCalls[] = "$id $limit $period $ip";
-                if (count($this->limiterCalls) > $this->limiterMax || in_array($id, $this->limiterFull, true)) {
+                $used = count(array_filter($this->limiterCalls, static fn (string $c): bool => str_starts_with($c, "$id ") && str_ends_with($c, " $ip")));
+                if (count($this->limiterCalls) > $this->limiterMax || in_array($id, $this->limiterFull, true)
+                    || (isset($this->anonLimits[$id]) && $used > $this->anonLimits[$id])) {
                     throw $limited();
                 }
             },
@@ -287,7 +320,14 @@ final class AccessHarness {
 
             public function allows(string $ownerUid, ?IUser $known = null): bool {
                 $this->h->policyCalls[] = $ownerUid;
-                return $this->h->linksAllowed[$ownerUid] ?? true;
+                return !$this->ownerHidden($ownerUid) && ($this->h->linksAllowed[$ownerUid] ?? true);
+            }
+
+            public function ownerHidden(string $ownerUid, ?IUser $known = null): bool {
+                return $this->h->hideDisabled && in_array($ownerUid, $this->h->disabledUsers, true);
+            }
+
+            public function reset(?string $uid = null): void {
             }
         };
         $users = Fake::of(IUserManager::class, [
@@ -329,6 +369,9 @@ final class AccessHarness {
             'shareApiLinkDefaultExpireDate' => fn (): bool => $this->share['expireDefault'],
             'shareApiLinkDefaultExpireDateEnforced' => fn (): bool => $this->share['expireDefault'] && $this->share['expireEnforced'],
             'shareApiLinkDefaultExpireDays' => fn (): int => $this->share['expireDays'],
+            'allowEnumeration' => fn (): bool => $this->share['enumeration'],
+            'limitEnumerationToGroups' => fn (): bool => $this->share['enumerationGroups'],
+            'limitEnumerationToPhone' => fn (): bool => $this->share['enumerationPhone'],
         ]);
         $teamManager = Fake::of(ITeamManager::class, [
             'hasTeamSupport' => fn (): bool => $this->teamSupport,
@@ -356,18 +399,54 @@ final class AccessHarness {
         ]);
         $search = Fake::of(ISearch::class, ['search' => function ($q, array $types, $lookup, $limit, $offset): array {
             $this->searchCalls[] = ['q' => $q, 'types' => $types, 'lookup' => $lookup, 'limit' => $limit, 'offset' => $offset];
+            if ($this->searchFailWith !== null) {
+                throw $this->searchFailWith;
+            }
             return $this->search;
         }]);
         $userConfig = Fake::of(IUserConfig::class, [
             'getValueString' => fn (string $uid, string $app, string $key, string $default = '', bool $lazy = false): string => $app === 'core' && $key === 'timezone' ? ($this->zones[$uid] ?? $default) : $default,
+            // factory job 219: the Knorke preferences of BoardMarks, typed and with their lazy flag
+            'getValues' => function (string $uid, string $app, string $prefix = '', bool $filtered = false): array {
+                $this->prefCalls[] = "getValues $uid $app $prefix";
+                $out = [];
+                foreach ($app === 'knorke' ? $this->prefs[$uid] ?? [] : [] as $key => [$value]) {
+                    if (str_starts_with((string)$key, $prefix)) {
+                        $out[$key] = $value;
+                    }
+                }
+                return $out;
+            },
+            'setValueBool' => function (string $uid, string $app, string $key, bool $value, bool $lazy = false): bool {
+                $this->prefCalls[] = "setValueBool $uid $app $key " . ($value ? 'true' : 'false') . ($lazy ? ' lazy' : '');
+                $this->prefs[$uid][$key] = [$value, $lazy];
+                return true;
+            },
+            'setValueInt' => function (string $uid, string $app, string $key, int $value, bool $lazy = false, int $flags = 0): bool {
+                $this->prefCalls[] = "setValueInt $uid $app $key $value" . ($lazy ? ' lazy' : '');
+                $this->prefs[$uid][$key] = [$value, $lazy];
+                return true;
+            },
+            'deleteUserConfig' => function (string $uid, string $app, string $key): void {
+                $this->prefCalls[] = "deleteUserConfig $uid $app $key";
+                unset($this->prefs[$uid][$key]);
+            },
+            'deleteKey' => function (string $app, string $key): void {
+                $this->prefCalls[] = "deleteKey $app $key";
+                foreach (array_keys($this->prefs) as $uid) {
+                    unset($this->prefs[$uid][$key]);
+                }
+            },
         ]);
         $container = Fake::of(ContainerInterface::class, ['get' => fn (string $id): mixed => match ($id) {
             IManager::class => $manager,
             ITeamManager::class => $teamManager,
             ISearch::class => $search,
+            IConfig::class => $config,
             IUserConfig::class => $userConfig,
             ShareNotifications::class => $this->notificationsFailWith === null ? $this->notifications : throw $this->notificationsFailWith,
             IAppManager::class => $this->apps,
+            LinkPolicy::class => $this->policy,
             GuestsAppWhitelist::class => $this->guestsApp,
             GuestsAppWhitelist::WHITELIST => $this->guests ?? throw new class('no ' . $id) extends \RuntimeException implements NotFoundExceptionInterface {
             },
@@ -493,8 +572,26 @@ final class AccessHarness {
             'getValueString' => fn (string $app, string $key, string $default = '', ?bool $lazy = false): string => $this->appValues[$key] ?? $default,
         ]);
         $this->meta = new MetaService($this->boards, $this->cache, $db);
+        $this->comments = new FakeComments();
         $this->service = new BoardService($this->boards, $this->cache, $users, $urls, $random, $throttle, $request, new Limits($appConfig), $time,
-            $db, $this->policy, $this->meta, $this->shares, $this->sharePolicy, $this->secrets, $this->access, $appConfig, $logger);
+            $db, $this->policy, $this->meta, $this->shares, $this->sharePolicy, $this->secrets, $this->access, $appConfig, $logger, $this->comments->manager(),
+            new BoardMarks($userConfig));
+        // factory job 189: the comments over the same board store, items and Nextcloud fakes
+        $this->items = new FakeItemStore($this->itemLog);
+        $this->commentNotes = new CommentNotifications($users, $apps, $this->notificationManager, $time, $logger, $this->guestsApp);
+        $this->commentService = new CommentService($this->comments->manager(), $this->boards, $this->items, $this->shareRows, $this->meta, $this->cache,
+            $this->access, $this->policy, $this->sharePolicy, $users, $groupManager, $apps, $this->guestsApp, $limiter, $db, $time, $this->commentNotes,
+            $container, $logger, $this->mentionStore = new FakeCommentMentionStore($db, $this->comments));
+        $this->tagService = new TagService($this->meta, $limiter, $users, $db);
+    }
+
+    /**
+     * The sketches of route 57 (factory job 221) over this harness's Access;
+     * without $items an ItemStore over a bare connection (the routes that
+     * never read items).
+     */
+    public function sketches(?ItemStore $items = null): BoardSketch {
+        return new BoardSketch($this->access, $items ?? new ItemStore(Fake::of(IDBConnection::class)));
     }
 
     public function user(string $uid): ?IUser {

@@ -202,11 +202,13 @@ describe('remapEndpoint and capSize', () => {
 		assert.equal(c.remapEndpoint({ item: U, ax: 0, ay: 0 }, bad), null)
 	})
 
-	test('capSize = 3·strokeWidth + 4; invalid widths count as the default 2', () => {
-		assert.equal(c.capSize(2), 10)
-		assert.equal(c.capSize(1), 7)
-		assert.equal(c.capSize(24), 76)
-		for (const v of [undefined, null, NaN, -1, '3']) assert.equal(c.capSize(v), 10, String(v))
+	test('job 261 AK1: capSize = 6 + 4·√strokeWidth; invalid widths count as the default 2', () => {
+		assert.ok(Math.abs(c.capSize(2) - 11.657) < 1e-3)
+		assert.ok(Math.abs(c.capSize(8) - 17.314) < 1e-3)
+		assert.equal(c.capSize(1), 10)
+		assert.equal(c.capSize(4), 14)
+		for (const v of [undefined, null, NaN, -1, '3']) assert.equal(c.capSize(v), c.capSize(2), String(v))
+		assert.equal(c.CAP_BREADTH, 0.36)
 	})
 })
 
@@ -262,13 +264,22 @@ describe('routeConnector', () => {
 		assert.deepEqual(g.points, [100, 50, 200, 50, 200, 100, 300, 100])
 	})
 
-	test('curved: bezier with control points p ± n·max(40, 0.4·d) and 17 hit points', () => {
+	test('curved: bezier with control points p ± n·max(60, 0.6·d) (job 261) and 17 hit points', () => {
 		const g = c.routeConnector(end(A, { item: U }), end(B, { item: V }), 'curved')
 		assert.equal(g.kind, 'bezier')
 		assert.equal(g.points.length, 8)
 		assert.equal(g.hitPts.length, 34)
-		const d = Math.max(40, 0.4 * Math.hypot(200, 50))
+		const d = 0.6 * Math.hypot(200, 50)
 		assert.deepEqual(g.points, [100, 50, 100 + d, 50, 300 - d, 100, 300, 100])
+	})
+
+	test('job 261 AK5: curve handles are 60 % of the distance, at least 60', () => {
+		const far = c.routeConnector(end(null, { x: 0, y: 0 }), end(null, { x: 300, y: 0 }), 'curved')
+		assert.equal(far.points.length, 8)
+		const near = c.routeConnector({ box: { x: -100, y: -25, w: 100, h: 50, r: 0 }, ep: { item: U, ax: 1, ay: 0.5 }, point: null }, { box: { x: 50, y: -25, w: 100, h: 50, r: 0 }, ep: { item: V, ax: 0, ay: 0.5 }, point: null }, 'curved')
+		assert.deepEqual(near.points, [0, 0, 60, 0, -10, 0, 50, 0], '50 apart: 60')
+		const wide = c.routeConnector({ box: { x: -100, y: -25, w: 100, h: 50, r: 0 }, ep: { item: U, ax: 1, ay: 0.5 }, point: null }, { box: { x: 300, y: -25, w: 100, h: 50, r: 0 }, ep: { item: V, ax: 0, ay: 0.5 }, point: null }, 'curved')
+		assert.deepEqual(wide.points, [0, 0, 180, 0, 120, 0, 300, 0], '300 apart: 180')
 	})
 
 	test('an end without box and point → null (not drawn until the target arrives)', () => {
@@ -356,7 +367,7 @@ describe('routeConnector round 1b: elbow rules', () => {
 	test('curved: control points along the rounded normals; free ends have none; cap angles = end − last control point', () => {
 		const B = { x: 400, y: 300, w: 160, h: 100, r: 0 }
 		const g = c.routeConnector(end(A, anchor(U, 0.5, 1)), end(B, anchor(V, 0, 0.5)), 'curved')
-		const d = Math.max(40, 0.4 * Math.hypot(300, 230))
+		const d = 0.6 * Math.hypot(300, 230)
 		assert.deepEqual(g.points, [100, 120, 100, 120 + d, 400 - d, 350, 400, 350])
 		assert.equal(g.hitPts.length, 34)
 		assert.deepEqual(g.hitPts.slice(0, 2), [100, 120])
@@ -387,32 +398,33 @@ describe('anchorsFor, anchorNormal, labelBox ([S]-internal)', () => {
 		assert.deepEqual(c.anchorNormal(0.5, 0.5), [0, 0])
 	})
 
-	test('labelBox: glyph upper bounds (whole px at 16), words wrap at 240 − 2·4 like Konva, long words break, \n breaks; centred at labelAt', () => {
+	test('labelBox: glyph upper bounds (whole px at 15, job 261), words wrap at 240 − 2·9 like Konva, long words break, \n breaks; centred at labelAt', () => {
 		assert.equal(c.labelBox('', { x: 0, y: 0 }), null)
 		assert.equal(c.labelBox(null, { x: 0, y: 0 }), null)
 		assert.equal(c.labelBox('ja', null), null)
-		// j = ceil(455·16/2048) = 4, a = ceil(1139·16/2048) = 9
+		// j = ceil(455·15/2048) = 4, a = ceil(1139·15/2048) = 9; padding 5 above and below, 9 left and right
 		const one = c.labelBox('ja', { x: 100, y: 50 })
-		assert.deepEqual(one, { x: 100 - (13 + 8) / 2, y: 50 - (16 * 1.2 + 8) / 2, w: 13 + 8, h: 16 * 1.2 + 8, lines: 1 })
-		// a = b = 9, c = 8, space = 5: 'aaaaaaaaaa bbbbbbbbbb' = 185 fits 232, the third word does not
+		assert.deepEqual(one, { x: 100 - (13 + 18) / 2, y: 50 - 28 / 2, w: 13 + 18, h: 15 * 1.2 + 10, lines: 1 })
+		// 'aaaaaaaaaa bbbbbbbbbb' = 185 fits 222, the third word does not
 		const wrap = c.labelBox('aaaaaaaaaa bbbbbbbbbb cccccccccc', { x: 0, y: 0 })
-		assert.deepEqual([wrap.lines, wrap.w], [2, 185 + 8])
-		assert.deepEqual([c.labelBox('x'.repeat(60), { x: 0, y: 0 }).lines, c.labelBox('x'.repeat(60), { x: 0, y: 0 }).w], [3, 240], 'a 480 px word breaks into 29 + 29 + 2 glyphs')
+		assert.deepEqual([wrap.lines, wrap.w], [2, 185 + 18])
+		assert.deepEqual([c.labelBox('x'.repeat(60), { x: 0, y: 0 }).lines, c.labelBox('x'.repeat(60), { x: 0, y: 0 }).w], [3, 234], 'a 480 px word breaks into 27 + 27 + 6 glyphs')
 		assert.equal(c.labelBox('a\nb', { x: 0, y: 0 }).lines, 2)
 		assert.ok(c.labelBox('y'.repeat(200), { x: 0, y: 0 }).w <= 240)
-		assert.equal(c.labelBox('.', { x: 0, y: 0 }).w, 10 + 8, 'at least CONNECTOR_LABEL_MIN_W')
+		assert.equal(c.labelBox('.', { x: 0, y: 0 }).w, 10 + 18, 'at least CONNECTOR_LABEL_MIN_W')
 	})
 
 	test('labelBox (finding S-1b-01): capitals, emoji and CJK get at least their Arial / Noto / CJK advance, on one line', () => {
 		// real advances at 16 px: Liberation Sans (= Arial) 'OK' 23.1, 'TODO' 46.2, 'WICHTIG' 69.3;
 		// Noto Color Emoji 19.9; CJK 4 × 16 = 64. The old estimate (0.6 em) gave 19.2, 38.4, 67.2, 9.6, 38.4.
-		const real = { OK: 23.12, TODO: 46.2, WICHTIG: 69.3, '👍': 19.93, '会议记录': 64 }
+		// (job 261) The label is 15 px now: 15/16 of them.
+		const real = Object.fromEntries(Object.entries({ OK: 23.12, TODO: 46.2, WICHTIG: 69.3, '👍': 19.93, '会议记录': 64 }).map(([k, v]) => [k, v * 15 / 16]))
 		for (const [text, min] of Object.entries(real)) {
 			const b = c.labelBox(text, { x: 0, y: 0 })
 			assert.equal(b.lines, 1, text)
-			assert.ok(b.w - 8 >= min, `${text}: text width ${b.w - 8} ≥ ${min}`)
-			assert.ok(b.w - 8 <= min * 1.4 + 4, `${text}: not wildly over (${b.w - 8})`)
+			assert.ok(b.w - 18 >= min, `${text}: text width ${b.w - 18} ≥ ${min}`)
+			assert.ok(b.w - 18 <= min * 1.4 + 4, `${text}: not wildly over (${b.w - 18})`)
 		}
-		assert.deepEqual(['OK', 'TODO', 'WICHTIG', '👍', '会议记录'].map((t) => c.labelBox(t, { x: 0, y: 0 }).w - 8), [24, 48, 73, 21, 84])
+		assert.deepEqual(['OK', 'TODO', 'WICHTIG', '👍', '会议记录'].map((t) => c.labelBox(t, { x: 0, y: 0 }).w - 18), [23, 45, 69, 20, 80])
 	})
 })

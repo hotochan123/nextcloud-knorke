@@ -141,12 +141,13 @@ describe('wiring of the measurement mode', () => {
 
 	test('lab.js builds the set of ?set= and rejects an unknown one', () => {
 		assert.match(lab, /const set = params\.get\('set'\) \?\? 'm1'/)
-		assert.match(lab, /if \(!Object\.hasOwn\(SCENE_SETS, set\)\) throw new Error/)
-		assert.match(lab, /generateScene\(\{ counts: SCENE_SETS\[set\] \}\)\s+meta\.set = set/)
+		assert.match(lab, /if \(!MEASURE_SETS\.includes\(set\)\) throw new Error/)
+		assert.match(lab, /const \{ items, meta \} = generateSet\(set\)\s+meta\.set = set/)
 	})
 
 	test('run.mjs: --set only in the measurement mode, loaded set checked, set in measure.json', () => {
-		assert.match(run, /if \(!\['m1', 'noconn'\]\.includes\(SET\)\) return `--set \$\{SET\}`/)
+		assert.match(run, /const SETS = \['m1', 'noconn', 'm2notes', 'm2diagrams', 'mdnotes'\]/)
+		assert.match(run, /if \(!SETS\.includes\(SET\)\) return `--set \$\{SET\}`/)
 		assert.match(run, /const standard = IS_CHROMIUM && VIEWPORT\.width === 1920 && VIEWPORT\.height === 1080 && DPR === 1 && SET === 'm1'/)
 		assert.match(run, /const PAGE_QUERY = new URLSearchParams\(\[\.\.\.\(SET === 'm1' \? \[\] : \[\['set', SET\]\]\), \.\.\.\(SHADOWS === 'on' \? \[\] : \[\['shadows', '0'\]\]\)\]\)\.toString\(\)/)
 		assert.match(run, /await page\.goto\(PAGE_QUERY \? `\$\{URL_BASE\}\?\$\{PAGE_QUERY\}` : URL_BASE, \{ waitUntil: 'load' \}\)/)

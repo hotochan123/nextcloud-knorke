@@ -22,16 +22,23 @@
  *
  * Stage 1 (SPEC-M1 §6.7): selection() → the selected ids; handles() → the
  * transformer's handle centers [{name, x, y}] in client coordinates (the
- * scene reports them in container coordinates); connector(id) → {start,
- * end, kind} of a routed connector in world coordinates (null until the
- * model routes connectors, round 1b).
+ * scene reports them in container coordinates; job 231: with shown and
+ * size, what the renderer draws now and its screen size); connector(id) → {start,
+ * end, kind, points} of a routed connector in world coordinates (null until
+ * the model routes connectors, round 1b; points since job 197).
  *
  * Stage 3 (SPEC-M1 §6.7, R16): state().name = the own display name (E28: an
  * empty name in the guest dialog → 'Guest'), state().following = the pid
  * this tab follows or null; votes() → {sid, state, open, left, mine (plain
  * object, n ≥ 1), results ([id, n][] after the close), voters (moderators
- * only)}, without a session {sid: null, state: null, open: false, left:
- * null, mine: {}, results: null, voters: null}; presence() keeps its M0
+ * only), live (cfg.live), liveShown (this tab shows the live count on the
+ * board), tally ([id, n][] of the live count, moderators only, else null;
+ * job 149), accountsOnly (cfg.accountsOnly), voteBlocked (this guest is
+ * kept from voting) and canVote (this person may vote now; job 175)},
+ * without a session {sid: null, state: null, open: false, left: null,
+ * mine: {}, results: null, voters: null, live: false, liveShown: false,
+ * tally: null, accountsOnly: false, voteBlocked: false, canVote: by the
+ * role}; presence() keeps its M0
  * meaning (the sampled others, now with view); sentPresence() = a copy of
  * the me candidate of the last /sync request that went out, null when
  * there was none (mode vote/view, open vote panel, before the first
@@ -45,8 +52,21 @@
  * of fully selected groups the renderer holds (the scene's
  * stats().groupOutlines; 0 without one); items() and serverItems() carry
  * each item's group.
+ *
+ * Job 178 (save as image): lastExport() → {name, width, height, scale,
+ * scaled, ids, bounds} of the last image that downloaded (a copy; bounds:
+ * the content in world units, without the margin), null before.
+ *
+ * Job 189 (comments): comments() → {threads (a copy of the session's
+ * threads as GET answers them), loaded, loads (GETs started), picking ("New
+ * comment" waits for its tap), bubbles ("Show bubbles"), places (the
+ * bubbles on screen now: [{id, n, x, y}], container px of their centres)}.
+ *
+ * Job 275 (private writing): private() → {private: meta.private (model/
+ * privateWriting.js privateOf) or null, covered: the covered notes in the model}.
  */
 import { itemKey } from '../model/paths.js'
+import { privateOf } from '../model/privateWriting.js'
 
 /* global appVersion */
 export const VERSION = typeof appVersion === 'string' ? appVersion : 'dev'
@@ -108,6 +128,23 @@ export function debugApi(s) {
 		votes() {
 			return structuredClone(s.votesDebug())
 		},
+		/** (job 275) meta.private (privateOf) or null, and the number of covered notes in the model */
+		private() {
+			return { private: privateOf(s.board?.meta), covered: s.coveredCount() }
+		},
+		/**
+		 * (job 279) The drawn text of an item (a note, shape, text item; a table's
+		 * first text with marks): {rich: true, runs: [{text, b, i, s, c, href}]}
+		 * for the rich shape, {rich: false, text} for a Konva.Text, null when
+		 * nothing is drawn
+		 */
+		drawnText(id) {
+			return s.scene?.drawnText?.(id) ?? null
+		},
+		/** (job 271) the item the board search frames, or null */
+		searchHit() {
+			return s.scene?.getSearchHit?.() ?? null
+		},
 		sentPresence() {
 			const me = s.sync ? s.sync.sentMe : null
 			return me ? structuredClone(me) : null
@@ -153,14 +190,14 @@ export function debugApi(s) {
 				list = []
 			}
 			const b = rectOfContainer()
-			return list.map((h) => ({ name: h.name, x: h.x + b.left, y: h.y + b.top }))
+			return list.map((h) => ({ name: h.name, x: h.x + b.left, y: h.y + b.top, shown: h.shown, size: h.size }))
 		},
 		connector(id) {
 			const g = s.model && typeof s.model.geometryOf === 'function' ? s.model.geometryOf(id) : null
 			if (!g || !g.start || !g.end) {
 				return null
 			}
-			return { start: { x: g.start.x, y: g.start.y }, end: { x: g.end.x, y: g.end.y }, kind: g.kind }
+			return { start: { x: g.start.x, y: g.start.y }, end: { x: g.end.x, y: g.end.y }, kind: g.kind, points: Array.isArray(g.points) ? [...g.points] : [] }
 		},
 		itemScreenRect(id) {
 			const r = s.scene ? s.scene.itemScreenRect(id) : null
@@ -232,6 +269,19 @@ export function debugApi(s) {
 		},
 		counters() {
 			return { ...s.counters }
+		},
+		lastExport() {
+			return s.lastExport ? structuredClone(s.lastExport) : null
+		},
+		comments() {
+			return {
+				threads: structuredClone(s.comments?.threads ?? []),
+				loaded: s.comments?.loaded === true,
+				loads: s.comments?.loads ?? 0,
+				picking: s.commentPicking === true,
+				bubbles: s.bubbles !== false,
+				places: s.commentPlaces?.() ?? [],
+			}
 		},
 	}
 }

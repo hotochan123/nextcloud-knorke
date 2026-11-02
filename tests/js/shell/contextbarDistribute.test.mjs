@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ALIGN_EDGES, DISTRIBUTE_AXES } from '../../../src/board/actions.js'
-import { icons } from '../../../src/components/icons.js'
+import { ICON_SOURCE, icons } from '../../../src/components/icons.js'
 import { distributeLabel, itemAlignLabel } from '../../../src/components/labels.js'
 import { TYPES } from '../../../src/model/registry.js'
 import { panelOf } from './contextbarHtml.mjs'
@@ -104,11 +104,11 @@ test('M2 distribute (AK10): the panel stays open when the same ids drop from thr
 	assert.equal(bindings.panel.value, null, '"Align items" is gone: closed')
 })
 
-test('M2 distribute (AK10, AK12): each axis has an MDI icon of its own, apart from every align icon; the paths of distribute-horizontal-center and distribute-vertical-center', () => {
+test('M2 distribute (AK10, AK12): each axis has an icon of its own, apart from every align icon (job 244: own drawings in Phosphor style)', () => {
 	const { bindings } = setupOf(ContextBar, { selection: sel(['sticky', 'sticky', 'sticky'], { alignable: 3 }) })
 	assert.deepEqual(DISTRIBUTE_AXES.map((a) => bindings.DISTRIBUTE_ICONS[a]), [icons.distributeHorizontal, icons.distributeVertical])
-	assert.equal(icons.distributeHorizontal, 'M8 2V5H10V19H8V22H6V19H4V5H6V2H8M16 2V7H14V17H16V22H18V17H20V7H18V2H16Z')
-	assert.equal(icons.distributeVertical, 'M2 16H5V14H19V16H22V18H19V20H5V18H2V16M2 8H7V10H17V8H22V6H17V4H7V6H2V8Z')
+	assert.equal(ICON_SOURCE.distributeHorizontal, 'picture')
+	assert.equal(ICON_SOURCE.distributeVertical, 'picture')
 	assert.notEqual(icons.distributeHorizontal, icons.distributeVertical)
 	const align = ALIGN_EDGES.map((e) => bindings.ITEM_ALIGN_ICONS[e])
 	assert.ok(![icons.distributeHorizontal, icons.distributeVertical].some((p) => align.includes(p)), 'not an align icon')

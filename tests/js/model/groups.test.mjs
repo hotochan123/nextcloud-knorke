@@ -126,7 +126,7 @@ test('AK5 groupPlan / groupSummary: every groupBlock reason in its order (frame,
 
 test('isGroupable (registry.js, mirror of ItemRegistry::isGroupable): sticky, shape, text; never frame, connector or an unknown type', () => {
 	for (const t of ['sticky', 'shape', 'text']) assert.equal(isGroupable(t), true, t)
-	for (const t of ['frame', 'connector', 'mindmap', 'constructor', null]) assert.equal(isGroupable(t), false, String(t))
+	for (const t of ['frame', 'connector', 'chart', 'constructor', null]) assert.equal(isGroupable(t), false, String(t))
 })
 
 test('round 1 groupSize: the size of the index set, a group of one included; 0 for an unknown id or null', () => {

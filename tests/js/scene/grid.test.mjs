@@ -15,8 +15,8 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { gridLines, gridStep, paintGrid } from '../../../src/scene/grid.js'
-import { GRID_MAJOR_COLOR, GRID_MINOR_COLOR, MAX_SCALE, MIN_SCALE } from '../../../src/model/tokens.js'
+import { gridLines, gridSnapStep, gridStep, paintGrid } from '../../../src/scene/grid.js'
+import { GRID_FINE_SCALE, GRID_MAJOR_COLOR, GRID_MINOR_COLOR, GRID_SIZE, MAX_SCALE, MIN_SCALE } from '../../../src/model/tokens.js'
 
 /**
  * @param {number} seed seed
@@ -65,6 +65,55 @@ describe('AK8 (a): gridStep', () => {
 			assert.ok(step * s >= 10 && step * s <= 80, `scale ${s}: ${step * s}`)
 			assert.ok(step === 20 || (step / 5) * s < 10, `scale ${s}: step ${step} is the smallest`)
 		}
+	})
+})
+
+describe('job 238 AK5: the fine grid above 400 %', () => {
+	test('gridStep: 4 strictly above 400 %, unchanged up to it', () => {
+		assert.equal(GRID_FINE_SCALE, 4)
+		for (const [s, want] of [[10, 4], [5, 4], [4.01, 4], [4, 20], [1, 20], [0.5, 20], [0.1, 100], [0.05, 500]]) {
+			assert.equal(gridStep(s), want, `scale ${s}`)
+		}
+	})
+
+	test('scale 10, 1000 × 800, pr 1: lines 40 device px apart, those at world x 0, 20, 40 major, 4, 8, 12, 16 minor', () => {
+		const g = gridLines({ x: 0, y: 0, scale: 10 }, 1000, 800, 1)
+		assert.equal(g.step, 4)
+		assert.equal(g.lw, 1)
+		const byWorld = new Map(g.xs.map((l) => [l.at / 10, l.major]))
+		for (const x of [0, 20, 40]) assert.equal(byWorld.get(x), true, `world x ${x}`)
+		for (const x of [4, 8, 12, 16, 24, 36]) assert.equal(byWorld.get(x), false, `world x ${x}`)
+		for (let i = 1; i < g.xs.length; i++) assert.equal(g.xs[i].at - g.xs[i - 1].at, 40)
+		assert.equal(g.xs.length, 26, 'x 0 … 100 world units')
+		assert.equal(g.ys.length, 21)
+		assert.ok(g.xs.length <= Math.floor(1000 / 10) + 1)
+	})
+
+	test('scale 4: still step 20, 80 px apart; at 4.01 the 4 lines lie 16.04 px apart', () => {
+		const g = gridLines({ x: 0, y: 0, scale: 4 }, 1000, 800, 1)
+		assert.equal(g.step, 20)
+		assert.equal(g.xs[1].at - g.xs[0].at, 80)
+		const f = gridLines({ x: 0, y: 0, scale: 4.01 }, 1000, 800, 1)
+		assert.equal(f.step, 4)
+		assert.ok(4 * 4.01 >= 10)
+		assert.deepEqual(f.xs.slice(0, 6).map((l) => l.major), [true, false, false, false, false, true])
+	})
+
+	test('200 log-distributed scales from MIN_SCALE to MAX_SCALE (1000 %): step · scale ≥ 10', () => {
+		assert.equal(MAX_SCALE, 10)
+		for (let i = 0; i < 200; i++) {
+			const s = MIN_SCALE * Math.pow(MAX_SCALE / MIN_SCALE, i / 199)
+			assert.ok(gridStep(s) * s >= 10, `scale ${s}`)
+		}
+	})
+})
+
+describe('job 238 AK6: gridSnapStep', () => {
+	test('4 strictly above 400 %, else GRID_SIZE (also zoomed out and for a scale that is no finite number > 0)', () => {
+		for (const [s, want] of [[4, 20], [4.01, 4], [10, 4], [1, 20], [0.1, 20], [0.05, 20], [NaN, 20], [0, 20], [-5, 20], [Infinity, 20], [undefined, 20], ['10', 20]]) {
+			assert.equal(gridSnapStep(s), want, String(s))
+		}
+		assert.equal(gridSnapStep(1), GRID_SIZE)
 	})
 })
 

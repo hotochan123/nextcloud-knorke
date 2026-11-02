@@ -19,7 +19,10 @@
  * Hit modes: 'box' hits the whole (rotated) box; 'frameEdge' only the title
  * band above the frame and a border band of FRAME_EDGE_HIT_PX / scale (the
  * inside counts as empty canvas); 'shape' follows SHAPES[kind].hit (shapes.js);
- * 'line' the routed connector line and its label box.
+ * 'line' the routed connector line and its label box; (job 188) 'pad' the
+ * box with the sheets and the title band of a note pad (model/pad.js); (job
+ * 195) 'tree' the nodes and fold dots of a mind map (model/mindmap.js, the
+ * layout the scene hands to SceneModel.setTreeHit).
  *
  * Field rules (same kinds, bounds and normalisation as the server):
  *   ['text', max]      string, "\r\n" → "\n", C0 controls except \t and \n
@@ -28,7 +31,13 @@
  *   ['int', min, max]  whole number in bounds (12.0 counts, 12.5 does not), never -0
  *   ['enum', list]     a string of the list (case-sensitive)
  *   ['endpoint']       a connector end (connectors.js normalizeEndpoint: ax/ay as q(v, 10000))
- * Reserved, unused in M1: points, bool, number. A rule without a checker
+ *   ['tags', max]      (job 191) a list of 1–max different ids in ULID form, kept in its
+ *                      order (a note's data.tags; which ids name a tag is model/tags.js's)
+ *   ['image', max]     (job 203) a list of pieces whose concatenation is a picture of at
+ *                      most max characters (model/shapeImage.js; a shape's data.img)
+ *   ['points', max]    (job 273) a flat list x0, y0, x1, y1, … of 2–max finite numbers,
+ *                      |v| ≤ 1e7, even length, kept as sent (a pen stroke's data.points)
+ * Reserved: bool, number. A rule without a checker
  * rejects every value.
  *
  * Unknown types (import, newer version, downgrade) render as a placeholder,
@@ -38,18 +47,43 @@
  */
 import { normalizeEndpoint } from './connectors.js'
 import { deepFreeze } from './freeze.js'
+import { ULID_RE } from './ids.js'
 import { getPath } from './paths.js'
-import { DEFAULT_STICKY_FILL, FRAME_FILL } from './tokens.js'
+import { IMAGE_MAX, joinImage } from './shapeImage.js'
+import {
+	CONNECTOR_STROKE, DEFAULT_STICKY_FILL, FRAME_FILL, NOTE_SIZE_M, SHAPE_BORDER, SHAPE_STROKE, TABLE_HEADER_FILL, TABLE_STROKE, TEXT_COLOR,
+} from './tokens.js'
 
 /** Enumerations of the field rules; equal to the PHP constants (registry golden). */
 export const ENUMS = deepFreeze({
-	shapeKinds: ['rect', 'roundRect', 'ellipse', 'diamond', 'triangle', 'arrowRight'],
+	// job 201: the flowchart kinds and the symbols (icon…) after the six of M1 (model/shapes.js)
+	shapeKinds: [
+		'rect', 'roundRect', 'ellipse', 'diamond', 'triangle', 'arrowRight',
+		'terminal', 'parallelogram', 'document', 'database', 'subprocess', 'hexagon', 'manualInput', 'trapezoid', 'delay', 'offPage',
+		'iconPerson', 'iconPeople', 'iconPlace', 'iconClock', 'iconWarning', 'iconInfo', 'iconQuestion', 'iconDone', 'iconError', 'iconStar', 'iconHeart', 'iconIdea', 'iconFlag', 'iconCalendar', 'iconMail', 'iconPhone', 'iconHome', 'iconSettings', 'iconLock', 'iconCloud',
+		// job 203: an own shape, its picture in data.img (model/shapeImage.js)
+		'image',
+		// job 204: BPMN 2.0, events, tasks, gateways and data (model/shapes.js)
+		'bpmnStart', 'bpmnStartMessage', 'bpmnStartTimer', 'bpmnIntermediate', 'bpmnIntermediateMessage', 'bpmnIntermediateTimer', 'bpmnEnd', 'bpmnEndMessage', 'bpmnEndError', 'bpmnEndTerminate',
+		'bpmnTask', 'bpmnUserTask', 'bpmnServiceTask', 'bpmnManualTask', 'bpmnScriptTask', 'bpmnRuleTask', 'bpmnSendTask', 'bpmnReceiveTask', 'bpmnSubprocess', 'bpmnCallActivity',
+		'bpmnExclusive', 'bpmnParallel', 'bpmnInclusive', 'bpmnEventGateway', 'bpmnDataObject', 'bpmnDataInput', 'bpmnDataOutput', 'bpmnDataStore',
+	],
 	dashes: ['solid', 'dashed', 'dotted'],
 	aligns: ['left', 'center', 'right'],
 	valigns: ['top', 'middle', 'bottom'],
 	routes: ['straight', 'elbow', 'curved'],
-	caps: ['none', 'arrow', 'triangle', 'dot', 'diamond'],
+	// job 204: the open circle and the open triangle of a BPMN message flow
+	caps: ['none', 'arrow', 'triangle', 'dot', 'diamond', 'circleOpen', 'triangleOpen'],
+	// job 173: style.header of a table
+	headers: ['on', 'off'],
+	// job 195: style.layout of a mind map
+	mindLayouts: ['both', 'right', 'org', 'tree'],
+	// job 273: data.kind of a pen stroke (pen line or see-through highlighter)
+	penKinds: ['pen', 'marker'],
 })
+
+/** (job 273) Most numbers in a stroke's data.points: 500 points (= ItemRegistry::POINTS_MAX). */
+export const POINTS_MAX = 1000
 
 /**
  * Known types (the only types a put may create). `size` mirrors the server
@@ -59,10 +93,11 @@ export const TYPES = deepFreeze({
 	sticky: {
 		layer: 'content', container: false, childOf: ['frame'], rotatable: true,
 		size: [20, 2000],
-		defaults: { w: 200, h: 200, data: { text: '' }, style: { fill: DEFAULT_STICKY_FILL } },
+		defaults: { w: 200, h: 200, data: { text: '' }, style: { fill: DEFAULT_STICKY_FILL, fontSize: NOTE_SIZE_M } },
 		textPath: 'data.text', hit: 'box', pad: 'shadow', bindable: true, votable: true, placement: 'box',
 		resize: 'box', keepRatio: true, editor: 'note', required: [],
-		fields: { 'data.text': ['text', 6000], 'style.fill': ['color'], 'style.fontSize': ['int', 8, 200] },
+		// job 191: the note's tags (ids of meta.tags in the order they were ticked)
+		fields: { 'data.text': ['text', 6000], 'style.fill': ['color'], 'style.fontSize': ['int', 8, 200], 'data.tags': ['tags', 8] },
 	},
 	frame: {
 		layer: 'back', container: true, childOf: [], rotatable: false,
@@ -75,7 +110,8 @@ export const TYPES = deepFreeze({
 	shape: {
 		layer: 'content', container: false, childOf: ['frame'], rotatable: true,
 		size: [10, 20000],
-		defaults: { w: 200, h: 120, data: { kind: 'rect', text: '' }, style: { fill: '#ffffff', stroke: '#1a1a1a', strokeWidth: 2 } },
+		// job 260: the border SHAPE_BORDER (a BPMN kind brings its own, shapes.js BPMN_STYLE)
+		defaults: { w: 200, h: 120, data: { kind: 'rect', text: '' }, style: { fill: '#ffffff', stroke: SHAPE_BORDER, strokeWidth: 2 } },
 		textPath: 'data.text', hit: 'shape', pad: 'stroke', bindable: true, votable: true, placement: 'box',
 		resize: 'box', keepRatio: false, editor: 'shape', required: [],
 		fields: {
@@ -83,12 +119,17 @@ export const TYPES = deepFreeze({
 			'style.fill': ['color'], 'style.fillOpacity': ['int', 0, 100], 'style.stroke': ['color'],
 			'style.strokeWidth': ['int', 0, 24], 'style.dash': ['enum', ENUMS.dashes], 'style.textColor': ['color'],
 			'style.fontSize': ['int', 8, 200], 'style.align': ['enum', ENUMS.aligns], 'style.valign': ['enum', ENUMS.valigns],
+			// job 203: the picture of an own shape (kind image)
+			'data.img': ['image', IMAGE_MAX],
+			// job 240: the tick "1:1" of "Arrange" (model/shapes.js squareOn), the on/off list of style.header
+			'style.square': ['enum', ENUMS.headers],
 		},
 	},
 	text: {
 		layer: 'content', container: false, childOf: ['frame'], rotatable: true,
 		size: [4, 50000],
-		defaults: { w: 240, h: 31, data: { text: '' }, style: { fontSize: 24, color: '#1a1a1a', align: 'left' } },
+		// job 241: a new text item is centred; a stored one without style.align stays left (FIELD_DEFAULTS)
+		defaults: { w: 240, h: 31, data: { text: '' }, style: { fontSize: 24, color: SHAPE_STROKE, align: 'center' } },
 		textPath: 'data.text', hit: 'box', pad: 'none', bindable: true, votable: true, placement: 'box',
 		resize: 'text', keepRatio: false, editor: 'text', required: [],
 		fields: {
@@ -99,13 +140,75 @@ export const TYPES = deepFreeze({
 	connector: {
 		layer: 'content', container: false, childOf: [], rotatable: false,
 		size: [0, 0],
-		defaults: { w: 0, h: 0, data: { route: 'straight' }, style: { stroke: '#1a1a1a', strokeWidth: 2, endCap: 'arrow' } },
+		// job 153: a new connector is elbow; a stored one without data.route stays straight (FIELD_DEFAULTS)
+		// job 261: a new connector ends with a filled triangle (an open arrow until 0.4.0)
+		defaults: { w: 0, h: 0, data: { route: 'elbow' }, style: { stroke: CONNECTOR_STROKE, strokeWidth: 2, endCap: 'triangle' } },
 		textPath: 'data.label', hit: 'line', pad: 'line', bindable: false, votable: false, placement: 'none',
 		resize: 'none', keepRatio: false, editor: 'label', required: ['data.start', 'data.end'],
 		fields: {
 			'data.start': ['endpoint'], 'data.end': ['endpoint'], 'data.route': ['enum', ENUMS.routes],
 			'data.label': ['text', 200], 'style.stroke': ['color'], 'style.strokeWidth': ['int', 1, 24],
 			'style.dash': ['enum', ENUMS.dashes], 'style.startCap': ['enum', ENUMS.caps], 'style.endCap': ['enum', ENUMS.caps],
+		},
+	},
+	// job 173: data.cols/rows/cells have no typed rule (their form is checkTable's, model/table.js:
+	// a typed leaf would refuse the paths below it); createItem fills data with newTableData()
+	table: {
+		layer: 'content', container: false, childOf: ['frame'], rotatable: false,
+		size: [20, 100000],
+		defaults: { w: 480, h: 108, data: {}, style: {} },
+		textPath: null, hit: 'box', pad: 'none', bindable: true, votable: false, placement: 'box',
+		resize: 'none', keepRatio: false, editor: 'cell', required: ['data.cols', 'data.rows'],
+		fields: {
+			'style.stroke': ['color'], 'style.textColor': ['color'], 'style.headerFill': ['color'],
+			'style.header': ['enum', ENUMS.headers],
+			// job 265: the header column
+			'style.headerCol': ['enum', ENUMS.headers],
+		},
+	},
+	// job 188: a note pad, a pile of blank notes to take off (model/pad.js); hit 'pad' and the rbush padding
+	// 'band' take in its sheets below the box (job 263: and the shadow); four corners like a note, no rotation
+	pad: {
+		layer: 'content', container: false, childOf: ['frame'], rotatable: false,
+		size: [20, 2000],
+		defaults: { w: 200, h: 200, data: { title: '' }, style: { fill: DEFAULT_STICKY_FILL } },
+		textPath: 'data.title', hit: 'pad', pad: 'band', bindable: false, votable: false, placement: 'box',
+		resize: 'box', keepRatio: true, editor: 'padTitle', required: [],
+		fields: { 'data.title': ['text', 200], 'style.fill': ['color'] },
+	},
+	// job 195: a mind map (model/mindmap.js): data.nodes/data.texts have no typed rule (their form is
+	// checkMindmap's); hit 'tree' takes only its nodes and fold dots (the scene's layout), the rest of its
+	// box is empty canvas; createItem fills data with newMindmapData()
+	mindmap: {
+		layer: 'content', container: false, childOf: ['frame'], rotatable: false,
+		size: [20, 100000],
+		defaults: { w: 120, h: 48, data: {}, style: {} },
+		textPath: null, hit: 'tree', pad: 'none', bindable: false, votable: false, placement: 'box',
+		resize: 'none', keepRatio: false, editor: 'node', required: ['data.nodes'],
+		fields: { 'style.layout': ['enum', ENUMS.mindLayouts] },
+	},
+	// job 267: an AI summary card (scene/nodes/ai.js, model/markdown.js): the AI's Markdown in data.md,
+	// the frame it summarises in data.title; nobody edits it (no editor, no text path), it is not resized
+	ai: {
+		layer: 'content', container: false, childOf: ['frame'], rotatable: false,
+		size: [20, 20000],
+		defaults: { w: 360, h: 120, data: {}, style: {} },
+		textPath: null, hit: 'box', pad: 'none', bindable: true, votable: false, placement: 'box',
+		resize: 'none', keepRatio: false, editor: null, required: [],
+		fields: { 'data.md': ['text', 12000], 'data.title': ['text', 200] },
+	},
+	// job 273: a freehand stroke of the pen or the highlighter (model/ink.js): data.points relative to x/y,
+	// the box their hull plus half the width at drawing time (rbush padding 'stroke': a wider line set later still
+	// lies in the index); hit 'ink' takes only the line, the rest of the box is canvas
+	pen: {
+		layer: 'content', container: false, childOf: ['frame'], rotatable: false,
+		size: [0, 100000],
+		defaults: { w: 0, h: 0, data: { kind: 'pen' }, style: { stroke: TEXT_COLOR, strokeWidth: 4 } },
+		textPath: null, hit: 'ink', pad: 'stroke', bindable: false, votable: false, placement: 'box',
+		resize: 'none', keepRatio: false, editor: null, required: ['data.points'],
+		fields: {
+			'data.kind': ['enum', ENUMS.penKinds], 'data.points': ['points', POINTS_MAX],
+			'style.stroke': ['color'], 'style.strokeWidth': ['int', 1, 64],
 		},
 	},
 })
@@ -128,18 +231,25 @@ export const PLACEHOLDER = deepFreeze({
  * stored), data.label of a connector is no label.
  */
 const FIELD_DEFAULTS = deepFreeze({
-	sticky: { 'data.text': '', 'style.fill': DEFAULT_STICKY_FILL, 'style.fontSize': null },
+	sticky: { 'data.text': '', 'style.fill': DEFAULT_STICKY_FILL, 'style.fontSize': null, 'data.tags': null },
 	frame: { 'data.title': '', 'style.fill': FRAME_FILL },
 	shape: {
-		'data.kind': 'rect', 'data.text': '', 'style.fill': '#ffffff', 'style.fillOpacity': 100, 'style.stroke': '#1a1a1a',
-		'style.strokeWidth': 2, 'style.dash': 'solid', 'style.textColor': '#1a1a1a', 'style.fontSize': null,
-		'style.align': 'center', 'style.valign': 'middle',
+		'data.kind': 'rect', 'data.text': '', 'style.fill': '#ffffff', 'style.fillOpacity': 100, 'style.stroke': SHAPE_BORDER,
+		'style.strokeWidth': 2, 'style.dash': 'solid', 'style.textColor': SHAPE_STROKE, 'style.fontSize': null,
+		'style.align': 'center', 'style.valign': 'middle', 'data.img': null,
+		// job 240: missing = derived from kind and box (model/shapes.js squareOn)
+		'style.square': null,
 	},
-	text: { 'data.text': '', 'style.fontSize': 24, 'style.color': '#1a1a1a', 'style.align': 'left' },
+	text: { 'data.text': '', 'style.fontSize': 24, 'style.color': SHAPE_STROKE, 'style.align': 'left' },
 	connector: {
-		'data.route': 'straight', 'data.label': null, 'style.stroke': '#1a1a1a', 'style.strokeWidth': 2,
+		'data.route': 'straight', 'data.label': null, 'style.stroke': CONNECTOR_STROKE, 'style.strokeWidth': 2,
 		'style.dash': 'solid', 'style.startCap': 'none', 'style.endCap': 'none',
 	},
+	table: { 'style.stroke': TABLE_STROKE, 'style.textColor': TEXT_COLOR, 'style.headerFill': TABLE_HEADER_FILL, 'style.header': 'on', 'style.headerCol': 'off' },
+	pad: { 'data.title': '', 'style.fill': DEFAULT_STICKY_FILL },
+	mindmap: { 'style.layout': 'both' },
+	ai: { 'data.md': '', 'data.title': '' },
+	pen: { 'data.kind': 'pen', 'data.points': null, 'style.stroke': TEXT_COLOR, 'style.strokeWidth': 4 },
 })
 
 const LAYER_RANK = Object.freeze({ back: 0, content: 1 })
@@ -292,6 +402,27 @@ function cleanText(v, max) {
 }
 
 /**
+ * (Job 191) The rule tags: a list of 1–max strings in ULID form, each once.
+ *
+ * @param {unknown} v value
+ * @param {number} max most ids
+ * @return {boolean}
+ */
+function tagIdsOk(v, max) {
+	if (!Array.isArray(v) || v.length === 0 || v.length > max) {
+		return false
+	}
+	const seen = new Set()
+	for (const id of v) {
+		if (typeof id !== 'string' || !ULID_RE.test(id) || seen.has(id)) {
+			return false
+		}
+		seen.add(id)
+	}
+	return true
+}
+
+/**
  * One typed field rule applied to one value (ItemRegistry::checkField of the
  * server, which takes the rule).
  *
@@ -317,6 +448,19 @@ export function checkRule(rule, v) {
 		const ep = normalizeEndpoint(v)
 		return ep === null ? { ok: false, norm: null } : { ok: true, norm: ep }
 	}
+	case 'tags':
+		return tagIdsOk(v, rule[1]) ? { ok: true, norm: [...v] } : { ok: false, norm: null }
+	case 'image': {
+		// job 203: pieces whose concatenation is a picture (shapeImage.js)
+		const uri = joinImage(v)
+		return uri !== null && uri.length <= rule[1] ? { ok: true, norm: [...v] } : { ok: false, norm: null }
+	}
+	case 'points':
+		// job 273: x0, y0, x1, y1, … of a pen stroke, kept as sent
+		return Array.isArray(v) && v.length >= 2 && v.length <= rule[1] && v.length % 2 === 0
+			&& v.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 1e7)
+			? { ok: true, norm: [...v] }
+			: { ok: false, norm: null }
 	default:
 		return { ok: false, norm: null }
 	}

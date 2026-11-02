@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 namespace OCA\Knorke\Service;
 
+use OCA\Knorke\Db\ItemStore;
 use OCA\Knorke\Exception\HttpError;
 
 /**
@@ -37,6 +38,8 @@ class ModerationService {
 
     public function __construct(
         private MetaService $meta,
+        // job 275: the frame of private writing must be a live frame (null in tests that never start one)
+        private ?ItemStore $items = null,
     ) {
     }
 
@@ -134,20 +137,132 @@ class ModerationService {
      * @return array{title: string, meta: array, metaRev: int}
      * @throws HttpError 400 bad_request | 404
      */
-    public function summon(Principal $p, int $board, mixed $client, int $nowMs): array {
+    public function summon(Principal $p, int $board, mixed $client, int $nowMs, mixed $frame = null): array {
         if (!is_string($client) || preg_match(SyncRequest::CLIENT_RE, $client) !== 1) {
             throw new HttpError(400, 'bad_request', 'Invalid client id.');
         }
-        return $this->meta->write($board, static function (array $m) use ($p, $client, $nowMs): array {
-            $m['summon'] = self::summonAfter(is_array($m['summon'] ?? null) ? $m['summon'] : null, $p, $client, $nowMs);
+        if ($frame !== null && !self::isId($frame)) {
+            throw new HttpError(400, 'bad_request', 'Invalid frame.');
+        }
+        return $this->meta->write($board, static function (array $m) use ($p, $client, $nowMs, $frame): array {
+            $m['summon'] = self::summonAfter(is_array($m['summon'] ?? null) ? $m['summon'] : null, $p, $client, $nowMs, $frame);
             return $m;
         }, $nowMs);
     }
 
-    /** meta.summon of a new "Bring everyone here" (§4.12.3): seq = old seq + 1 (1 without one). */
-    public static function summonAfter(?array $old, Principal $p, string $client, int $nowMs): array {
+    /**
+     * meta.summon of a new "Bring everyone here" (§4.12.3): seq = old seq + 1 (1 without one);
+     * with a frame (factory job 272: presenting frames as slides) also {frame}.
+     */
+    public static function summonAfter(?array $old, Principal $p, string $client, int $nowMs, ?string $frame = null): array {
         $seq = (is_int($old['seq'] ?? null) ? $old['seq'] : 0) + 1;
-        return ['pid' => $p->pid, 'client' => $client, 'name' => $p->displayName, 'seq' => $seq, 'at' => $nowMs];
+        $s = ['pid' => $p->pid, 'client' => $client, 'name' => $p->displayName, 'seq' => $seq, 'at' => $nowMs];
+        if ($frame !== null) {
+            $s['frame'] = $frame;
+        }
+        return $s;
+    }
+
+    /**
+     * `PUT …/summon` {frame} (factory job 272): the next slide of a running
+     * presentation. Only frame changes; pid, client, name, seq and at stay,
+     * so a client that left the call is not pulled back. No summon → 409
+     * no_summon; the same frame writes nothing.
+     *
+     * @return array{title: string, meta: array, metaRev: int}
+     * @throws HttpError 400 bad_request | 404 | 409 no_summon
+     */
+    public function moveSummon(int $board, mixed $frame, int $nowMs): array {
+        if (!self::isId($frame)) {
+            throw new HttpError(400, 'bad_request', 'Invalid frame.');
+        }
+        return $this->meta->write($board, static function (array $m) use ($frame): ?array {
+            if (!is_array($m['summon'] ?? null)) {
+                throw new HttpError(409, 'no_summon');
+            }
+            if (($m['summon']['frame'] ?? null) === $frame) {
+                return null;
+            }
+            $m['summon']['frame'] = $frame;
+            return $m;
+        }, $nowMs);
+    }
+
+    /**
+     * `PUT …/slides` {order} (factory job 272): meta.slides, the saved order
+     * of the frames as slides. A list of distinct item ids (at most
+     * Limits::SLIDES_MAX); [] removes it. Whether the ids are frames is the
+     * client's business (it skips the others).
+     *
+     * @return array{title: string, meta: array, metaRev: int}
+     * @throws HttpError 400 bad_request | 404
+     */
+    public function slides(int $board, mixed $order, int $nowMs): array {
+        $order = self::slideOrder($order);
+        return $this->meta->write($board, static function (array $m) use ($order): ?array {
+            if ($order === []) {
+                if (!array_key_exists('slides', $m)) {
+                    return null;
+                }
+                unset($m['slides']);
+            } else {
+                $m['slides'] = $order;
+            }
+            return $m;
+        }, $nowMs);
+    }
+
+    /**
+     * @return list<string> the checked order
+     * @throws HttpError 400 bad_request
+     */
+    public static function slideOrder(mixed $order): array {
+        if (!is_array($order) || !array_is_list($order) || count($order) > Limits::SLIDES_MAX) {
+            throw new HttpError(400, 'bad_request', 'Invalid order.');
+        }
+        $seen = [];
+        foreach ($order as $id) {
+            if (!self::isId($id) || isset($seen[$id])) {
+                throw new HttpError(400, 'bad_request', 'Invalid order.');
+            }
+            $seen[$id] = true;
+        }
+        return $order;
+    }
+
+    private static function isId(mixed $id): bool {
+        return is_string($id) && preg_match(OpValidator::ULID_RE, $id) === 1;
+    }
+
+    /**
+     * `PUT …/private` {action, frame?} (factory job 275, PrivateWriting):
+     * start (whole board, or the live frame $frame) or reveal. start: 400
+     * bad_request for a frame that is no ULID or no live frame, 409
+     * private_on / vote_open; reveal without private writing writes nothing
+     * and answers the stored state.
+     *
+     * @return array{title: string, meta: array, metaRev: int}
+     * @throws HttpError 400 bad_request | 404 | 409 private_on | 409 vote_open
+     */
+    public function privateWriting(Principal $p, int $board, mixed $action, mixed $frame, int $nowMs): array {
+        if (!is_string($action) || !in_array($action, PrivateWriting::ACTIONS, true)) {
+            throw new HttpError(400, 'bad_request', 'Unknown action.');
+        }
+        if ($action === 'reveal') {
+            return $this->meta->write($board, static fn (array $m): ?array => PrivateWriting::revealAfter($m), $nowMs);
+        }
+        if ($frame !== null && !self::isId($frame)) {
+            throw new HttpError(400, 'bad_request', 'Invalid frame.');
+        }
+        return $this->meta->write($board, function (array $m) use ($p, $board, $frame, $nowMs): array {
+            if ($frame !== null && $this->items !== null) {
+                $row = $this->items->loadItems($board, [$frame])[$frame] ?? null;
+                if ($row === null || (int)$row['deleted'] === 1 || $row['type'] !== 'frame') {
+                    throw new HttpError(400, 'bad_request', 'Invalid frame.');
+                }
+            }
+            return PrivateWriting::startAfter($m, $frame, $nowMs, $p->displayName);
+        }, $nowMs);
     }
 
     /**

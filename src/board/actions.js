@@ -29,25 +29,16 @@
  * - moveItems v2: a connector moves its free ends only when every bound end
  *   follows a moved item; alone it cannot be dragged
  *
- * M2 (SPEC-M1 §1.2 "Ausrichten"): alignItems moves the topmost non-connector
- * items of the selection to one edge or centre line of their union
- * (ALIGN_EDGES), with frame membership like moveItems.
- *
- * M2 (SPEC-M1 §1.2 "Verteilen"): distributeItems spreads the same items
- * (alignableIds, at least three) along one axis (DISTRIBUTE_AXES) to equal
- * gaps between neighbouring hulls; the two outermost stay put. With too
- * little room for that, equal steps between the centres instead.
- *
- * M2 (SPEC-M1 §1.2 "Aufräumen"): tidyItems snaps the same items
- * (alignableIds, at least two) to an exact grid: rows and columns from the
- * hull centres (order kept, empty cells stay empty), one whole-unit gap per
- * axis from today's mean track centres, each hull centred in its cell; the
- * top-left corner of the selection stays (rounded to whole units).
+ * Align, distribute, tidy up and sort by colour (alignItems, distributeItems,
+ * tidyItems, sortNotesByColor, readingOrder …) live in board/arrangeActions.js
+ * (job 254); this module re-exports them.
  *
  * M2 (SPEC-M1 §1.2 "(R20) Sperren"): lockItems and unlockItems give one
  * lock patch per item ({lock: lockValue(me)} / {lock: null}, model/locks.js)
  * with the opposite patch as inverse; together one undo step. Only items
  * that are not locked are locked, only items me may unlock are unlocked.
+ * (job 152) Undoing the unlock of someone else's lock restores that lock
+ * (restore: true), never one in me's name.
  *
  * M2 (SPEC-M1 §1.2 "(R20) Gruppieren", model/groups.js):
  * - groupItems: one patch {group: g} per item of C (groupPlan: the selection
@@ -71,17 +62,56 @@
  *   the block's hull, with one parent per block. membership (frame
  *   transform) frees or adopts a group only as a whole, and so does a frame
  *   drawn from a rect (createItem).
+ *
+ * Job 136 (neighbour with one click): neighbourItem puts an empty item of the
+ * source's kind, size, rotation and style beside it, SERIES_GAP away, moved on
+ * past every item it would cover; one put, inverse its remove. Job 148: with
+ * `connect` (a click on "+") a second put joins the source and the neighbour
+ * with a connector at their facing anchors; inverse remove C, then N. Job
+ * 159: a text item's neighbour is a copy with its text, size and rotation.
+ * Job 162: with `connect` a note or shape that has a near item in that
+ * direction gets only a connector to it (plusPlan of model/plus.js, which
+ * also holds the place of the neighbour, neighbourBox).
+ *
+ * Job 153 (swap direction): swapCaps gives every unlocked connector whose
+ * two tips differ (swappableIds, by display value) one patch that stores
+ * both tips swapped; the inverse restores the stored values (a missing one
+ * as null). Route, ends, label and line stay.
+ *
+ * Job 188 (note pads, model/pad.js): createItem makes a pad without an
+ * editor (edit false); takeNote takes a blank note off a pad, one put of a
+ * sticky in the pad's size and colour, the pad itself gets no op.
+ *
+ * Job 191 (tags, model/tags.js): copyPayload carries `tags`, the board's
+ * tags its notes use (option tags: the board's list); pasteItems maps every
+ * note's data.tags through the option tagMap (planPasteTags: old id → the
+ * board's id; an id without an entry goes, no tagMap: no tags at all);
+ * duplicateItems keeps the tags (the same board). Ticking a tag is
+ * model/tags.js tagPatch.
  */
-import { normalizeEndpoint, anchorPoint, remapEndpoint } from '../model/connectors.js'
-import { q, rotatedBBox } from '../model/geometry.js'
-import { blocksOf, groupOf, groupPlan, isOneGroup, movableIds, ungroupPlan, wholeGroups } from '../model/groups.js'
+import { FLOWS, normalizeEndpoint, anchorPoint, anchorsFor, plusEndCap, remapEndpoint } from '../model/connectors.js'
+import { rotatedBBox } from '../model/geometry.js'
+import { frameAroundPlan, groupOf, groupPlan, heldGroup, isOneGroup, ungroupPlan, wholeGroups } from '../model/groups.js'
 import { ULID_RE, ulid } from '../model/ids.js'
 import { isLocked, lockValue, mayUnlock } from '../model/locks.js'
 import { getPath, setPath } from '../model/paths.js'
-import { canBeChildOf, checkField, fieldRule, isBindable, isGroupable, typeInfo, TYPES } from '../model/registry.js'
-import { nearestFrameFill } from '../model/tokens.js'
-import { keyBetween, keysBetween } from '../model/zorder.js'
+import { withoutReactions } from '../model/reactions.js'
+import { remapTagIds, usedTags } from '../model/tags.js'
+import { PAD_SHEETS_REACH } from '../model/pad.js'
+import { pointsOf, round1, strokeItem } from '../model/ink.js'
+import { NEIGHBOUR_SIDES, SERIES_GAP, movePast, neighbourBox, plusPlan } from '../model/plus.js'
+import { POINTS_MAX, canBeChildOf, checkField, fieldRule, fieldValue, isBindable, isGroupable, typeInfo, TYPES } from '../model/registry.js'
+import { checkTable, gridRows, hasHtmlTable, newTableData } from '../model/table.js'
+import { LANE_FRAME_H, LANE_FRAME_MIN_H, LANE_FRAME_MIN_W, LANE_FRAME_W, newLanes, resizeLanes } from '../model/lanes.js'
+import { checkMindmap, estimateNodeSize, mindmapFromOutline, mindmapLayout, newMindmapData } from '../model/mindmap.js'
+import { fillBorder, isImageKind, isTextless, shapeOf, squareOn } from '../model/shapes.js'
+import { isCovered } from '../model/privateWriting.js'
+import { isValidKey, keyBetween, keysBetween } from '../model/zorder.js'
 import { wellFormed } from '../util/unicode.js'
+import { absOf, clampSize, clone, containerFor, isNum, placement, q2, round2 } from './actionsBase.js'
+
+export { round2 }
+export { ALIGN_EDGES, DISTRIBUTE_AXES, SORT_BLOCK_GAP, SORT_GAP, SORT_MARGIN, SORT_NAME_GAP, alignableIds, alignItems, distributeItems, readingOrder, sortBlockName, sortNotesByColor, sortableNotes, tidyItems } from './arrangeActions.js'
 
 /** Most items of one paste (SPEC-M1 §4.8 PASTE_MAX, client only). */
 export const PASTE_MAX = 1000
@@ -89,74 +119,10 @@ export const PASTE_MAX = 1000
 export const DEFAULT_MAX_ITEMS = 5000
 /** Grid step of notes made from plain text (§6.5.2). */
 export const NOTE_GRID = 220
-/** Gap between a note and the next one of a series entry (§6.5.1). */
-export const SERIES_GAP = 20
-/** Edges and centre lines of "Align" (alignItems); the context bar reads this list. */
-export const ALIGN_EDGES = Object.freeze(['left', 'center', 'right', 'top', 'middle', 'bottom'])
-/** Axes of "Distribute" (distributeItems); the context bar reads this list. */
-export const DISTRIBUTE_AXES = Object.freeze(['horizontal', 'vertical'])
-/**
- * An item whose shift of "Align", "Distribute" or "Tidy up" (alignItems,
- * distributeItems, tidyItems) is at most this (world units, plus float
- * noise) on both axes already counts as in place (withinTolerance). For
- * "Align" this only decides whether the click is empty (every item in
- * place); within an effective click such an item snaps onto the target as
- * well (shiftBlock with snap: a group block as a whole, a single item
- * through shiftItem). Positions sit on the 0.01 grid, so the
- * hull of a rotated item (or the centre of an odd width) only reaches its
- * target to ±0.005; without the tolerance a second click on the same command
- * would move some item by 0.01 again, and again (one invisible undo step per
- * click). The float margin is 1e-6: at |v| ≈ 1e7 (the server's limit)
- * neighbouring doubles lie about 1.9e-9 apart (3.7e-9 for hull edges up to
- * 2e7), and hull, sum with the parent and round2 add a few such steps of
- * noise; 1e-6 lies far above that and far below anything visible.
- */
-const ALIGN_TOLERANCE = 0.01 + 1e-6
-/**
- * Float noise of the gap of "Distribute": equal gaps from g ≥ −this on.
- * Items packed edge to edge (g = 0 in decimals) give g = ±3e-14 in floats,
- * and the sign may change once the inner items have moved; at a plain g ≥ 0
- * a second click would then switch to equal centre steps and move items
- * again (and back on the next). Unrotated items on the 0.01 grid give
- * g = 0 or |g| ≥ 0.01 / (n − 1), so no real overlap falls inside the margin.
- */
-const GAP_NOISE = 1e-6
-
-/**
- * @param {number} dx shift of "Align", "Distribute" or "Tidy up"
- * @param {number} dy shift
- * @return {boolean} both within ALIGN_TOLERANCE: the item counts as in place
- */
-function withinTolerance(dx, dy) {
-	return Math.abs(dx) <= ALIGN_TOLERANCE && Math.abs(dy) <= ALIGN_TOLERANCE
-}
-
-/**
- * @param {number} v value
- * @return {number} rounded to 0.01
- */
-export function round2(v) {
-	return Math.round(v * 100) / 100
-}
-
-/**
- * @param {number} v value
- * @return {number} q(v, 100): the 0.01 grid of client positions (§4.7)
- */
-function q2(v) {
-	return q(v, 100)
-}
-
-const clone = (v) => structuredClone(v)
-
-/**
- * @param {unknown} v value
- * @return {boolean} finite number
- */
-function isNum(v) {
-	return typeof v === 'number' && Number.isFinite(v)
-}
-
+/** Gap between a note and the next one of a series entry (§6.5.1); (job 162) defined in model/plus.js. */
+export { SERIES_GAP }
+/** Absolute limit of coordinates (server NUM_ABS_MAX); "Arrange" clamps x and y to it (job 146). */
+export const NUM_ABS_MAX = 1e7
 /**
  * @param {unknown} v value
  * @return {boolean} plain map (not null, not a list)
@@ -175,67 +141,6 @@ function pick(m, k) {
 		return m.get(k)
 	}
 	return isMap(m) && Object.prototype.hasOwnProperty.call(m, k) ? m[k] : undefined
-}
-
-/**
- * @param {object} model SceneModel
- * @param {string|null} id container id or null
- * @return {{x: number, y: number}|null} absolute top-left, {0,0} for null, null when unknown
- */
-function absOf(model, id) {
-	if (id === null || id === undefined) {
-		return { x: 0, y: 0 }
-	}
-	if (!model.has(id)) {
-		return null
-	}
-	const a = model.abs(id)
-	return a ? { x: a.x, y: a.y } : null
-}
-
-/**
- * Container that would receive an item of type t whose box has its center at
- * (cx, cy), or null.
- *
- * @param {object} model SceneModel
- * @param {string} t type of the item
- * @param {number} cx center x (world)
- * @param {number} cy center y (world)
- * @param {Set<string>} exclude ids that cannot be the parent
- * @return {string|null}
- */
-function containerFor(model, t, cx, cy, exclude) {
-	if (typeInfo(t).container || typeInfo(t).placement === 'none') {
-		return null
-	}
-	const c = model.topContainerAt(cx, cy, exclude)
-	if (c === null || c === undefined || !model.has(c)) {
-		return null
-	}
-	return canBeChildOf(t, model.get(c).t) ? c : null
-}
-
-/**
- * Placement patch for an absolute position under a parent (M0 rounding).
- *
- * @param {object} model SceneModel
- * @param {{x: number, y: number}} absPos absolute top-left
- * @param {string|null} parent parent id or null
- * @return {{x: number, y: number, parent: string|null}}
- */
-function placement(model, absPos, parent) {
-	const pa = absOf(model, parent) ?? { x: 0, y: 0 }
-	return { x: round2(absPos.x - pa.x), y: round2(absPos.y - pa.y), parent }
-}
-
-/**
- * @param {string} t type
- * @param {number} v width or height
- * @return {number} v clamped into TYPES[t].size
- */
-function clampSize(t, v) {
-	const size = typeInfo(t).size
-	return Math.min(size[1], Math.max(size[0], v))
 }
 
 /**
@@ -292,38 +197,70 @@ function mergeFields(t, root, base, extra) {
  *
  * - box: `rect` (dragged out; w/h clamped to the type's size) or the default
  *   size centered on `at`; a text item takes only the width of `rect` (its
- *   height is measured, rule 13) and, without rect, starts at the click
- *   (left edge at at.x, vertically centered)
+ *   height is measured, rule 13) and, without rect, is centered on `at`
+ *   like the others (job 241: its text is centred, TYPES.text.defaults)
  * - data/style: registry defaults plus the intent's values (tool options,
  *   series entry), each typed field only when it passes its rule
  * - parent: topmost container under the center (non-containers)
  * - a frame from `rect` adopts every top-level non-container item whose box
  *   lies completely inside; a group (M2, R20 Gruppieren) only as a whole
  *   (every member inside), like membership after a transform
- * - edit: the editor should open (note, shape, text; SPEC-M1 §6.3)
+ * - edit: the editor should open (note, shape, text; SPEC-M1 §6.3; job 143:
+ *   a frame too, its title editor; job 173: a table, its top-left cell;
+ *   job 193: a note pad, its title editor, like a frame)
+ * - (job 173) a table: data is a new 3 × 3 table (model/table.js
+ *   newTableData), or the intent's data when it is one (checkTable)
+ * - (job 195) a mind map: data is its empty root (model/mindmap.js
+ *   newMindmapData), or the intent's data when it is one (checkMindmap);
+ *   the editor of its root opens
+ * - (job 199) a frame with lanes (lanes: the names of its new lanes):
+ *   LANE_FRAME_W × LANE_FRAME_H without rect, at least LANE_FRAME_MIN_W ×
+ *   LANE_FRAME_MIN_H from rect, and data.lanes with one lane of equal
+ *   height per name (model/lanes.js newLanes)
+ * - (job 201) a shape of a kind with its own look (model/shapes.js create):
+ *   its size without rect, its style always (the intent's style on top); a
+ *   symbol opens no editor (edit false)
+ * - (job 203) size: the default size {w, h} without rect, before the
+ *   kind's own (an own shape takes the proportions of its library entry,
+ *   model/shapeImage.js pictureSize)
  *
  * Connectors are created with connectItems (round 1b), never here.
  *
  * @param {object} model SceneModel
- * @param {{t: string, at?: {x: number, y: number}, rect?: ({x,y,w,h}|null), data?: object, style?: object}} intent create intent
+ * @param {{t: string, at?: {x: number, y: number}, rect?: ({x,y,w,h}|null), data?: object, style?: object, lanes?: (string[]|null),
+ *   size?: ({w: number, h: number}|null)}} intent
+ *   create intent
  * @param {() => string} [newId] id generator
+ * @param {() => number} [rand] (job 199) random numbers for the keys of new lanes
  * @return {{ops: object[], inverse: object[], selectIds: string[], edit: boolean}}
  */
-export function createItem(model, { t, at, rect = null, data, style }, newId = ulid) {
+export function createItem(model, { t, at, rect = null, data, style, lanes = null, size = null }, newId = ulid, rand = Math.random) {
 	const info = TYPES[t]
 	if (!info || info.placement !== 'box') {
 		return { ops: [], inverse: [], selectIds: [], edit: false }
 	}
 	const d = info.defaults
 	const id = newId()
+	// (job 201) the kind's own size and look; an invalid kind is dropped by mergeFields, so it has none
+	const kind = t === 'shape' && checkField('shape', 'data.kind', data?.kind).ok ? data.kind : null
+	const own = kind === null ? null : (shapeOf(kind).create ?? null)
+	const sized = size && isNum(size.w) && isNum(size.h) && size.w > 0 && size.h > 0
+	const dw = sized ? size.w : (own?.w ?? d.w)
+	const dh = sized ? size.h : (own?.h ?? d.h)
 	let box
 	const p = at && isNum(at.x) && isNum(at.y) ? at : { x: 0, y: 0 }
 	if (rect && isNum(rect.w) && isNum(rect.h) && rect.w > 0 && (rect.h > 0 || t === 'text')) {
 		box = { x: rect.x, y: rect.y, w: rect.w, h: t === 'text' ? d.h : rect.h }
-	} else if (t === 'text') {
-		box = { x: p.x, y: p.y - d.h / 2, w: d.w, h: d.h }
 	} else {
-		box = { x: p.x - d.w / 2, y: p.y - d.h / 2, w: d.w, h: d.h }
+		box = { x: p.x - dw / 2, y: p.y - dh / 2, w: dw, h: dh }
+	}
+	// (job 199) a frame with lanes: its own default and least size
+	const laned = t === 'frame' && Array.isArray(lanes) && lanes.length > 0
+	if (laned) {
+		const c = { x: box.x + box.w / 2, y: box.y + box.h / 2 }
+		const w = rect ? Math.max(LANE_FRAME_MIN_W, box.w) : LANE_FRAME_W
+		const h = rect ? Math.max(LANE_FRAME_MIN_H, box.h) : LANE_FRAME_H
+		box = rect ? { x: box.x, y: box.y, w, h } : { x: c.x - w / 2, y: c.y - h / 2, w, h }
 	}
 	box.w = clampSize(t, box.w)
 	box.h = clampSize(t, box.h)
@@ -345,9 +282,14 @@ export function createItem(model, { t, at, rect = null, data, style }, newId = u
 			r: 0,
 			z,
 			parent,
-			data: mergeFields(t, 'data', d.data, data),
-			style: mergeFields(t, 'style', d.style, style),
+			data: t === 'table' ? (checkTable(data) ? clone(data) : newTableData())
+				: t === 'mindmap' ? (checkMindmap(data) ? clone(data) : newMindmapData())
+					: mergeFields(t, 'data', d.data, data),
+			style: mergeFields(t, 'style', own?.style ? { ...d.style, ...own.style } : d.style, style),
 		},
+	}
+	if (laned) {
+		put.p.data = { ...put.p.data, lanes: newLanes(put.p.h, lanes, rand) }
 	}
 	const ops = [put]
 	const inverse = []
@@ -383,7 +325,97 @@ export function createItem(model, { t, at, rect = null, data, style }, newId = u
 		}
 	}
 	inverse.push({ o: 'remove', id })
-	return { ops, inverse, selectIds: [id], edit: info.textPath !== null && t !== 'frame' }
+	return { ops, inverse, selectIds: [id], edit: (info.textPath !== null && !isTextless(kind)) || t === 'table' || t === 'mindmap' }
+}
+
+/**
+ * (Job 273) A new pen stroke: ONE put of type pen (model/ink.js strokeItem)
+ * from its points in world units, already fitted (at most 500 points). Its
+ * parent is the frame under its first point; it lies on top of the content.
+ * Kind, colour and width are taken when they pass their rule, else the
+ * registry defaults. Nothing is selected (selectIds empty), no editor.
+ *
+ * @param {object} model SceneModel
+ * @param {{points: number[], kind?: string, stroke?: string, strokeWidth?: number}} s the stroke
+ * @param {() => string} [newId] id generator
+ * @return {{ops: object[], inverse: object[], selectIds: string[], edit: boolean}}
+ */
+export function createStroke(model, { points, kind, stroke, strokeWidth }, newId = ulid) {
+	const pts = pointsOf(points)
+	const none = { ops: [], inverse: [], selectIds: [], edit: false }
+	if (pts.length < 2 || pts.length > POINTS_MAX) return none
+	const d = TYPES.pen.defaults
+	const given = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null))
+	const data = mergeFields('pen', 'data', d.data, given({ kind }))
+	const style = mergeFields('pen', 'style', d.style, given({ stroke, strokeWidth }))
+	const s = strokeItem(pts, style.strokeWidth)
+	const parent = containerFor(model, 'pen', pts[0], pts[1], new Set())
+	const pa = absOf(model, parent) ?? { x: 0, y: 0 }
+	const id = newId()
+	const put = {
+		o: 'put', id, t: 'pen',
+		p: {
+			x: round1(s.x - pa.x), y: round1(s.y - pa.y), w: s.w, h: s.h, r: 0,
+			z: keyBetween(model.maxZ('content'), null), parent, data: { ...data, points: s.points }, style,
+		},
+	}
+	return { ops: [put], inverse: [{ o: 'remove', id }], selectIds: [], edit: false }
+}
+
+/**
+ * Takes a note off a note pad (job 188): ONE put of a sticky, the pad itself
+ * gets no op (locked or not).
+ *
+ * - the note: w × h of the pad, style.fill = fieldValue(pad, 'style.fill'),
+ *   data.text '', r 0, z on top of the content layer (createItem with rect)
+ * - at {x, y}: its top-left corner in world units (a drag from the pile: the
+ *   pile's corner plus the pointer's way); parent the topmost fitting
+ *   container under its centre (containerFor)
+ * - at null (Enter at the selected pad): right of the pad, SERIES_GAP
+ *   beyond its sheets (from x + w + PAD_SHEETS_REACH, job 263: 0), flush with its top,
+ *   moved on past every item it would cover (model/plus.js movePast, the
+ *   rule of neighbourBox's right side); parent the pad's frame when the
+ *   note fits into it completely, else as with at
+ *
+ * @param {object} model SceneModel
+ * @param {string} padId the pad
+ * @param {{at?: ({x: number, y: number}|null)}} [o] where the note goes
+ * @param {() => string} [newId] id generator
+ * @return {{ops: object[], inverse: object[], selectIds: string[], edit: boolean}} edit true: the note's
+ *   editor opens; no ops for anything but a pad of the model or an invalid at
+ */
+export function takeNote(model, padId, { at = null } = {}, newId = ulid) {
+	const none = { ops: [], inverse: [], selectIds: [], edit: false }
+	const pad = typeof padId === 'string' && model.has(padId) ? model.get(padId) : null
+	const a = pad?.t === 'pad' ? model.abs(padId) : null
+	if (!a) {
+		return none
+	}
+	const w = clampSize('sticky', a.w)
+	const h = clampSize('sticky', a.h)
+	const beside = at === null || at === undefined
+	let rect
+	if (beside) {
+		const b = movePast(model, { cx: a.x + a.w + PAD_SHEETS_REACH + SERIES_GAP + w / 2, cy: a.y + h / 2, w, h, r: 0 }, [1, 0], w / 2)
+		rect = { x: b.x, y: b.y, w, h }
+	} else if (isNum(at.x) && isNum(at.y)) {
+		rect = { x: at.x, y: at.y, w, h }
+	} else {
+		return none
+	}
+	const r = createItem(model, { t: 'sticky', at: null, rect, style: { fill: fieldValue(pad, 'style.fill') } }, newId)
+	const parent = pad.parent ?? null
+	if (beside && r.ops.length > 0 && parent !== null && model.has(parent) && canBeChildOf('sticky', model.get(parent).t)) {
+		// Enter: the pad's frame when the note fits into it completely (like nextNote)
+		const f = model.abs(parent)
+		if (f && rect.x >= f.x && rect.y >= f.y && rect.x + w <= f.x + f.w && rect.y + h <= f.y + f.h) {
+			const put = r.ops[0]
+			put.p.parent = parent
+			put.p.x = q2(rect.x - f.x)
+			put.p.y = q2(rect.y - f.y)
+		}
+	}
+	return r
 }
 
 /**
@@ -578,13 +610,32 @@ export function connectItems(model, { start, end, route, endCap } = {}, newId = 
 	if (s === null || e === null || !endTargetOk(model, s, null) || !endTargetOk(model, e, null) || same(s, e)) {
 		return none
 	}
-	const info = TYPES.connector
 	const id = newId()
+	const put = connectorPut(id, s, e, { route, endCap }, keyBetween(model.maxZ(TYPES.connector.layer), null))
+	return { ops: [put], inverse: [{ o: 'remove', id }], selectIds: [id] }
+}
+
+/**
+ * The put of a new connector (connectItems, neighbourItem): x = y = w = h =
+ * r = 0 and parent null (rule 12), the stored ends `s` and `e`, data.route
+ * and style.endCap from the options when they pass their rules, else the
+ * registry defaults (the put stores them); the rest of the style is the
+ * default.
+ *
+ * @param {string} id connector id
+ * @param {object} s stored start
+ * @param {object} e stored end
+ * @param {{route?: unknown, endCap?: unknown}} o tool options
+ * @param {string} z z key
+ * @return {object} put op
+ */
+function connectorPut(id, s, e, { route, endCap }, z) {
+	const info = TYPES.connector
 	// an option that is not given keeps the default (mergeFields deletes a field given as null/undefined)
 	const data = mergeFields('connector', 'data', info.defaults.data, route === undefined || route === null ? {} : { route })
 	data.start = s
 	data.end = e
-	const put = {
+	return {
 		o: 'put',
 		id,
 		t: 'connector',
@@ -594,13 +645,12 @@ export function connectItems(model, { start, end, route, endCap } = {}, newId = 
 			w: 0,
 			h: 0,
 			r: 0,
-			z: keyBetween(model.maxZ(info.layer), null),
+			z,
 			parent: null,
 			data,
 			style: mergeFields('connector', 'style', info.defaults.style, endCap === undefined || endCap === null ? {} : { endCap }),
 		},
 	}
-	return { ops: [put], inverse: [{ o: 'remove', id }], selectIds: [id] }
 }
 
 /**
@@ -878,11 +928,15 @@ function same(a, b) {
 /**
  * One style or data field of the selection (context bar, SPEC-M1 §6.5.1,
  * §6.5.2): only items whose type has a field rule for `path` change; the
- * value must pass that rule (stored in its normalised form). A note colour
- * on a frame becomes the nearest frame colour (nearestFrameFill). null
+ * value must pass that rule (stored in its normalised form). Every type
+ * takes the same value: a frame keeps a picked colour unchanged, also in a
+ * mixed selection (job 135; before, it became the nearest frame colour). null
  * deletes the field (e.g. font size "Auto"; never a required field). For
  * `text` items heights.get(id) is the measured height of the new state
- * (rule 13).
+ * (rule 13). (Job 203) data.kind never changes an own shape (kind image)
+ * nor turns another shape into one. (Job 260) A fill from the palette on a
+ * basic or flowchart shape brings its border along in the same patch: the
+ * strong tone of that colour (shapes.js fillBorder), one undo step.
  *
  * @param {object} model SceneModel
  * @param {string[]} ids items
@@ -902,10 +956,13 @@ export function setStyle(model, ids, path, value, { heights = null } = {}) {
 		if (fieldRule(item.t, path) === null) {
 			continue
 		}
+		// (job 203) an own shape keeps its kind, and no other shape becomes one (it has no picture)
+		if (path === 'data.kind' && item.t === 'shape' && (isImageKind(fieldValue(item, 'data.kind')) || isImageKind(value))) {
+			continue
+		}
 		let v = null
 		if (value !== null && value !== undefined) {
-			const given = item.t === 'frame' && path === 'style.fill' ? nearestFrameFill(value) : value
-			const c = checkField(item.t, path, given)
+			const c = checkField(item.t, path, value)
 			if (!c.ok) {
 				continue
 			}
@@ -919,11 +976,101 @@ export function setStyle(model, ids, path, value, { heights = null } = {}) {
 		}
 		const p = { [path]: v }
 		const inv = { [path]: before === null || before === undefined ? null : clone(before) }
+		// (job 260) tone on tone: the border follows a fill picked from the palette
+		const border = path === 'style.fill' && item.t === 'shape' && fillBorder(fieldValue(item, 'data.kind'), v)
+		if (border && border !== item.style?.stroke) {
+			p['style.stroke'] = border
+			inv['style.stroke'] = item.style?.stroke ?? null
+		}
 		const h = heights instanceof Map ? heights.get(id) : undefined
 		if (item.t === 'text' && isNum(h) && h > 0) {
 			p.h = q2(clampSize('text', h))
 			inv.h = item.h
 		}
+		ops.push({ o: 'patch', id, p })
+		inverse.push({ o: 'patch', id, p: inv })
+	}
+	return { ops, inverse }
+}
+
+/**
+ * (job 153) The items "Swap direction" changes: those of `ids` the model
+ * has, that are not locked, whose type has both tips (connectors) and whose
+ * tips differ in their display value (fieldValue: a missing or unknown tip
+ * is 'none').
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids items (e.g. the selection)
+ * @return {string[]} in the order of ids, each once
+ */
+export function swappableIds(model, ids) {
+	const out = []
+	for (const id of new Set(ids ?? [])) {
+		const item = model.has(id) ? model.get(id) : null
+		if (!item || isLocked(item) || fieldRule(item.t, 'style.startCap') === null || fieldRule(item.t, 'style.endCap') === null) {
+			continue
+		}
+		if (fieldValue(item, 'style.startCap') !== fieldValue(item, 'style.endCap')) {
+			out.push(id)
+		}
+	}
+	return out
+}
+
+/**
+ * (job 153) "Swap direction": one patch per swappable item (swappableIds)
+ * with both tips, start = the end's display value and end = the start's,
+ * both stored ('none' too). The inverse puts back what was stored before:
+ * the same value (also one the rules no longer know) or null for a missing
+ * tip. Equal tips, locked items and other types give no op.
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids items
+ * @return {{ops: object[], inverse: object[]}}
+ */
+export function swapCaps(model, ids) {
+	const ops = []
+	const inverse = []
+	for (const id of swappableIds(model, ids)) {
+		const item = model.get(id)
+		const stored = (path) => {
+			const v = getPath(item, path)
+			return v === null || v === undefined ? null : clone(v)
+		}
+		ops.push({ o: 'patch', id, p: { 'style.startCap': fieldValue(item, 'style.endCap'), 'style.endCap': fieldValue(item, 'style.startCap') } })
+		inverse.push({ o: 'patch', id, p: { 'style.startCap': stored('style.startCap'), 'style.endCap': stored('style.endCap') } })
+	}
+	return { ops, inverse }
+}
+
+/**
+ * (Job 204) "Sequence flow" / "Message flow": one patch per unlocked
+ * connector of ids with those fields of FLOWS[flow] (model/connectors.js) whose display value
+ * differs; the inverse puts back what was stored (null for a missing field).
+ * Other types, locked items and connectors that look so already give no op.
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids items
+ * @param {string} flow sequence | message
+ * @return {{ops: object[], inverse: object[]}}
+ */
+export function setFlow(model, ids, flow) {
+	const ops = []
+	const inverse = []
+	const look = Object.prototype.hasOwnProperty.call(FLOWS, flow) ? FLOWS[flow] : null
+	if (look === null) return { ops, inverse }
+	for (const id of new Set(ids)) {
+		const item = model.has(id) ? model.get(id) : null
+		if (!item || item.t !== 'connector' || isLocked(item)) continue
+		const p = {}
+		const inv = {}
+		for (const [path, value] of Object.entries(look)) {
+			if (fieldValue(item, path) === value) continue
+			const v = getPath(item, path)
+			p[path] = value
+			inv[path] = v === null || v === undefined ? null : clone(v)
+		}
+		if (Object.keys(p).length === 0) continue
 		ops.push({ o: 'patch', id, p })
 		inverse.push({ o: 'patch', id, p: inv })
 	}
@@ -1061,6 +1208,13 @@ export function transformItems(model, { ids, before, after, keep = false, height
 			w: q2(b.w),
 			h: q2(b.h),
 			r: info.rotatable ? normAngle(b.r ?? 0) : 0,
+		}
+		// (job 199) a frame with lanes: its first (top edge moved) or last lane takes the change of its height;
+		// (job 208) its first (left edge moved) or last column the change of its width
+		const lp = resizeLanes(item, b, { x: a.x, y: a.y, w: p.w, h: p.h })
+		if (lp) {
+			Object.assign(p, lp.p)
+			Object.assign(inv, lp.inv)
 		}
 		if (item.t === 'text') {
 			const rule = fieldRule('text', 'style.fontSize')
@@ -1239,14 +1393,26 @@ function byGroup(model, list, idOf) {
  * the type; a type that is not rotatable keeps r = 0; an item without
  * handles (resize 'none') only moves. A `text` item's height is measured:
  * textH is the height of the new width.
+ * Job 146 (R22): x and y are clamped to ±NUM_ABS_MAX, silently; an item that
+ * already lies farther out keeps its current absolute value as the limit on
+ * that side (a child of a frame at the edge), so an unchanged field never
+ * moves it.
+ * Job 160: the stored x and y (relative to the parent) are clamped to
+ * ±NUM_ABS_MAX as well, the tighter of both limits wins (clampCoord), so a
+ * frame's child moves as far to the edge as it can instead of being refused
+ * (`bad`); the frame membership never changes.
+ * Job 240: square true or false ticks or unticks "1:1" of a shape
+ * (style.square 'on' or 'off', in the same patch; other types ignore it);
+ * while the tick acts (model/shapes.js squareOn, with the new value) the
+ * height follows the width.
  *
  * @param {object} model SceneModel
  * @param {string} id item
- * @param {{x?: number, y?: number, w?: number, h?: number, r?: number}} box target (absolute, world)
+ * @param {{x?: number, y?: number, w?: number, h?: number, r?: number, square?: boolean}} box target (absolute, world)
  * @param {{textH?: number}} [o] measured height of a text item
  * @return {{ops: object[], inverse: object[]}}
  */
-export function arrangeItem(model, id, { x, y, w, h, r } = {}, { textH } = {}) {
+export function arrangeItem(model, id, { x, y, w, h, r, square } = {}, { textH } = {}) {
 	if (!model.has(id)) {
 		return { ops: [], inverse: [] }
 	}
@@ -1258,20 +1424,32 @@ export function arrangeItem(model, id, { x, y, w, h, r } = {}, { textH } = {}) {
 	const cur = model.abs(id)
 	const fontSize = item.t === 'text' ? getPath(item, 'style.fontSize') : undefined
 	const b = { x: cur.x, y: cur.y, w: cur.w, h: cur.h, r: cur.r ?? 0, parent: item.parent ?? null, fontSize }
+	// the parent's absolute top-left as transformItems takes it ({0, 0} without or with an unknown parent)
+	const pa = absOf(model, b.parent) ?? { x: 0, y: 0 }
 	const sized = info.resize !== 'none'
 	const a = {
-		x: isNum(x) ? x : cur.x,
-		y: isNum(y) ? y : cur.y,
+		x: isNum(x) ? clampCoord(x, cur.x, pa.x) : cur.x,
+		y: isNum(y) ? clampCoord(y, cur.y, pa.y) : cur.y,
 		w: sized && isNum(w) && w > 0 ? clampSize(item.t, w) : cur.w,
 		h: sized && item.t !== 'text' && isNum(h) && h > 0 ? clampSize(item.t, h) : cur.h,
 		r: info.rotatable && isNum(r) ? r : (cur.r ?? 0),
 		fontSize,
+	}
+	// (job 240) the tick "1:1": the width counts, the height follows
+	const sq = item.t === 'shape' && typeof square === 'boolean' ? (square ? 'on' : 'off') : undefined
+	if (sized && squareOn(item, sq)) {
+		a.h = a.w
 	}
 	const heights = new Map()
 	if (item.t === 'text' && isNum(textH) && textH > 0) {
 		heights.set(id, textH)
 	}
 	const res = transformItems(model, { ids: [id], before: new Map([[id, b]]), after: new Map([[id, a]]), keep: false, heights })
+	const was = getPath(item, 'style.square')
+	if (sq !== undefined && sq !== was && res.ops[0]?.id === id) {
+		res.ops[0].p['style.square'] = sq
+		res.inverse[0].p['style.square'] = was ?? null
+	}
 	// nothing changed: no op (the patch would only repeat the stored values)
 	const op = res.ops[0]
 	if (op && res.ops.length === 1) {
@@ -1284,408 +1462,26 @@ export function arrangeItem(model, id, { x, y, w, h, r } = {}, { textH } = {}) {
 }
 
 /**
- * The blocks of a selection that "Align" moves: known ids (each once), no
- * connectors (placement 'none'; unknown types count, as when moving), only
- * the topmost ones (parent null or not selected itself, like
- * BoardSession.nudge: a child of a selected frame moves with its frame)
- * and only movable ones (M2, R20: model/groups.js movableIds, no locked
- * item, no member of a group with a locked member). Grouped into blocks
- * (blocksOf): a fully selected group is ONE block, every other item a
- * block of its own. Selection v2 `alignable` is the number of blocks.
+ * One axis of "Arrange": the absolute limit (job 146) and the limit of the
+ * stored value cur − pa (job 160), the tighter wins. A side the item already
+ * exceeds keeps its current value as the limit there, so the current
+ * position always lies inside and an unchanged field never moves the item.
+ * Without a parent (pa = 0) both limits are the same.
  *
- * @param {object} model SceneModel
- * @param {string[]} ids selected items
- * @return {string[][]} blocks in selection order, each with its ids in selection order
+ * @param {number} v target coordinate of "Arrange" (absolute, world)
+ * @param {number} cur the item's current absolute coordinate
+ * @param {number} [pa] the parent's absolute coordinate (0 without a parent)
+ * @return {number} v within [max(min(−M, cur), pa + min(−M, cur − pa)), min(max(M, cur), pa + max(M, cur − pa))], M = NUM_ABS_MAX
  */
-export function alignableIds(model, ids) {
-	const sel = new Set((ids ?? []).filter((id) => model.has(id)))
-	const top = [...sel].filter((id) => {
-		const it = model.get(id)
-		if (typeInfo(it.t).placement === 'none') {
-			return false
-		}
-		const p = it.parent ?? null
-		return p === null || !sel.has(p)
-	})
-	return blocksOf(model, movableIds(model, top))
-}
-
-/**
- * @param {object} model SceneModel
- * @param {string[][]} blocks blocks (alignableIds)
- * @return {Array<{block: string[], b: number[]}>} each block with its hull [x0, y0, x1, y1], the
- *   axis-parallel union of the members' rotated absolute boxes (blocks without a box are left out)
- */
-function blockHulls(model, blocks) {
-	const out = []
-	for (const block of blocks) {
-		let b = null
-		for (const id of block) {
-			const a = model.abs(id)
-			if (!a) {
-				continue
-			}
-			const r = rotatedBBox(a.x, a.y, a.w, a.h, a.r || 0)
-			b = b === null ? r : [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])]
-		}
-		if (b !== null) {
-			out.push({ block, b })
-		}
+function clampCoord(v, cur, pa = 0) {
+	if (!isNum(cur)) {
+		return Math.min(NUM_ABS_MAX, Math.max(-NUM_ABS_MAX, v))
 	}
-	return out
-}
-
-/**
- * "Align" (SPEC-M1 §1.2 M2): every alignable item (alignableIds) to one edge
- * or centre line of U, the axis-parallel union of their rotated boxes
- * (rotatedBBox, like selectionFrame without connectors). Only one axis moves.
- *
- * - shift (dx, dy) = target minus the edge or centre of the item's hull;
- *   empty when every shift lies within ALIGN_TOLERANCE (an aligned
- *   selection: no op, no undo step, no parent chosen again)
- * - otherwise every item in selection order (shiftItem with snap):
- *   - shift above ALIGN_TOLERANCE: new absolute position = abs + (dx, dy);
- *     new parent = topmost fitting container under the new centre,
- *     excluding the aligned items and their descendants (as moveItems): an
- *     item may leave or enter a frame that is not aligned itself, an aligned
- *     frame is never a parent
- *   - shift within ALIGN_TOLERANCE: snapped as well (abs + (dx, dy), rounded
- *     relative to its current parent, which stays), an invisible move of at
- *     most 0.01 in the same undo step. Afterwards every item lies within
- *     0.005 of the target, so the next target moves by at most 0.005 and the
- *     next click on the same edge is empty, also after items were added to
- *     an aligned selection
- * - one patch {x, y, parent} per item (rule 2a, round2 like moveItems), no
- *   keep: a frame takes its children along; inverse = the stored placement;
- *   no patch when the rounded placement stays the same
- * - connectors neither count for U nor move (bound ends follow by routing)
- * - empty for an edge outside ALIGN_EDGES or fewer than two alignable items
- * - (M2, R20 Gruppieren) per block (alignableIds): a fully selected group
- *   is measured by its hull (the union of its members' rotated boxes) and
- *   every member gets the same shift, with one parent for the block
- *   (shiftBlock); "fewer than two" counts blocks
- *
- * @param {object} model SceneModel
- * @param {string[]} ids selected items
- * @param {string} edge one of ALIGN_EDGES
- * @return {{ops: object[], inverse: object[]}}
- */
-export function alignItems(model, ids, edge) {
-	if (!ALIGN_EDGES.includes(edge)) {
-		return { ops: [], inverse: [] }
-	}
-	const blocks = alignableIds(model, ids)
-	const boxes = blockHulls(model, blocks)
-	let minX = Infinity
-	let minY = Infinity
-	let maxX = -Infinity
-	let maxY = -Infinity
-	for (const { b } of boxes) {
-		minX = Math.min(minX, b[0])
-		minY = Math.min(minY, b[1])
-		maxX = Math.max(maxX, b[2])
-		maxY = Math.max(maxY, b[3])
-	}
-	if (boxes.length < 2) {
-		return { ops: [], inverse: [] }
-	}
-	const exclude = withDescendants(model, blocks.flat())
-	const shift = ([x0, y0, x1, y1]) => {
-		switch (edge) {
-		case 'left': return [minX - x0, 0]
-		case 'center': return [(minX + maxX) / 2 - (x0 + x1) / 2, 0]
-		case 'right': return [maxX - x1, 0]
-		case 'top': return [0, minY - y0]
-		case 'middle': return [0, (minY + maxY) / 2 - (y0 + y1) / 2]
-		default: return [0, maxY - y1]
-		}
-	}
-	const out = { ops: [], inverse: [] }
-	const shifts = boxes.map(({ b }) => shift(b))
-	if (shifts.every(([dx, dy]) => withinTolerance(dx, dy))) {
-		// already aligned: no op, no undo step
-		return out
-	}
-	boxes.forEach(({ block, b }, i) => {
-		shiftBlock(model, block, b, shifts[i][0], shifts[i][1], exclude, out, true)
-	})
-	return out
-}
-
-/**
- * "Distribute" (SPEC-M1 §1.2 M2): the distributable items (alignableIds, at
- * least three) along one axis, by the axis-parallel hulls of their rotated
- * boxes (rotatedBBox, as alignItems). Only that axis moves.
- *
- * - order: by hull centre on the axis, stable (equal centres keep the
- *   selection order); the first (A) and the last (Z) never move
- * - equal gaps g = (Z.start − A.end − Σ inner lengths) / (n − 1); each inner
- *   item starts at the end of the previous TARGET + g (targets, not rounded
- *   positions, so a second click finds the same targets)
- * - g < 0 (the items overlap too much for equal gaps; below −GAP_NOISE):
- *   equal steps between the centres from A to Z instead; negative gaps could
- *   swap the order and move items again on every further click
- * - placement, frame membership, rounding and ALIGN_TOLERANCE as alignItems
- *   (shiftItem), but an item within ALIGN_TOLERANCE is not snapped; ops and
- *   inverses in the sorted order
- * - empty for an axis outside DISTRIBUTE_AXES, fewer than three
- *   distributable items or a distributed selection
- * - (M2, R20 Gruppieren) per block like alignItems: a fully selected group
- *   is one item with its hull, all members shift alike (shiftBlock)
- *
- * @param {object} model SceneModel
- * @param {string[]} ids selected items
- * @param {string} axis one of DISTRIBUTE_AXES
- * @return {{ops: object[], inverse: object[]}}
- */
-export function distributeItems(model, ids, axis) {
-	if (!DISTRIBUTE_AXES.includes(axis)) {
-		return { ops: [], inverse: [] }
-	}
-	const horizontal = axis === 'horizontal'
-	const blocks = alignableIds(model, ids)
-	const boxes = []
-	for (const { block, b } of blockHulls(model, blocks)) {
-		const s = horizontal ? b[0] : b[1]
-		const e = horizontal ? b[2] : b[3]
-		boxes.push({ block, b, s, e, w: e - s, c: (s + e) / 2 })
-	}
-	const n = boxes.length
-	if (n < 3) {
-		return { ops: [], inverse: [] }
-	}
-	// Array.prototype.sort is stable: equal centres keep the selection order
-	boxes.sort((u, v) => u.c - v.c)
-	const first = boxes[0]
-	const last = boxes[n - 1]
-	const inner = boxes.slice(1, -1)
-	const g = (last.s - first.e - inner.reduce((sum, b) => sum + b.w, 0)) / (n - 1)
-	const step = (last.c - first.c) / (n - 1)
-	const exclude = withDescendants(model, blocks.flat())
-	const gapped = g >= -GAP_NOISE
-	const out = { ops: [], inverse: [] }
-	// end of the previous target (equal gaps only)
-	let end = first.e
-	inner.forEach((b, i) => {
-		const start = gapped ? end + g : first.c + (i + 1) * step - b.w / 2
-		end = start + b.w
-		const d = start - b.s
-		shiftBlock(model, b.block, b.b, horizontal ? d : 0, horizontal ? 0 : d, exclude, out)
-	})
-	return out
-}
-
-/**
- * "Tidy up" (SPEC-M1 §1.2 M2): the alignable items (alignableIds, at least
- * two) onto an exact grid, by the axis-parallel hulls of their rotated boxes
- * (rotatedBBox, as alignItems).
- *
- * - rows (tidyTracks): stable by hull centre y (equal centres keep the
- *   selection order); an item joins the last row when its centre lies above
- *   the row's lowest bottom edge or its top edge above the centre of the
- *   row's last item, otherwise it opens the next row
- * - columns: the same on x, but never into a column that already holds an
- *   item of the same row (at most one item per cell)
- * - column width = widest hull, row height = highest hull; one gap per axis
- *   from the mean centres of the tracks (tidyGrid: a loose grid stays loose,
- *   a dense one dense), whole units, never negative, 0 for a single track;
- *   the grid starts at the top-left of the union, rounded
- * - each hull centred in its cell; empty cells stay empty, rows and columns
- *   keep their order. Whole-unit gaps and corner make a second click find
- *   the same grid (empty within ALIGN_TOLERANCE, no creeping)
- * - placement, frame membership, rounding and ALIGN_TOLERANCE as alignItems
- *   (shiftItem), but an item within ALIGN_TOLERANCE is not snapped; ops and
- *   inverses row by row, each row left to right
- * - empty for fewer than two alignable items or a tidy selection
- * - (M2, R20 Gruppieren) per block like alignItems: a fully selected group
- *   takes one cell with its hull, all members shift alike (shiftBlock)
- *
- * @param {object} model SceneModel
- * @param {string[]} ids selected items
- * @return {{ops: object[], inverse: object[]}}
- */
-export function tidyItems(model, ids) {
-	const blocks = alignableIds(model, ids)
-	const boxes = []
-	for (const { block, b } of blockHulls(model, blocks)) {
-		const [x0, y0, x1, y1] = b
-		boxes.push({ block, b, x0, y0, x1, y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, row: 0, col: 0 })
-	}
-	if (boxes.length < 2) {
-		return { ops: [], inverse: [] }
-	}
-	const rows = tidyTracks(boxes, 'y', null)
-	const cols = tidyTracks(boxes, 'x', 'row')
-	const top = tidyGrid(rows, Math.round(Math.min(...boxes.map((b) => b.y0))))
-	const left = tidyGrid(cols, Math.round(Math.min(...boxes.map((b) => b.x0))))
-	const exclude = withDescendants(model, blocks.flat())
-	const out = { ops: [], inverse: [] }
-	boxes.sort((u, v) => u.row - v.row || u.col - v.col)
-	for (const b of boxes) {
-		const dx = left[b.col] + (cols[b.col].size - (b.x1 - b.x0)) / 2 - b.x0
-		const dy = top[b.row] + (rows[b.row].size - (b.y1 - b.y0)) / 2 - b.y0
-		shiftBlock(model, b.block, b.b, dx, dy, exclude, out)
-	}
-	return out
-}
-
-/**
- * Rows or columns of "Tidy up": the boxes stably sorted by their centre on
- * the axis, each one joins the last track when its centre lies before the
- * track's far edge or its near edge before the centre of the track's last
- * box, otherwise it opens the next track. Writes the track index into the
- * box (`row` for y, `col` for x).
- *
- * @param {object[]} boxes hulls {x0, y0, x1, y1, cx, cy, row, col}
- * @param {'x'|'y'} axis axis
- * @param {string|null} apart a box never joins a track that already holds a
- *   box with the same value of this field (columns: one item per row)
- * @return {{size: number, centre: number}[]} tracks in order: size (largest
- *   extent of a box) and centre (mean centre of its boxes)
- */
-function tidyTracks(boxes, axis, apart) {
-	const [s, e, c, key] = axis === 'x' ? ['x0', 'x1', 'cx', 'col'] : ['y0', 'y1', 'cy', 'row']
-	const tracks = []
-	// Array.prototype.sort is stable: equal centres keep the selection order
-	for (const b of [...boxes].sort((u, v) => u[c] - v[c])) {
-		const t = tracks.at(-1)
-		if (t && (b[c] < t.end || b[s] < t.mid) && !(apart && t.taken.has(b[apart]))) {
-			t.end = Math.max(t.end, b[e])
-			t.size = Math.max(t.size, b[e] - b[s])
-			t.mid = b[c]
-			t.sum += b[c]
-			t.n++
-		} else {
-			tracks.push({ end: b[e], size: b[e] - b[s], mid: b[c], sum: b[c], n: 1, taken: apart ? new Set() : null })
-		}
-		b[key] = tracks.length - 1
-		if (apart) {
-			tracks.at(-1).taken.add(b[apart])
-		}
-	}
-	return tracks.map((t) => ({ size: t.size, centre: t.sum / t.n }))
-}
-
-/**
- * The track starts of "Tidy up" with one gap between all tracks: the mean
- * over neighbours of (centre distance − half of both sizes), rounded to
- * whole units, never negative (0 for a single track). From the centres, not
- * from the bands (smallest start to largest end): every hand-placed offset
- * widens a band and shrinks the gap measured between bands, so a loose grid
- * came out much denser (in AK1 60/80 became 40/50, larger grids down to 0).
- * Once tidied, each centre lies within ALIGN_TOLERANCE of its cell centre,
- * so a second click measures gap ± 0.02 and rounds to the same gap.
- *
- * @param {{size: number, centre: number}[]} tracks rows or columns (tidyTracks)
- * @param {number} origin start of the first track (whole units)
- * @return {number[]} start of every track
- */
-function tidyGrid(tracks, origin) {
-	let sum = 0
-	for (let i = 1; i < tracks.length; i++) {
-		sum += tracks[i].centre - tracks[i - 1].centre - (tracks[i - 1].size + tracks[i].size) / 2
-	}
-	const gap = tracks.length < 2 ? 0 : Math.max(0, Math.round(sum / (tracks.length - 1)))
-	const starts = [origin]
-	for (let i = 1; i < tracks.length; i++) {
-		starts.push(starts[i - 1] + tracks[i - 1].size + gap)
-	}
-	return starts
-}
-
-/**
- * @param {object} model SceneModel
- * @param {string[]} ids items
- * @return {Set<string>} the items and all their descendants
- */
-function withDescendants(model, ids) {
-	const set = new Set()
-	for (const id of ids) {
-		set.add(id)
-		for (const d of model.descendantsOf(id) ?? []) {
-			set.add(d)
-		}
-	}
-	return set
-}
-
-/**
- * One item of "Align", "Distribute" or "Tidy up" by (dx, dy). Within
- * ALIGN_TOLERANCE: nothing without `snap` (Distribute, Tidy up), with `snap`
- * (alignItems) the shifted position rounded relative to the current parent,
- * which stays; the parent is never chosen again there. Otherwise the new
- * parent is the topmost fitting container under the new centre (not in
- * `exclude`, as moveItems). One patch of the whole placement group
- * {x, y, parent} (rule 2a, round2) plus its inverse go to `out`; none when
- * the rounded placement equals the stored one.
- *
- * @param {object} model SceneModel
- * @param {string} id item
- * @param {{x: number, y: number, w: number, h: number}} a its absolute box (model.abs)
- * @param {number} dx shift
- * @param {number} dy shift
- * @param {Set<string>} exclude never a parent (the moved items and their descendants)
- * @param {{ops: object[], inverse: object[]}} out receives the patch and its inverse
- * @param {boolean} [snap] also shift an item within ALIGN_TOLERANCE, keeping its parent
- */
-function shiftItem(model, id, a, dx, dy, exclude, out, snap = false) {
-	const near = withinTolerance(dx, dy)
-	if (near && !snap) {
-		// already in place: no patch, and the parent is not chosen again
-		return
-	}
-	const item = model.get(id)
-	const oldParent = item.parent ?? null
-	const absPos = { x: a.x + dx, y: a.y + dy }
-	// snapped (near): the parent stays, containerFor is not asked
-	const parent = near ? oldParent : containerFor(model, item.t, absPos.x + a.w / 2, absPos.y + a.h / 2, exclude)
-	const p = placement(model, absPos, parent)
-	if (p.x === item.x && p.y === item.y && p.parent === oldParent) {
-		return
-	}
-	out.ops.push({ o: 'patch', id, p })
-	out.inverse.push({ o: 'patch', id, p: { x: item.x, y: item.y, parent: oldParent } })
-}
-
-/**
- * One block of "Align", "Distribute" or "Tidy up" by (dx, dy) (M2, R20
- * Gruppieren): a single item is shiftItem; a group block shifts every
- * member by the same amount, the parent chosen once for the block (the
- * topmost fitting container under the centre of the shifted hull, as
- * shiftItem; within ALIGN_TOLERANCE with `snap` each member keeps its
- * parent), one patch {x, y, parent} per member whose rounded placement
- * changes.
- *
- * @param {object} model SceneModel
- * @param {string[]} block ids of the block
- * @param {number[]} hull its hull [x0, y0, x1, y1] (blockHulls)
- * @param {number} dx shift
- * @param {number} dy shift
- * @param {Set<string>} exclude never a parent (the moved items and their descendants)
- * @param {{ops: object[], inverse: object[]}} out receives the patches and their inverses
- * @param {boolean} [snap] also shift a block within ALIGN_TOLERANCE, keeping the parents
- */
-function shiftBlock(model, block, hull, dx, dy, exclude, out, snap = false) {
-	if (block.length === 1) {
-		shiftItem(model, block[0], model.abs(block[0]), dx, dy, exclude, out, snap)
-		return
-	}
-	const near = withinTolerance(dx, dy)
-	if (near && !snap) {
-		return
-	}
-	const parent = near ? undefined : containerFor(model, model.get(block[0]).t, (hull[0] + hull[2]) / 2 + dx, (hull[1] + hull[3]) / 2 + dy, exclude)
-	for (const id of block) {
-		const item = model.get(id)
-		const a = model.abs(id)
-		const oldParent = item.parent ?? null
-		const p = placement(model, { x: a.x + dx, y: a.y + dy }, parent === undefined ? oldParent : parent)
-		if (p.x === item.x && p.y === item.y && p.parent === oldParent) {
-			continue
-		}
-		out.ops.push({ o: 'patch', id, p })
-		out.inverse.push({ o: 'patch', id, p: { x: item.x, y: item.y, parent: oldParent } })
-	}
+	const p = isNum(pa) ? pa : 0
+	const rel = cur - p
+	const lo = Math.max(Math.min(-NUM_ABS_MAX, cur), p + Math.min(-NUM_ABS_MAX, rel))
+	const hi = Math.min(Math.max(NUM_ABS_MAX, cur), p + Math.max(NUM_ABS_MAX, rel))
+	return Math.min(hi, Math.max(lo, v))
 }
 
 /**
@@ -1702,14 +1498,20 @@ function shiftBlock(model, block, hull, dx, dy, exclude, out, snap = false) {
  * - (M2, R20 Gruppieren) every item carries `group` (its stored group or
  *   null), only as the key pasteItems groups by; copying takes the whole
  *   selection, a fully selected group with all its members
+ * - (job 172) data.react is left out: a copy starts without reactions
+ * - (job 275) a covered note of private writing is left out, also as a
+ *   descendant of a selected frame (its covered form is no content)
+ * - (job 191) tags: the tags of the board's list (option tags) that a note
+ *   of the payload carries, in the list's order ([] without the option)
  *
  * @param {object} model SceneModel
  * @param {string[]} ids selected items
- * @param {{board?: number|null}} [o] board id of the source
- * @return {{knorke: 1, board: (number|null), origin: [number, number], items: object[]}}
+ * @param {{board?: number|null, tags?: Array<{id: string, name: string, color: string}>}} [o] board id of the
+ *   source; (job 191) the board's tags (model/tags.js tagsOf)
+ * @return {{knorke: 1, board: (number|null), origin: [number, number], items: object[], tags: object[]}}
  */
-export function copyPayload(model, ids, { board = null } = {}) {
-	const sel = [...new Set(ids ?? [])].filter((id) => model.has(id))
+export function copyPayload(model, ids, { board = null, tags = [] } = {}) {
+	const sel = [...new Set(ids ?? [])].filter((id) => model.has(id) && !isCovered(model.get(id)))
 	const selSet = new Set(sel)
 	const underSelected = (id) => {
 		let p = model.get(id).parent ?? null
@@ -1732,7 +1534,7 @@ export function copyPayload(model, ids, { board = null } = {}) {
 		set.add(id)
 		if (typeInfo(model.get(id).t).container) {
 			for (const d of model.descendantsOf(id) ?? []) {
-				if (model.has(d)) {
+				if (model.has(d) && !isCovered(model.get(d))) {
 					set.add(d)
 				}
 			}
@@ -1755,7 +1557,7 @@ export function copyPayload(model, ids, { board = null } = {}) {
 	for (const id of ordered) {
 		const it = model.get(id)
 		const info = typeInfo(it.t)
-		const data = clone(it.data ?? {})
+		const data = clone(withoutReactions(it.data))
 		const style = clone(it.style ?? {})
 		if (info.placement === 'none') {
 			for (const which of ['start', 'end']) {
@@ -1781,7 +1583,9 @@ export function copyPayload(model, ids, { board = null } = {}) {
 		}
 	}
 	const u = unionOf(roots)
-	return { knorke: 1, board: Number.isInteger(board) ? board : null, origin: u ? [u.x, u.y] : [0, 0], items }
+	// job 191: the tags its notes use
+	const used = usedTags(items, Array.isArray(tags) ? tags : [])
+	return { knorke: 1, board: Number.isInteger(board) ? board : null, origin: u ? [u.x, u.y] : [0, 0], items, tags: used }
 }
 
 /**
@@ -1838,16 +1642,22 @@ function endPointNow(model, id, which, ep) {
  *   children of the same payload frame); otherwise group null. The roots
  *   of a new group get one parent: the topmost fitting container under the
  *   centre of the union of their shifted boxes. Every put carries p.group.
+ * - (job 172) no put carries data.react (a payload of an older tab or another
+ *   board may still have it): pasted items start without reactions
+ * - (job 191) a note's data.tags goes through tagMap (model/tags.js
+ *   remapTagIds: mapped ids in order, unknown ones dropped, none: no field);
+ *   without tagMap no note carries tags
  * One undo step: the inverse removes everything again (connectors first).
  *
  * @param {object} model SceneModel
  * @param {{board?: (number|null), items: object[]}} payload validated payload
  * @param {{at?: ({x:number,y:number}|null), inPlace?: boolean, offset?: ({x:number,y:number}|null),
- *   limits?: (object|null), board?: (number|null)}} [o] placement and the current board
+ *   limits?: (object|null), board?: (number|null), tagMap?: (Map<string, string>|null)}} [o] placement, the current
+ *   board and (job 191) the tag ids of the payload → the board's (planPasteTags)
  * @param {() => string} [newId] id generator
  * @return {{ops: object[], inverse: object[], selectIds: string[], skipped: number, full: boolean}}
  */
-export function pasteItems(model, payload, { at = null, inPlace = false, offset = null, limits = null, board = null } = {}, newId = ulid) {
+export function pasteItems(model, payload, { at = null, inPlace = false, offset = null, limits = null, board = null, tagMap = null } = {}, newId = ulid) {
 	const empty = (skipped = 0, full = false) => ({ ops: [], inverse: [], selectIds: [], skipped, full })
 	const src = Array.isArray(payload?.items) ? payload.items : []
 	if (src.length === 0) {
@@ -1948,14 +1758,14 @@ export function pasteItems(model, payload, { at = null, inPlace = false, offset 
 			r: typeInfo(it.t).rotatable ? normAngle(it.r ?? 0) : 0,
 			z: zKeys.get(it.id),
 			parent,
-			data: clone(it.data ?? {}),
+			data: it.t === 'sticky' ? withTags(clone(withoutReactions(it.data)), tagMap) : clone(withoutReactions(it.data)),
 			style: clone(it.style ?? {}),
 			group: groupOfPut(it),
 		})
 	}
 	const keepMap = new Map(idMap)
 	for (const it of connectors) {
-		const data = clone(it.data ?? {})
+		const data = clone(withoutReactions(it.data))
 		let ok = true
 		for (const which of ['start', 'end']) {
 			const ep = data[which]
@@ -1992,6 +1802,26 @@ export function pasteItems(model, payload, { at = null, inPlace = false, offset 
 }
 
 /**
+ * (Job 191) A pasted note's data with its tags mapped (remapTagIds).
+ *
+ * @param {object} data the note's data (a fresh copy)
+ * @param {Map<string, string>|null} tagMap tag ids of the payload → the board's
+ * @return {object} data, with data.tags mapped or removed
+ */
+function withTags(data, tagMap) {
+	if (!isMap(data) || !('tags' in data)) {
+		return data
+	}
+	const tags = remapTagIds(data.tags, tagMap)
+	if (tags === null) {
+		delete data.tags
+	} else {
+		data.tags = tags
+	}
+	return data
+}
+
+/**
  * @param {object|null} limits initial-state limits
  * @return {number} limits.maxItems (positive whole number) or DEFAULT_MAX_ITEMS
  */
@@ -2002,17 +1832,19 @@ export function maxItemsOf(limits) {
 
 /**
  * Duplicate (Ctrl/⌘+D, SPEC-M1 §6.5.2): paste(copyPayload(ids)) without the
- * clipboard, `offset` world units right and down of the originals.
+ * clipboard, `offset` world units right and down of the originals. (Job
+ * 191) The copies keep their notes' tags (the board's list: tags).
  *
  * @param {object} model SceneModel
  * @param {string[]} ids items
- * @param {{offset?: number, limits?: (object|null), board?: (number|null)}} [o] options
+ * @param {{offset?: number, limits?: (object|null), board?: (number|null), tags?: object[]}} [o] options
  * @param {() => string} [newId] id generator
  * @return {{ops: object[], inverse: object[], selectIds: string[], skipped: number, full: boolean}}
  */
-export function duplicateItems(model, ids, { offset = 20, limits = null, board = null } = {}, newId = ulid) {
-	const payload = copyPayload(model, ids, { board })
-	return pasteItems(model, payload, { offset: { x: offset, y: offset }, limits, board }, newId)
+export function duplicateItems(model, ids, { offset = 20, limits = null, board = null, tags = [] } = {}, newId = ulid) {
+	const payload = copyPayload(model, ids, { board, tags })
+	const tagMap = new Map(payload.tags.map((tg) => [tg.id, tg.id]))
+	return pasteItems(model, payload, { offset: { x: offset, y: offset }, limits, board, tagMap }, newId)
 }
 
 /**
@@ -2032,50 +1864,71 @@ function splitCodePoints(s, max) {
 	return out
 }
 
+/** (Job 218) Most notes of one text paste; what goes beyond is left out. */
+export const PASTE_NOTES_MAX = 1000
+
 /**
  * The notes that plain text turns into (SPEC-M1 §6.5.2), with grid cells:
- * - text with a tab: a table; one note per non-empty cell at its column/row
+ * - text with a tab, or (job 218) an HTML table in the clipboard's text/html
+ *   (a spreadsheet, also a single column): a grid; one trailing line break
+ *   goes, model/table.js splitGrid gives the rows and cells (a quoted cell
+ *   keeps its line breaks, tabs and quotes); one note per non-empty cell at
+ *   its column/row, empty cells keep their place
  * - otherwise one note per non-empty line, in a grid of ceil(sqrt(n)) columns
  * - each text is cleaned like the server does (well-formed UTF-16, "\r\n" →
  *   "\n", C0 controls removed); a text above the note limit is split into
  *   several notes (stacked below each other in table mode), never shortened
+ * - (job 218) at most max notes in reading order (row by row, the parts of a
+ *   split text one by one); the work stops there
+ * - (job 220) with sep (a CSV file's separator) always a grid, its cells
+ *   split at sep instead of the tab
  *
  * @param {string} text plain text
+ * @param {{html?: string, max?: number, sep?: string}} [o] text/html of the clipboard (only searched for a table), most notes,
+ *   the cell separator of a CSV file
  * @return {Array<{text: string, col: number, row: number}>}
  */
-export function noteTexts(text) {
+export function noteTexts(text, { html = '', max = Infinity, sep = '' } = {}) {
 	const rule = fieldRule('sticky', 'data.text')
-	const max = rule ? rule[1] : 6000
+	const size = rule ? rule[1] : 6000
 	const norm = wellFormed(String(text ?? '')).replace(/\r\n?/g, '\n')
 	const clean = (s) => {
 		const c = checkField('sticky', 'data.text', s)
 		return c.ok ? c.norm : ''
 	}
 	const out = []
-	if (norm.includes('\t')) {
+	if (sep !== '' || norm.includes('\t') || hasHtmlTable(html)) {
 		let row = 0
-		for (const line of norm.split('\n')) {
+		for (const fields of gridRows(norm.replace(/\n$/, ''), sep || '\t')) {
 			let height = 0
-			line.split('\t').forEach((cell, col) => {
-				if (cell.trim() === '') {
-					return
+			for (let col = 0; col < fields.length; col++) {
+				if (fields[col].trim() === '') {
+					continue
 				}
-				const parts = splitCodePoints(cell, max).map(clean).filter((p) => p !== '')
-				parts.forEach((p, k) => out.push({ text: p, col, row: row + k }))
+				const parts = splitCodePoints(fields[col], size).map(clean).filter((p) => p !== '')
+				for (let k = 0; k < parts.length; k++) {
+					if (out.length >= max) {
+						return out
+					}
+					out.push({ text: parts[k], col, row: row + k })
+				}
 				height = Math.max(height, parts.length)
-			})
+			}
 			row += Math.max(1, height)
 		}
 		return out
 	}
 	const parts = []
 	for (const line of norm.split('\n')) {
+		if (parts.length >= max) {
+			break
+		}
 		if (line.trim() === '') {
 			continue
 		}
-		for (const p of splitCodePoints(line, max)) {
+		for (const p of splitCodePoints(line, size)) {
 			const c = clean(p)
-			if (c !== '') {
+			if (c !== '' && parts.length < max) {
 				parts.push(c)
 			}
 		}
@@ -2091,15 +1944,20 @@ export function noteTexts(text) {
  * topmost fitting container under its center, z above the content. The
  * session asks first above 100 notes; with model.size + n above
  * limits.maxItems nothing is created (full: true). One undo step.
+ * (Job 218) At most PASTE_NOTES_MAX notes, the rest is left out (cut: true).
  *
  * @param {object} model SceneModel
  * @param {string} text plain text
- * @param {{at?: ({x:number,y:number}|null), limits?: (object|null)}} [o] center of the grid
+ * @param {{at?: ({x:number,y:number}|null), limits?: (object|null), html?: string, sep?: string}} [o] center of the grid,
+ *   limits, text/html of the clipboard, (job 220) a CSV file's separator (noteTexts)
  * @param {() => string} [newId] id generator
- * @return {{ops: object[], inverse: object[], selectIds: string[], count: number, full: boolean}}
+ * @return {{ops: object[], inverse: object[], selectIds: string[], count: number, full: boolean, cut?: boolean}}
+ *   cut only when notes were made
  */
-export function notesFromText(model, text, { at = null, limits = null } = {}, newId = ulid) {
-	const notes = noteTexts(text)
+export function notesFromText(model, text, { at = null, limits = null, html = '', sep = '' } = {}, newId = ulid) {
+	const all = noteTexts(text, { html, sep, max: PASTE_NOTES_MAX + 1 })
+	const cut = all.length > PASTE_NOTES_MAX
+	const notes = cut ? all.slice(0, PASTE_NOTES_MAX) : all
 	const n = notes.length
 	if (n === 0) {
 		return { ops: [], inverse: [], selectIds: [], count: 0, full: false }
@@ -2133,7 +1991,75 @@ export function notesFromText(model, text, { at = null, limits = null } = {}, ne
 		selectIds.push(id)
 	})
 	const inverse = ops.map((op) => ({ o: 'remove', id: op.id })).reverse()
-	return { ops, inverse, selectIds, count: n, full: false }
+	return { ops, inverse, selectIds, count: n, full: false, cut }
+}
+
+/**
+ * (Job 195) An indented list pasted on the board (model/mindmap.js
+ * parseOutline): ONE put of a mind map (mindmapFromOutline: what goes beyond
+ * the limits is left out, cut), its root centred on at, the box its hull
+ * (mindmapLayout with measure), the parent the topmost container under the
+ * root's centre; nothing when the board is full. (Job 268) layout: the
+ * mind map's style.layout (both when absent); centre 'hull': the middle of
+ * the hull lies on at instead of the root's centre.
+ *
+ * @param {object} model SceneModel
+ * @param {{root: string, lines: Array<{depth: number, text: string}>}} outline parseOutline
+ * @param {{at?: ({x: number, y: number}|null), limits?: object|null, measure?: Function, maxBytes?: number, rand?: () => number, layout?: string, centre?: ('root'|'hull')}} [o]
+ *   point, limits (maxItems), text size, limits.maxItemBytes, random numbers, layout, what lies on the point
+ * @param {() => string} [newId] id generator
+ * @return {{ops: object[], inverse: object[], selectIds: string[], full: boolean, cut: number}}
+ */
+export function mindmapFromText(model, outline, { at = null, limits = null, measure = estimateNodeSize, maxBytes, rand = Math.random, layout = 'both', centre = 'root' } = {}, newId = ulid) {
+	if (model.size + 1 > maxItemsOf(limits)) {
+		return { ops: [], inverse: [], selectIds: [], full: true, cut: 0 }
+	}
+	const { data, cut } = mindmapFromOutline(outline, { rand, ...(Number.isInteger(maxBytes) && maxBytes > 0 ? { maxBytes } : {}) })
+	const style = layout === 'org' || layout === 'tree' || layout === 'right' ? { layout } : {}
+	const item = { t: 'mindmap', data, style }
+	const l = mindmapLayout(item, measure)
+	const root = l.byKey.get(l.root)
+	const c = at && isNum(at.x) && isNum(at.y) ? at : { x: 0, y: 0 }
+	const x = centre === 'hull' ? c.x - l.w / 2 : c.x - (root.x + root.w / 2)
+	const y = centre === 'hull' ? c.y - l.h / 2 : c.y - (root.y + root.h / 2)
+	const [min, max] = TYPES.mindmap.size
+	const id = newId()
+	const parent = containerFor(model, 'mindmap', c.x, c.y, new Set())
+	const pa = absOf(model, parent) ?? { x: 0, y: 0 }
+	const put = {
+		o: 'put',
+		id,
+		t: 'mindmap',
+		p: {
+			x: q2(x - pa.x), y: q2(y - pa.y), w: q2(Math.min(max, Math.max(min, l.w))), h: q2(Math.min(max, Math.max(min, l.h))), r: 0,
+			z: keyBetween(model.maxZ(TYPES.mindmap.layer), null), parent, data, style,
+		},
+	}
+	return { ops: [put], inverse: [{ o: 'remove', id }], selectIds: [id], full: false, cut }
+}
+
+/**
+ * (Job 268) The tree of an AI diagram ({text, children}, AiLayout::tree)
+ * as an outline for mindmapFromText: the centre is the root, every other
+ * node a line with its depth, in pre-order. Nodes without a text are left
+ * out with their subtree.
+ *
+ * @param {unknown} tree {text, children}
+ * @return {{root: string, lines: Array<{depth: number, text: string}>}|null} null: no centre text
+ */
+export function outlineOfTree(tree) {
+	const text = (n) => (n && typeof n === 'object' && typeof n.text === 'string' ? n.text.trim() : '')
+	if (text(tree) === '') return null
+	const lines = []
+	const walk = (n, depth) => {
+		for (const k of Array.isArray(n.children) ? n.children : []) {
+			if (text(k) === '') continue
+			lines.push({ depth, text: text(k) })
+			walk(k, depth + 1)
+		}
+	}
+	walk(tree, 1)
+	return { root: text(tree), lines }
 }
 
 /**
@@ -2173,6 +2099,130 @@ export function nextNote(model, prevId, newId = ulid) {
 		}
 	}
 	return r
+}
+
+/** (job 148) Per side: the index of its anchor in anchorsFor (t, r, b, l) and of the facing one (t↔b, r↔l). */
+const SIDE_ANCHORS = Object.freeze({ t: Object.freeze([0, 2]), r: Object.freeze([1, 3]), b: Object.freeze([2, 0]), l: Object.freeze([3, 1]) })
+
+/**
+ * Neighbour with one click (job 136): an empty item of the same kind beside
+ * `id` on `side` ('t' | 'r' | 'b' | 'l'), measured in the rotated frame of
+ * the source Q (rotation r around its centre):
+ *
+ * - type of Q, a shape with Q's data.kind, empty text; every style field
+ *   stored on Q that passes its registry rule (on top of the defaults); no
+ *   lock, no group; r of Q. (job 159) A text item gets a copy instead: Q's
+ *   data.text (none at all for an empty text or blanks only), edit false
+ * - place and size: neighbourBox (model/plus.js, job 162): w/h of Q (job
+ *   159: a text item's too, nothing is measured), SERIES_GAP beyond Q's
+ *   edge on that side, flush with Q across it, moved on past every item it
+ *   would cover (touching, frames and connectors do not count)
+ * - parent as in nextNote: Q's frame when the hull of the neighbour lies
+ *   completely inside it, else the topmost fitting container under its
+ *   centre (or none); z on top of the content layer, positions on the 0.01 grid
+ *
+ * Note, shape and text only; anything else (or an unknown side) gives no ops.
+ *
+ * (job 148) With `connect` (the connector tool options {route, endCap}: a
+ * click on "+") a second put follows N: a connector C from Q's anchor on
+ * that side (the anchor of the clicked "+", anchorsFor, order t, r, b, l)
+ * to N's anchor on the facing side (t↔b, r↔l; N has Q's type and kind, so
+ * the same anchors), both ends stored, route and end cap as in
+ * connectItems, z above N. Ops [put N, put C], inverse [remove C, remove
+ * N]; only N is selected.
+ *
+ * (job 162) With `connect` a note or shape first asks plusPlan: with a near
+ * item X there (not joined with Q yet) the only op is the put of a
+ * connector C from the anchor of the clicked "+" to X's facing anchor,
+ * route and end cap as above, z above everything; inverse [remove C], X is
+ * selected, no item is made. Without `connect` (Alt/Option+arrow) nothing
+ * is searched, and a text item never searches.
+ *
+ * (job 212) At a BPMN event, task or gateway Q both connectors leave with
+ * the triangle of a sequence flow instead of the tool's arrow (plusEndCap).
+ *
+ * @param {object} model SceneModel
+ * @param {{id: string, side: string, connect?: {route?: string, endCap?: string}}} intent the source item, the
+ *   side and, for a connector, its options
+ * @param {object} [o] no options left (job 159: the text height of job 136 is no longer measured)
+ * @param {() => string} [newId] id generator (N first, then C; only C when it connects to X)
+ * @return {{ops: object[], inverse: object[], selectIds: string[], edit: boolean}}
+ */
+export function neighbourItem(model, { id, side, connect } = {}, o = {}, newId = ulid) {
+	const none = { ops: [], inverse: [], selectIds: [], edit: false }
+	const known = typeof side === 'string' && Object.prototype.hasOwnProperty.call(NEIGHBOUR_SIDES, side)
+	const src = known && typeof id === 'string' && model.has(id) ? model.get(id) : null
+	const a = src !== null ? model.abs(id) : null
+	if (!a || !isBindable(src.t) || TYPES[src.t]?.placement !== 'box') {
+		return none
+	}
+	const t = src.t
+	const info = TYPES[t]
+	// (job 159) a text item's copy takes its text; an empty text (blanks only) gives none
+	const text = t === 'text' ? fieldValue(src, 'data.text') : null
+	if (t === 'text' && (typeof text !== 'string' || text.trim() === '')) {
+		return none
+	}
+	// (job 162) a click on "+" of a note or shape joins a near item instead of making one
+	const plan = isMap(connect) && t !== 'text' ? plusPlan(model, { id, side }) : null
+	// (job 212) from a BPMN event, task or gateway: a sequence flow
+	const endCap = isMap(connect) && t === 'shape' ? plusEndCap(getPath(src, 'data.kind'), connect.endCap) : connect?.endCap
+	if (plan?.kind === 'connect') {
+		const cid = newId()
+		const conn = connectorPut(cid, storedEnd(plan.start), storedEnd(plan.end), { route: connect.route, endCap },
+			keyBetween(model.maxZ(TYPES.connector.layer), null))
+		return { ops: [conn], inverse: [{ o: 'remove', id: cid }], selectIds: [plan.target], edit: false }
+	}
+	const nid = newId()
+	// the stored style fields of Q that pass their rule (null and missing ones keep the default)
+	const copied = {}
+	for (const [k, v] of Object.entries(isMap(src.style) ? src.style : {})) {
+		if (v !== null && v !== undefined) {
+			copied[k] = v
+		}
+	}
+	// (job 241) a text's copy takes the alignment Q shows (left without a stored one), not the centred create default
+	if (t === 'text') {
+		copied.align = fieldValue(src, 'style.align')
+	}
+	const style = mergeFields(t, 'style', info.defaults.style, copied)
+	// (job 203) an own shape's copy takes its picture
+	const data = mergeFields(t, 'data', info.defaults.data, t === 'shape' ? { kind: getPath(src, 'data.kind'), img: getPath(src, 'data.img') } : t === 'text' ? { text } : undefined)
+	// the place: the same box a mouse hovering this "+" previews (plusPlan)
+	const { x: x0, y: y0, w, h, r } = plan?.box ?? neighbourBox(model, id, side)
+	const cx = x0 + w / 2
+	const cy = y0 + h / 2
+	let parent = null
+	const p0 = src.parent ?? null
+	if (p0 !== null && model.has(p0) && canBeChildOf(t, model.get(p0).t)) {
+		const f = model.abs(p0)
+		const [minX, minY, maxX, maxY] = rotatedBBox(x0, y0, w, h, r)
+		if (f && minX >= f.x && minY >= f.y && maxX <= f.x + f.w && maxY <= f.y + f.h) {
+			parent = p0
+		}
+	}
+	if (parent === null) {
+		parent = containerFor(model, t, cx, cy, new Set())
+	}
+	const pa = absOf(model, parent) ?? { x: 0, y: 0 }
+	const z = keyBetween(model.maxZ(info.layer), null)
+	const put = {
+		o: 'put',
+		id: nid,
+		t,
+		p: { x: q2(x0 - pa.x), y: q2(y0 - pa.y), w: q2(w), h: q2(h), r, z, parent, data, style },
+	}
+	if (!isMap(connect)) {
+		return { ops: [put], inverse: [{ o: 'remove', id: nid }], selectIds: [nid], edit: t !== 'text' && !isTextless(data.kind) }
+	}
+	// (job 148) the connector Q → N between the anchor of the clicked "+" and the facing one of N, above N
+	const [from, to] = SIDE_ANCHORS[side]
+	const qa = anchorsFor(t, getPath(src, 'data.kind'))[from]
+	const na = anchorsFor(t, data.kind)[to]
+	const cid = newId()
+	const conn = connectorPut(cid, storedEnd({ item: id, ax: qa[0], ay: qa[1] }), storedEnd({ item: nid, ax: na[0], ay: na[1] }),
+		{ route: connect.route, endCap }, keyBetween(z, null))
+	return { ops: [put, conn], inverse: [{ o: 'remove', id: cid }, { o: 'remove', id: nid }], selectIds: [nid], edit: t !== 'text' && !isTextless(data.kind) }
 }
 
 /**
@@ -2246,8 +2296,14 @@ export function lockItems(model, ids, me) {
 
 /**
  * Unlock (M2, R20): one patch {lock: null} per item of ids that me may
- * unlock (mayUnlock: own lock, or a moderator), inverse {lock:
- * lockValue(me)} (undoing an unlock locks again, with me as the locker).
+ * unlock (mayUnlock: own lock, or a moderator). The inverse of me's own
+ * lock (lock.by === me.pid) is {lock: lockValue(me)}: undoing locks again,
+ * with me as the locker. (job 152) The inverse of someone else's or an
+ * unknown lock is the restore op {lock: <that lock as it was>, restore:
+ * true}: the server locks the item again for the person it remembers as
+ * the last locker, only when lock.by is still that person's pid (null: an
+ * unknown locker), and never in me's name; the value makes the optimistic
+ * state equal to that echo.
  *
  * @param {object} model SceneModel
  * @param {string[]} ids items
@@ -2261,8 +2317,16 @@ export function unlockItems(model, ids, me) {
 		if (!model.has(id) || !mayUnlock(model.get(id), me)) {
 			continue
 		}
+		const lock = model.get(id).lock
+		const by = typeof lock.by === 'string' ? lock.by : null
 		ops.push({ o: 'patch', id, p: { lock: null } })
-		inverse.push({ o: 'patch', id, p: { lock: lockValue(me) } })
+		if (by !== null && by === me.pid) {
+			inverse.push({ o: 'patch', id, p: { lock: lockValue(me) } })
+		} else {
+			const was = { by, name: typeof lock.name === 'string' ? lock.name : null }
+			if (lock.guest === true) was.guest = true
+			inverse.push({ o: 'patch', id, p: { lock: was }, restore: true })
+		}
 	}
 	return { ops, inverse }
 }
@@ -2320,4 +2384,71 @@ export function ungroupItems(model, ids) {
 		}
 	}
 	return { ops, inverse, blocked: null }
+}
+
+/**
+ * (Job 278) "Frame around": a new frame N around the selection
+ * (model/groups.js frameAroundPlan: its box, FRAME_AROUND_MARGIN on every
+ * side), parent null (frames cannot lie in frames), as one step:
+ * - N is made like a frame dragged out over that box (createItem with
+ *   rect): unselected top-level items completely inside are adopted, a
+ *   group only as a whole; but no patch for a locked item or a group with
+ *   a locked member (the server would refuse it)
+ * - every mover of the plan gets parent N, also one that lay in a frame F
+ *   (it leaves F)
+ * - z: above every frame (so above F); with selected frames right below
+ *   the lowest of them, so they lie on N
+ * Blocked ('locked', 'parent') or without a box: no ops.
+ *
+ * @param {object} model SceneModel
+ * @param {string[]} ids selected items
+ * @param {() => string} [newId] id generator
+ * @return {{ops: object[], inverse: object[], selectIds: string[], edit: boolean, blocked: (null|'locked'|'parent')}}
+ */
+export function frameAround(model, ids, newId = ulid) {
+	const plan = frameAroundPlan(model, ids)
+	if (plan.blocked !== null || plan.box === null) {
+		return { ops: [], inverse: [], selectIds: [], edit: false, blocked: plan.blocked }
+	}
+	const r = createItem(model, { t: 'frame', rect: plan.box }, newId)
+	if (r.ops.length === 0) {
+		return { ops: [], inverse: [], selectIds: [], edit: false, blocked: null }
+	}
+	const put = r.ops[0]
+	const id = put.id
+	if (plan.frames.length > 0) {
+		const low = model.sortByOrder(plan.frames)[0]
+		const lowZ = model.get(low).z
+		let below = null
+		for (const oid of model.ids()) {
+			const it = model.get(oid)
+			if (typeInfo(it.t).layer !== 'back' || !isValidKey(it.z) || !(it.z < lowZ)) continue
+			if (below === null || it.z > below) below = it.z
+		}
+		put.p.z = keyBetween(below, lowZ)
+	}
+	const ops = [put]
+	const inverse = []
+	const done = new Set()
+	// createItem's adoptions: ops[k] pairs with inverse[k - 1]
+	for (let k = 1; k < r.ops.length; k++) {
+		const cid = r.ops[k].id
+		const g = groupOf(model, cid)
+		if (isLocked(model.get(cid)) || (g !== null && heldGroup(model, g))) continue
+		ops.push(r.ops[k])
+		inverse.push(r.inverse[k - 1])
+		done.add(cid)
+	}
+	// the stored (rounded) top-left of N, parent null
+	const box = { x: put.p.x, y: put.p.y }
+	for (const cid of plan.movers) {
+		if (done.has(cid)) continue
+		const it = model.get(cid)
+		const a = model.abs(cid)
+		ops.push({ o: 'patch', id: cid, p: { x: q2(a.x - box.x), y: q2(a.y - box.y), parent: id } })
+		inverse.push({ o: 'patch', id: cid, p: { x: it.x, y: it.y, parent: it.parent ?? null } })
+		done.add(cid)
+	}
+	inverse.push({ o: 'remove', id })
+	return { ops, inverse, selectIds: [id], edit: true, blocked: null }
 }

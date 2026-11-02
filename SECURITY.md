@@ -50,8 +50,8 @@ In scope:
   they affect what gets shipped;
 - a way around a protection or limit that the documentation describes, for
   example link passwords and their throttle, the guest limits per network
-  address, the write budget and the daily quotas or the `.htaccess` that
-  hides the development tree.
+  address, the write budget and the daily quotas, "Accounts only" voting or
+  the `.htaccess` that hides the development tree.
 
 Out of scope:
 

@@ -4,16 +4,17 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
 	ALIGN_EDGES, alignableIds, alignItems, DISTRIBUTE_AXES, distributeItems, tidyItems,
-	arrangeItem, copyPayload, createItem, deleteItems, duplicateItems, maxItemsOf, measureTarget, moveItems, nextNote,
+	arrangeItem, copyPayload, createItem, notesFromText, deleteItems, duplicateItems, maxItemsOf, measureTarget, moveItems, nextNote, NUM_ABS_MAX,
 	pasteItems, remeasure, reorder, round2, setFill, setStyle, setText, transformItems,
 } from '../../../src/board/actions.js'
 import { rotatedBBox } from '../../../src/model/geometry.js'
 import { ULID_RE } from '../../../src/model/ids.js'
 import { applyPatch } from '../../../src/model/paths.js'
 import { TYPES } from '../../../src/model/registry.js'
-import { nearestFrameFill, SHAPE_PALETTE, STICKY_COLORS } from '../../../src/model/tokens.js'
+import { FRAME_FILLS, SHAPE_PALETTE, STICKY_COLORS } from '../../../src/model/tokens.js'
 import { isValidKey } from '../../../src/model/zorder.js'
 import { FakeModel, ID, connector, frame, shape, sticky, textItem } from './fakes.mjs'
 
@@ -46,7 +47,7 @@ test('create sticky: defaults, centered on the click, z above the content, new U
 	assert.equal(put.o, 'put')
 	assert.match(put.id, ULID_RE)
 	assert.equal(put.t, 'sticky')
-	assert.deepEqual(put.p, { x: 0, y: -50, w: 200, h: 200, r: 0, z: put.p.z, parent: null, data: { text: '' }, style: { fill: '#a8d8f8' } })
+	assert.deepEqual(put.p, { x: 0, y: -50, w: 200, h: 200, r: 0, z: put.p.z, parent: null, data: { text: '' }, style: { fill: '#a2d9fe', fontSize: 22 } }, 'job 227: Light blue, text size M')
 	assert.ok(isValidKey(put.p.z) && put.p.z > 'i5')
 	assert.deepEqual(r.inverse, [{ o: 'remove', id: put.id }])
 	assert.deepEqual(r.selectIds, [put.id])
@@ -187,7 +188,7 @@ test('M1 create shape: tool options in data/style (only valid typed values, norm
 	const r = createItem(m, { t: 'shape', at: { x: 100, y: 50 }, rect: null, data: { kind: 'ellipse' }, style: { fill: '#ABCDEF', stroke: 'red', bogus: 1 } }, () => S)
 	assert.deepEqual(r.ops, [{
 		o: 'put', id: S, t: 'shape',
-		p: { x: 0, y: -10, w: 200, h: 120, r: 0, z: r.ops[0].p.z, parent: null, data: { kind: 'ellipse', text: '' }, style: { fill: '#abcdef', stroke: '#1a1a1a', strokeWidth: 2 } },
+		p: { x: 20, y: -30, w: 160, h: 160, r: 0, z: r.ops[0].p.z, parent: null, data: { kind: 'ellipse', text: '' }, style: { fill: '#abcdef', stroke: '#3d4044', strokeWidth: 2 } },
 	}])
 	assert.equal(r.edit, true)
 	assert.deepEqual(r.inverse, [{ o: 'remove', id: S }])
@@ -198,16 +199,22 @@ test('M1 create shape: tool options in data/style (only valid typed values, norm
 	assert.deepEqual([d.x, d.y, d.w, d.h], [10, 20, TYPES.shape.size[0], 300])
 })
 
-test('M1 create text: click → left edge at the click, default size; drag → only the width; frames no editor; connectors never', () => {
+test('M1 create text (job 241 AK1, AK2): click → centred on the click, default size, centred text; drag → only the width, centred text; (job 143) frames open their title editor too; connectors never', () => {
 	const m = new FakeModel([])
 	const click = createItem(m, { t: 'text', at: { x: 100, y: 50 }, rect: null }, () => T)
 	const d = TYPES.text.defaults
-	assert.deepEqual([click.ops[0].p.x, click.ops[0].p.y, click.ops[0].p.w, click.ops[0].p.h], [100, 50 - d.h / 2, d.w, d.h])
-	assert.deepEqual(click.ops[0].p.style, { fontSize: 24, color: '#1a1a1a', align: 'left' })
+	assert.deepEqual([click.ops[0].p.x, click.ops[0].p.y, click.ops[0].p.w, click.ops[0].p.h], [100 - d.w / 2, 50 - d.h / 2, d.w, d.h])
+	assert.deepEqual(click.ops[0].p.style, { fontSize: 24, color: '#191b1d', align: 'center' })
 	assert.equal(click.edit, true)
 	const drag = createItem(m, { t: 'text', at: { x: 0, y: 0 }, rect: { x: 10, y: 20, w: 400, h: 3 } }, () => T)
 	assert.deepEqual([drag.ops[0].p.x, drag.ops[0].p.y, drag.ops[0].p.w, drag.ops[0].p.h], [10, 20, 400, d.h])
-	assert.equal(createItem(m, { t: 'frame', at: { x: 0, y: 0 } }, () => F).edit, false)
+	assert.equal(drag.ops[0].p.style.align, 'center')
+	// job 241 AK1: a click inside a frame near its right edge (the old left-edge box centre, click + 120, lies outside) goes into it
+	const fm = new FakeModel([frame(F, { x: 0, y: 0, w: 800, h: 600 })])
+	const near = createItem(fm, { t: 'text', at: { x: 760, y: 300 }, rect: null }, () => T)
+	assert.equal(near.ops[0].p.parent, F)
+	assert.deepEqual([near.ops[0].p.x, near.ops[0].p.y], [760 - d.w / 2, 300 - d.h / 2])
+	assert.equal(createItem(m, { t: 'frame', at: { x: 0, y: 0 } }, () => F).edit, true, 'job 143: the title editor of a new frame')
 	assert.equal(createItem(m, { t: 'sticky', at: { x: 0, y: 0 } }, () => A).edit, true)
 	assert.deepEqual(createItem(m, { t: 'connector', at: { x: 0, y: 0 } }, () => C1).ops, [])
 })
@@ -289,23 +296,40 @@ test('M1 transform: free connector ends of the selection follow the union of the
 	assert.deepEqual(r.inverse.find((o) => o.id === C1), { o: 'patch', id: C1, p: { 'data.start': { x: 50, y: 150 } } })
 })
 
-test('M1 setStyle: only types with the field; normalised values; invalid values change nothing; a note color lands on frames as the nearest frame color', () => {
+test('M1 setStyle: only types with the field; normalised values; invalid values change nothing; job 135 (AK7): every type takes a picked fill unchanged, frames too', () => {
 	const m = new FakeModel([sticky(A), shape(S), frame(F)])
 	const stroke = setStyle(m, [A, S, F], 'style.stroke', SHAPE_PALETTE[9].toUpperCase())
 	assert.deepEqual(stroke.ops, [{ o: 'patch', id: S, p: { 'style.stroke': SHAPE_PALETTE[9] } }])
 	assert.deepEqual(stroke.inverse, [{ o: 'patch', id: S, p: { 'style.stroke': '#1a1a1a' } }])
-	const pick = SHAPE_PALETTE.find((c) => !STICKY_COLORS.includes(c) && c !== '#ffffff' && nearestFrameFill(c) !== c)
+	// a colour of no frame palette lands on the frame as it is
+	const pick = SHAPE_PALETTE.find((c) => !FRAME_FILLS.includes(c))
+	assert.ok(pick)
 	const fill = setStyle(m, [A, S, F], 'style.fill', pick)
 	assert.deepEqual(fill.ops, [
 		{ o: 'patch', id: A, p: { 'style.fill': pick } },
 		{ o: 'patch', id: S, p: { 'style.fill': pick } },
-		{ o: 'patch', id: F, p: { 'style.fill': nearestFrameFill(pick) } },
+		{ o: 'patch', id: F, p: { 'style.fill': pick } },
 	])
+	assert.deepEqual(fill.inverse.find((op) => op.id === F), { o: 'patch', id: F, p: { 'style.fill': '#ffffff' } })
 	assert.deepEqual(setStyle(m, [S], 'style.strokeWidth', 25), { ops: [], inverse: [] })
 	assert.deepEqual(setStyle(m, [S], 'style.dash', 'wavy'), { ops: [], inverse: [] })
 	assert.deepEqual(setStyle(m, [S], 'data.kind', 'star'), { ops: [], inverse: [] })
 	assert.deepEqual(setStyle(m, [S], 'style.stroke', '#1a1a1a'), { ops: [], inverse: [] }, 'unchanged value: no op')
 	assert.deepEqual(setStyle(m, [S], 'data.kind', 'diamond').ops, [{ o: 'patch', id: S, p: { 'data.kind': 'diamond' } }])
+})
+
+test('job 135 (AK7): setStyle(model, [Frame], style.fill, #ff8800) and [Note, Frame] patch with #ff8800; upper case is stored lower case', () => {
+	const m = new FakeModel([sticky(A), frame(F)])
+	assert.deepEqual(setStyle(m, [F], 'style.fill', '#ff8800').ops, [{ o: 'patch', id: F, p: { 'style.fill': '#ff8800' } }])
+	assert.deepEqual(setStyle(m, [A, F], 'style.fill', '#ff8800').ops, [
+		{ o: 'patch', id: A, p: { 'style.fill': '#ff8800' } },
+		{ o: 'patch', id: F, p: { 'style.fill': '#ff8800' } },
+	])
+	assert.deepEqual(setStyle(m, [A, F], 'style.fill', '#FF8800').ops.map((op) => op.p['style.fill']), ['#ff8800', '#ff8800'])
+	// palette clicks are as before: every offered colour of a mixed selection is a frame colour already
+	for (const c of FRAME_FILLS) {
+		assert.deepEqual(setStyle(m, [F], 'style.fill', c).ops.map((op) => op.p['style.fill']), c === '#ffffff' ? [] : [c], c)
+	}
 })
 
 test('M1 setStyle: null removes the field (font size "Auto"), never a required field; text items carry the measured height', () => {
@@ -326,6 +350,89 @@ test('M1 arrangeItem: absolute box → transform patch; clamped sizes; not rotat
 	assert.equal(arrangeItem(m, F, { r: 45, x: 900 }).ops[0].p.r, 0)
 	assert.deepEqual(arrangeItem(m, S, { x: 100, y: 100 }), { ops: [], inverse: [] })
 	assert.deepEqual(arrangeItem(m, ID(99), { x: 1 }), { ops: [], inverse: [] })
+})
+
+test('job 240 (AK3) arrangeItem: square ticks or unticks "1:1" in the same patch; ticked, the width counts and the height follows; the inverse restores field and box; other types ignore it', () => {
+	const m = new FakeModel([
+		shape(S, { x: 100, y: 100 }),
+		shape(B, { x: 0, y: 0, w: 96, h: 96, data: { kind: 'iconStar', text: '' } }),
+		shape(C, { x: 0, y: 0, w: 200, h: 120, style: { square: 'on' } }),
+		sticky(A, { x: 10, y: 20 }),
+	])
+	// a rectangle 200 × 120 ticked: 200 × 200, one patch with the tick
+	const on = arrangeItem(m, S, { square: true })
+	assert.deepEqual(on.ops, [{ o: 'patch', id: S, p: { x: 100, y: 100, parent: null, w: 200, h: 200, r: 0, 'style.square': 'on' } }])
+	assert.deepEqual(on.inverse, [{ o: 'patch', id: S, p: { x: 100, y: 100, parent: null, w: 200, h: 120, r: 0, 'style.square': null } }], 'undo: the field was missing')
+	// ticked with a typed width: the width counts
+	assert.deepEqual(arrangeItem(m, S, { w: 150, h: 999, square: true }).ops[0].p, { x: 100, y: 100, parent: null, w: 150, h: 150, r: 0, 'style.square': 'on' })
+	// a symbol counts as ticked while square: a typed width sets the height too
+	assert.deepEqual(arrangeItem(m, B, { w: 300 }).ops[0].p, { x: 0, y: 0, parent: null, w: 300, h: 300, r: 0 })
+	// unticking a square symbol: only the field, the size stays
+	const off = arrangeItem(m, B, { x: 0, y: 0, w: 96, h: 96, square: false })
+	assert.deepEqual(off.ops, [{ o: 'patch', id: B, p: { x: 0, y: 0, parent: null, w: 96, h: 96, r: 0, 'style.square': 'off' } }])
+	assert.deepEqual(off.inverse[0].p['style.square'], null)
+	// unticked: a typed height is free
+	assert.equal(arrangeItem(m, B, { h: 50, square: false }).ops[0].p.h, 50)
+	// stored on but not square (an old tab): the next Apply makes it square; ticking again changes no field
+	assert.deepEqual(arrangeItem(m, C, { square: true }).ops[0].p, { x: 0, y: 0, parent: null, w: 200, h: 200, r: 0 })
+	const back = arrangeItem(m, C, { w: 300, square: false })
+	assert.deepEqual(back.ops[0].p, { x: 0, y: 0, parent: null, w: 300, h: 120, r: 0, 'style.square': 'off' })
+	assert.equal(back.inverse[0].p['style.square'], 'on')
+	// nothing changes: no op
+	assert.deepEqual(arrangeItem(m, B, { square: true }), { ops: [{ o: 'patch', id: B, p: { x: 0, y: 0, parent: null, w: 96, h: 96, r: 0, 'style.square': 'on' } }], inverse: [{ o: 'patch', id: B, p: { x: 0, y: 0, parent: null, w: 96, h: 96, r: 0, 'style.square': null } }] }, 'derived on → stored on')
+	assert.deepEqual(arrangeItem(m, B, { x: 0 }), { ops: [], inverse: [] })
+	// a note ignores it
+	assert.deepEqual(arrangeItem(m, A, { square: true }), { ops: [], inverse: [] })
+	assert.deepEqual(arrangeItem(m, A, { w: 300, square: true }).ops[0].p, { x: 10, y: 20, parent: null, w: 300, h: 200, r: 0 })
+})
+
+test('job 146 (AK1) arrangeItem: x and y beyond ±1e7 are clamped to the limit; a child of a frame gets the clamped absolute value as relative x; an item already farther out keeps its value as the limit', () => {
+	assert.equal(NUM_ABS_MAX, 1e7)
+	assert.match(readFileSync(new URL('../../../lib/Service/Limits.php', import.meta.url), 'utf8'), /const NUM_ABS_MAX = 1e7;/, 'the server limit')
+	const m = new FakeModel([
+		sticky(A, { x: 10, y: 20 }),
+		frame(F, { x: 100, y: 100 }),
+		sticky(B, { x: 50, y: 50, parent: F }),
+		frame(F2, { x: 5e6, y: 0 }),
+		sticky(C, { x: 6e6, y: 10, parent: F2 }),
+	])
+	assert.deepEqual(arrangeItem(m, A, { x: 2e7, y: -3e7 }).ops, [{ o: 'patch', id: A, p: { x: 1e7, y: -1e7, parent: null, w: 200, h: 200, r: 0 } }], 'a note on top of the board')
+	assert.equal(arrangeItem(m, A, { x: 1e7 }).ops[0].p.x, 1e7, 'the limit itself')
+	assert.equal(arrangeItem(m, A, { x: -Infinity, y: NaN }).ops.length, 0, 'not finite: the current value')
+	const child = arrangeItem(m, B, { x: 2e7 }).ops
+	assert.deepEqual(child, [{ o: 'patch', id: B, p: { x: 9999900, y: 50, parent: F, w: 200, h: 200, r: 0 } }], 'relative to its frame')
+	// C lies at absolute x 1.1e7 (frame at 5e6, relative 6e6): an unchanged X never moves it
+	assert.equal(m.abs(C).x, 1.1e7)
+	assert.deepEqual(arrangeItem(m, C, { x: 1.1e7, w: 300 }).ops, [{ o: 'patch', id: C, p: { x: 6e6, y: 10, parent: F2, w: 300, h: 200, r: 0 } }], 'only the width changes')
+	assert.deepEqual(arrangeItem(m, C, { x: 1.2e7 }), { ops: [], inverse: [] }, 'no shift in x')
+	assert.equal(arrangeItem(m, C, { x: 2e6 }).ops[0].p.x, -3e6, 'inwards it moves as usual')
+	// job 160: the stored x stops at −1e7 (absolute −5e6), before the absolute limit
+	assert.equal(arrangeItem(m, C, { x: -2e7 }).ops[0].p.x, -1e7, 'the other side keeps the limit')
+})
+
+test('job 160 (AK1) arrangeItem: a child of a frame is clamped so that its stored (relative) x and y stay within ±1e7; the tighter limit wins; the rounding never lifts it past 1e7; an unchanged field never moves it', () => {
+	const K = ID(4)
+	const kid = (fx, kx = 50) => new FakeModel([frame(F, { x: fx, y: 200 }), sticky(K, { x: kx, y: 50, parent: F })])
+	const m = kid(-100)
+	assert.deepEqual([m.abs(K).x, m.abs(K).y], [-50, 250])
+	const out = arrangeItem(m, K, { x: 2e7, y: -2e7 }).ops
+	assert.deepEqual(out, [{ o: 'patch', id: K, p: { x: 1e7, y: -1e7, parent: F, w: 200, h: 200, r: 0 } }], 'stored at the limit, still in the frame')
+	assert.deepEqual([out[0].p.x - 100, out[0].p.y + 200], [9999900, -9999800], 'absolute')
+	assert.equal(arrangeItem(m, K, { x: -2e7 }).ops[0].p.x, -9999900, 'here the absolute limit is the tighter one')
+	assert.equal(arrangeItem(m, K, { x: 1e7 }).ops[0].p.x, 1e7, 'X 1e7 → stored 1e7, absolute 9999900')
+	// a frame off the 0.01 grid of the sum: the rounding of the stored value stays at 1e7
+	const odd = kid(-100.37)
+	assert.equal(arrangeItem(odd, K, { x: 1e7 }).ops[0].p.x, 1e7, 'frame at −100.37: exactly 1e7')
+	assert.equal(arrangeItem(odd, K, { x: 2e7 }).ops[0].p.x, 1e7)
+	// K already stored at x 1e7 (absolute 9999900)
+	const edge = kid(-100, 1e7)
+	assert.equal(edge.abs(K).x, 9999900)
+	assert.deepEqual(arrangeItem(edge, K, { x: 9999900, w: 300 }).ops, [{ o: 'patch', id: K, p: { x: 1e7, y: 50, parent: F, w: 300, h: 200, r: 0 } }], 'only w changes')
+	assert.deepEqual(arrangeItem(edge, K, { x: 1e7 }), { ops: [], inverse: [] }, 'already at the limit: no op')
+	assert.deepEqual(arrangeItem(edge, K, { x: 2e7, y: 250 }), { ops: [], inverse: [] }, 'nor beyond it')
+	const oddEdge = kid(-100.37, 1e7)
+	assert.deepEqual(arrangeItem(oddEdge, K, { x: oddEdge.abs(K).x }), { ops: [], inverse: [] }, 'the unchanged field of a frame at −100.37')
+	assert.deepEqual(arrangeItem(oddEdge, K, { x: 1e7 }), { ops: [], inverse: [] })
 })
 
 test('M1 moveItems: a connector moves only its free ends; a bound end is never patched', () => {
@@ -1515,4 +1622,44 @@ test('M2 tidyItems (review R1 UX): a hand-placed grid of notes keeps its gap on 
 		assert.ok(Math.abs(sumX / runs - gap) <= 2, label + ': mean column gap ' + sumX / runs)
 		assert.ok(Math.abs(sumY / runs - gap) <= 2, label + ': mean row gap ' + sumY / runs)
 	}
+})
+
+// ---- Job 172: copies start without reactions; the undo of a delete keeps them ----
+
+test('job 172 (AK4): copy + paste, duplicate and cut + paste put no data.react; the revive put of deleteItems carries it unchanged', () => {
+	const react = { pa1b2c3d4e5f60718: { e: '1f44d', n: 'Vic' }, pbbbbbbbbbbbbbbbb: { e: '2764-fe0f', n: 'Bob' } }
+	const m = new FakeModel([frame(F, { x: 0, y: 0 }), sticky(A, { x: 40, y: 60, parent: F, z: 'a1', data: { text: 'A', react } }), sticky(B, { x: 900, z: 'a2', data: { text: 'B', react } })])
+	const noReact = (ops) => ops.filter((op) => op.o === 'put').every((op) => op.p.data?.react === undefined)
+	const payload = copyPayload(m, [F, B], { board: 7 })
+	assert.ok(payload.items.every((it) => it.data?.react === undefined), 'the payload has no reactions')
+	assert.deepEqual(payload.items.find((it) => it.id === A).data, { text: 'A' })
+	const pasted = pasteItems(m, payload, { at: { x: 2000, y: 0 }, board: 7 }, ids(ID(71), ID(72), ID(73)))
+	assert.equal(pasted.ops.length, 3)
+	assert.ok(noReact(pasted.ops), 'copy + paste')
+	const dup = duplicateItems(m, [B], { board: 7 }, ids(ID(74)))
+	assert.ok(noReact(dup.ops) && dup.ops.length === 1, 'duplicate')
+	// cut: the copy, then the delete (its inverse brings the reactions back)
+	const cut = copyPayload(m, [B], { board: 7 })
+	const del = deleteItems(m, [B])
+	const revive = del.inverse.find((op) => op.o === 'put' && op.id === B)
+	assert.equal(revive.revive, true)
+	assert.deepEqual(revive.p.data, { text: 'B', react }, 'the revive put carries the reactions as they were')
+	m.items.delete(B)
+	assert.ok(noReact(pasteItems(m, cut, { at: { x: 0, y: 900 }, board: 7 }, ids(ID(75))).ops), 'cut + paste')
+	// a payload of an older tab or another board that still has them
+	const old = { knorke: 1, board: 3, origin: [0, 0], items: [{ id: ID(80), t: 'sticky', x: 0, y: 0, w: 200, h: 200, r: 0, parent: null, data: { text: 'O', react }, style: {}, group: null }] }
+	const p2 = pasteItems(m, old, { at: { x: 0, y: 0 }, board: 7 }, ids(ID(81)))
+	assert.deepEqual(p2.ops[0].p.data, { text: 'O' })
+})
+
+test('job 227 AK8: every new note gets text size M (22): the note tool, the series entry, pasted text; a note without a size stays "Auto" in the model', () => {
+	const m = new FakeModel([sticky(A, { x: 0, y: 0, style: { fill: '#a8d8f8' } })])
+	const tool = createItem(m, { t: 'sticky', at: { x: 500, y: 0 } }, () => K1)
+	assert.deepEqual(tool.ops[0].p.style, { fill: '#a2d9fe', fontSize: 22 })
+	const next = nextNote(m, A, () => K1)
+	assert.deepEqual(next.ops[0].p.style, { fill: '#a8d8f8', fontSize: 22 }, 'the series entry keeps the fill of the previous note')
+	const pasted = notesFromText(m, 'eins\nzwei', { at: { x: 0, y: 900 } }, (() => { let i = 0; return () => ID(900 + i++) })())
+	assert.ok(pasted.ops.length === 2 && pasted.ops.every((op) => op.p.style.fontSize === 22), JSON.stringify(pasted.ops.map((op) => op.p.style)))
+	assert.equal(m.get(A).style.fontSize, undefined, 'the stored note has no size: Auto')
+	assert.equal(TYPES.sticky.defaults.style.fontSize, 22)
 })

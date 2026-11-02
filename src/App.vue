@@ -32,9 +32,11 @@
 					:loading="loading"
 					:error="listError"
 					:filter="filter"
+					:favorite-busy="favoriteBusy"
 					@open="(id) => push({ name: 'board', id })"
 					@rename="openRename"
-					@delete="openDelete" />
+					@delete="openDelete"
+					@favorite="toggleFavorite" />
 			</NcAppContent>
 		</template>
 		<NcAppContent v-else-if="route.name === 'board'" class="knorke-app__board">
@@ -44,6 +46,7 @@
 				:debug="state.debug === true"
 				:limits="state.limits || {}"
 				:privacy="state.privacy || null"
+				:legal="state.legal || null"
 				:known-source="listSourceOf(boards, route.id)"
 				@back="push({ name: 'list' })" />
 		</NcAppContent>
@@ -93,9 +96,11 @@
 			@cancel="passwordOpen = false" />
 		<ConfirmDialog v-if="dialog === 'create'"
 			:name="t('knorke', 'New board')"
+			size="large"
 			:confirm-label="t('knorke', 'Create')"
 			:busy="busy"
 			:confirm-disabled="draft.trim() === ''"
+			data-knorke-dialog="new-board"
 			@confirm="create"
 			@cancel="closeDialog">
 			<NcTextField v-model="draft"
@@ -103,6 +108,15 @@
 				:maxlength="maxTitle"
 				required
 				data-knorke-field="title" />
+			<fieldset v-if="newTemplatesShown" class="knorke-newboard__templates">
+				<legend class="knorke-newboard__legend">
+					{{ t('knorke', 'Template') }}
+				</legend>
+				<TemplateGrid v-model:pick="pick"
+					mode="pick"
+					:own="newTemplates"
+					@cancel="closeDialog" />
+			</fieldset>
 		</ConfirmDialog>
 		<ConfirmDialog v-if="dialog === 'rename'"
 			:name="t('knorke', 'Rename board')"
@@ -153,8 +167,24 @@
  * Factory job 049: the board view gets the board's origin from the list this
  * tab loaded last (components/share.js listSourceOf; null after a full page
  * load), so a final 404 when opening it can say that a link access ended.
+ *
+ * Factory job 219: the navigation has "Favorites" second
+ * ([data-knorke-filter=favorites]); a star in the list flips at once and
+ * goes to the server (useFavorites, a failure flips it back with a toast);
+ * entering a board (also after joining a link) tells the server it was
+ * opened (route 56) for the sort "Last opened".
+ *
+ * Factory job 232 (redesign board list): "New board"
+ * ([data-knorke-dialog=new-board]) has the title and the template grid
+ * (TemplateGrid mode pick, "Blank" picked when it opens; route 28 loads
+ * then for the adopted templates, the newest answer wins, right null: the
+ * built-in ones only). A board created with a template gets it through
+ * startWith: the board view inserts it once it has loaded the empty board.
+ * (Round 2) A device that only views (util/device.js isViewOnlyDevice: no
+ * mouse or pen when the dialog opens) cannot insert, so there the dialog
+ * has no template grid and the board starts blank.
  */
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import NcAppContent from '@nextcloud/vue/components/NcAppContent'
 import NcAppNavigation from '@nextcloud/vue/components/NcAppNavigation'
 import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
@@ -166,13 +196,18 @@ import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import * as boardsApi from './api/boards.js'
+import * as templatesApi from './api/templates.js'
+import { patchBoard, startPick, startWith, useFavorites } from './components/boardList.js'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { icons } from './components/icons.js'
 import { accountJoinState } from './components/join.js'
 import LinkPasswordDialog from './components/LinkPasswordDialog.vue'
 import { errorText, listSourceOf } from './components/share.js'
+import TemplateGrid from './components/TemplateGrid.vue'
+import { useTheme } from './components/theme.js'
 import { current, onRouteChange, push, replace } from './router.js'
 import { HttpError } from './sync/http.js'
+import { isViewOnlyDevice } from './util/device.js'
 import { FEATURES } from './util/features.js'
 import { t } from './util/l10n.js'
 import { showError } from './util/toast.js'
@@ -181,21 +216,31 @@ import BoardList from './views/BoardList.vue'
 import BoardView from './views/BoardView.vue'
 
 const state = inject('knorke-state', {})
+// job 226: the menus' container and the dark mark on <body>
+useTheme()
 const route = ref(current())
 const boards = ref([])
 const loading = ref(false)
 const listError = ref('')
 const dialog = ref(null)
+/** Job 232: the tile picked in "New board" ('blank', a template key, 'own:<id>'). */
+const pick = ref('blank')
+/** Job 232: what "New board" shows of route 28 ({state, templates, pending}), null: nothing loads. */
+const newTemplates = shallowRef(null)
+/** Job 232 (round 2): "New board" offers templates (not on a device that only views). */
+const newTemplatesShown = ref(false)
+let newLoad = 0
 const draft = ref('')
 const target = ref(null)
 const busy = ref(false)
 const joinState = ref('pending')
 const maxTitle = computed(() => state.limits?.maxTitle || 200)
 const features = FEATURES.voting ? 'voting' : ''
-/** Board list filter (R13): 'all' | 'mine' | 'shared'. */
+/** Board list filter (R13; job 219: favorites): 'all' | 'favorites' | 'mine' | 'shared'. */
 const filter = ref('all')
 const filters = [
 	{ id: 'all', name: t('knorke', 'All boards'), icon: icons.board },
+	{ id: 'favorites', name: t('knorke', 'Favorites'), icon: icons.star },
 	{ id: 'mine', name: t('knorke', 'Mine'), icon: icons.account },
 	{ id: 'shared', name: t('knorke', 'Shared with me'), icon: icons.share },
 ]
@@ -204,6 +249,10 @@ const passwordError = ref('')
 const passwordCode = ref('')
 const passwordKey = ref(0)
 const joinBusy = ref(false)
+/** Job 219: the star of a row, at once in the list, then on the server. */
+const { busy: favoriteBusy, toggle: toggleFavorite } = useFavorites(boards, {
+	onError: () => showError(t('knorke', 'Could not change the favorite. Please try again.')),
+})
 
 let unsubscribe = null
 
@@ -222,9 +271,23 @@ watch(route, (r) => enter(r))
 function enter(r) {
 	if (r.name === 'list') {
 		loadBoards()
+	} else if (r.name === 'board') {
+		markOpened(r.id)
 	} else if (r.name === 'join') {
 		join(r.token)
 	}
+}
+
+/**
+ * Job 219: the account opened a board ("Last opened" of the list). Not
+ * awaited, a failure only loses this one time; the list's copy moves at
+ * once, the server's time comes with the next list load.
+ *
+ * @param {number} id board id
+ */
+function markOpened(id) {
+	patchBoard(boards, id, { openedAt: Date.now() })
+	boardsApi.markOpened(id).catch(() => {})
 }
 
 async function loadBoards() {
@@ -289,7 +352,28 @@ async function join(token, password = null) {
 function openCreate() {
 	draft.value = ''
 	target.value = null
+	pick.value = 'blank'
+	newTemplatesShown.value = !isViewOnlyDevice()
 	dialog.value = 'create'
+	if (newTemplatesShown.value) {
+		loadNewTemplates()
+	}
+}
+
+/** (Job 232) Route 28 for the adopted templates of "New board" (the newest load wins). */
+async function loadNewTemplates() {
+	const n = ++newLoad
+	newTemplates.value = { state: 'loading', templates: [], pending: [] }
+	try {
+		const res = await templatesApi.listTemplates()
+		if (n === newLoad) {
+			newTemplates.value = res.right === null ? null : { state: 'ready', templates: res.templates, pending: [] }
+		}
+	} catch (e) {
+		if (n === newLoad) {
+			newTemplates.value = { state: 'error', templates: [], pending: [] }
+		}
+	}
 }
 
 /** @param {object} b board */
@@ -335,6 +419,8 @@ async function create() {
 	busy.value = true
 	try {
 		const b = await boardsApi.createBoard(title)
+		// job 232: the board view inserts the picked template
+		startWith(b.id, startPick(pick.value))
 		dialog.value = null
 		push({ name: 'board', id: b.id })
 	} catch (e) {

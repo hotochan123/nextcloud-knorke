@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 namespace OCA\Knorke\Db;
 
+use OCA\Knorke\Service\PrivateWriting;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 
@@ -32,11 +33,11 @@ class ItemStore {
     /** Encoding of data/style and of change-log payloads (§4.8): no JSON_HEX_TAG, no \u escapes. */
     public const JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR;
     /** Columns of the wire form (itemJson), group and lock (M2 data foundation) included. */
-    private const ITEM_COLS = 'id, type, parent_id, z, x, y, w, h, rotation, data, style, deleted, rev, group_id, locked, locked_by, locked_name';
+    private const ITEM_COLS = 'id, type, parent_id, z, x, y, w, h, rotation, data, style, deleted, rev, group_id, locked, locked_by, locked_name, created_by, created_at';
     /** itemsSince: a tombstone only sends its id, so its payload stays in the database. */
     private const SINCE_COLS = 'id, type, parent_id, z, x, y, w, h, rotation,'
         . ' CASE WHEN deleted = 0 THEN data END AS data, CASE WHEN deleted = 0 THEN style END AS style, deleted, rev,'
-        . ' group_id, locked, locked_by, locked_name';
+        . ' group_id, locked, locked_by, locked_name, created_by, created_at';
     /** Rows per statement of releaseMany()/shiftChildren() (5 parameters per row in the UPDATE, 8 in the INSERT). */
     public const RELEASE_CHUNK = 500;
     /**
@@ -57,19 +58,19 @@ class ItemStore {
     public const TOMBSTONE_CAP_GRACE_MS = 24 * 3600 * 1000;
     /** Columns of a full item row (loadItems, boundConnectors), the group and the lock (M2, R20) included. */
     private const LOAD_COLS = ['id', 'type', 'parent_id', 'z', 'x', 'y', 'w', 'h', 'rotation', 'data', 'style', 'version', 'deleted', 'rev',
-        'group_id', 'locked', 'locked_by', 'locked_name'];
+        'group_id', 'locked', 'locked_by', 'locked_name', 'created_by', 'created_at'];
     /** Columns of a partial row (liveChildren, groupMembers): what a release or a dissolve needs, never data or style. */
     private const PARTIAL_COLS = ['id', 'type', 'parent_id', 'x', 'y', 'deleted', 'rev', 'group_id'];
     /**
      * Columns updateItem() may write (SPEC-M1 §4.13.2 step 17). The lock
-     * (M2, R20: locked 1 or NULL, locked_by, locked_name) comes from a lock
-     * or unlock op of SyncService; group_id (M2, R20 Gruppieren) from the
-     * patch path `group` and from the dissolve at the end of a batch (NULL
-     * for no group). insertItem writes no lock and reviveItem clears it: new
+     * (M2, R20: locked 1, 0 after an unlock (job 152) or NULL, locked_by,
+     * locked_name) comes from a lock or unlock op of SyncService; group_id
+     * (M2, R20 Gruppieren) from the patch path `group` and from the dissolve
+     * at the end of a batch (NULL for no group). insertItem writes no lock and reviveItem clears it: new
      * and revived items are unlocked; both write group_id from the put.
      */
     private const UPDATE_COLS = ['x', 'y', 'w', 'h', 'rotation', 'z', 'parent_id', 'data', 'style', 'deleted', 'start_item', 'end_item',
-        'group_id', 'locked', 'locked_by', 'locked_name'];
+        'group_id', 'locked', 'locked_by', 'locked_name', 'created_by', 'created_at'];
     /** Integer columns of updateItem() (bound as integers, not as number text). */
     private const UPDATE_INT_COLS = ['deleted', 'locked'];
     private const INT = IQueryBuilder::PARAM_INT;
@@ -173,11 +174,12 @@ class ItemStore {
      * harmless, missing it is not).
      *
      * @param (\Closure(string): string)|null $pidOf principal id → pid of this board (lock.by, itemJson)
+     * @param (\Closure(array): bool)|null $cover true for a row sent covered (job 275, PrivateWriting::coveredJson)
      * @return iterable<string>
      */
-    public function snapshotItems(int $board, ?\Closure $pidOf = null): iterable {
+    public function snapshotItems(int $board, ?\Closure $pidOf = null, ?\Closure $cover = null): iterable {
         foreach ($this->each('SELECT ' . self::ITEM_COLS . ' FROM *PREFIX*knorke_items WHERE board_id = ? AND deleted = 0 ORDER BY id', [$board], [self::INT]) as $r) {
-            yield self::itemJson($r, $pidOf);
+            yield $cover !== null && $cover($r) ? PrivateWriting::coveredJson($r, $pidOf) : self::itemJson($r, $pidOf);
         }
     }
 
@@ -339,6 +341,57 @@ class ItemStore {
     }
 
     /**
+     * The boxes of a board's sketch (factory job 221, BoardSketch): id, type,
+     * parent_id, x, y, w, h of every live item but connectors, ORDER BY id.
+     * Numbers only, never data or style: a board of the full byte budget
+     * costs no more than one of empty notes.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function sketchBoxes(int $board): array {
+        return $this->rows(
+            'SELECT id, type, parent_id, x, y, w, h FROM *PREFIX*knorke_items WHERE board_id = ? AND deleted = 0 AND type <> ? ORDER BY id',
+            [$board, 'connector'], [self::INT, self::STR],
+        );
+    }
+
+    /**
+     * The z keys of the live items on the content layer (every type but the
+     * frame), unordered: factory job 267 puts the AI's new items above them.
+     *
+     * @return list<string>
+     */
+    public function contentZ(int $board): array {
+        $rows = $this->rows(
+            'SELECT z FROM *PREFIX*knorke_items WHERE board_id = ? AND deleted = 0 AND type <> ?',
+            [$board, 'frame'], [self::INT, self::STR],
+        );
+        return array_map(static fn (array $r): string => (string)$r['z'], $rows);
+    }
+
+    /**
+     * The stored style JSON of the given items (factory job 221, the fills of
+     * a sketch: at most TemplateStore::SKETCH_MAX ids), keyed by id.
+     *
+     * @param list<string> $ids
+     * @return array<string, ?string>
+     */
+    public function stylesOf(int $board, array $ids): array {
+        if ($ids === []) {
+            return [];
+        }
+        $ids = array_values($ids);
+        $out = [];
+        foreach ($this->rows(
+            'SELECT id, style FROM *PREFIX*knorke_items WHERE board_id = ? AND id IN (' . implode(', ', array_fill(0, count($ids), '?')) . ') ORDER BY id',
+            [$board, ...$ids], [self::INT, ...array_fill(0, count($ids), self::STR)],
+        ) as $r) {
+            $out[(string)$r['id']] = $r['style'] === null ? null : (string)$r['style'];
+        }
+        return $out;
+    }
+
+    /**
      * The boards that hold a lock of $principalId (M2, R20;
      * SyncService::clearLocker), ascending. No index on locked_by: a full
      * read of knorke_items, once per account deletion and per orphan.
@@ -356,7 +409,8 @@ class ItemStore {
 
     /**
      * Empties the locker of the locks of $principalId on one board (M2,
-     * R20): locked_by and locked_name NULL, `locked` stays, the rows get
+     * R20; job 152: remembered locks too): locked_by and locked_name NULL,
+     * `locked` stays (1 or 0), the rows get
      * $rev. The caller holds the board row lock (lockAndBumpRev first);
      * no change rows.
      *
@@ -371,16 +425,25 @@ class ItemStore {
 
     /**
      * The principal ids of every locker whose id starts with $prefix (M2,
-     * R20; occ knorke:orphans with 'u:'), sorted, without duplicates.
+     * R20; occ knorke:orphans with 'u:'), sorted, without duplicates; a
+     * remembered lock (job 152: `locked` 0, the locker still in locked_by)
+     * counts too, so its name leaves with the account. The prefix is taken
+     * literally (job 251): % and _ are escaped with "!" (ESCAPE '!', no
+     * backslash in the SQL text, so MySQL's NO_BACKSLASH_ESCAPES does not matter).
      *
      * @return list<string>
      */
     public function lockers(string $prefix): array {
         $rows = $this->rows(
-            'SELECT DISTINCT locked_by FROM *PREFIX*knorke_items WHERE locked = 1 AND locked_by LIKE ? ORDER BY locked_by',
-            [$prefix . '%'], [self::STR],
+            "SELECT DISTINCT locked_by FROM *PREFIX*knorke_items WHERE locked_by LIKE ? ESCAPE '!' ORDER BY locked_by",
+            [self::likePrefix($prefix)], [self::STR],
         );
         return array_map(static fn (array $r): string => (string)$r['locked_by'], $rows);
+    }
+
+    /** The LIKE pattern "starts with $prefix" for ESCAPE '!' (job 251). */
+    public static function likePrefix(string $prefix): string {
+        return strtr($prefix, ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
     }
 
     /**
@@ -641,7 +704,7 @@ class ItemStore {
     /**
      * ONE block of the tombstone purge (SPEC-M1 §4.13.7). The caller holds
      * the board row lock (BoardStore::lockBoard first in the same
-     * transaction) and calls FastCache::setGens with the new min_rev after
+     * transaction) and calls FastCache::raiseMinRev with the new min_rev after
      * COMMIT. With $olderThanMs = now − retention and $graceMs = now − 24 h:
      *
      *   X1 = MAX(rev) of the tombstones with modified_at < $olderThanMs
@@ -860,7 +923,9 @@ class ItemStore {
      *    keys always, in this order: by = $pidOf(locked_by), never the stored
      *    principal id, or null (locked_by NULL/'' or no $pidOf); name =
      *    locked_name as stored, or null (NULL/''). {"by":null,"name":null}
-     *    (locked, locker unknown) is not null (not locked).
+     *    (locked, locker unknown) is not null (not locked). (job 151) A
+     *    guest's lock (locked_by starts with "g:") ends with a third key,
+     *    "guest":true; every other lock stays {"by","name"}.
      *
      * A row without these columns (old test rows) counts as NULL.
      *
@@ -890,6 +955,8 @@ class ItemStore {
      * The `lock` of itemJson. $pidOf is called only for a locked row with a
      * locker, so an answer without such a row never derives a pid. The name
      * is encoded like the board title of the snapshot (invalid UTF-8 → U+FFFD).
+     * (job 151) "guest":true comes only from the stored locker (a guest
+     * principal, g:<gid>), never from the value a lock op sent.
      *
      * @param (\Closure(string): string)|null $pidOf
      */
@@ -901,6 +968,7 @@ class ItemStore {
         $name = (string)($row['locked_name'] ?? '');
         return '{"by":' . ($by === '' || $pidOf === null ? 'null' : json_encode((string)$pidOf($by)))
             . ',"name":' . ($name === '' ? 'null' : json_encode($name, self::JSON_FLAGS | JSON_INVALID_UTF8_SUBSTITUTE))
+            . (str_starts_with($by, 'g:') ? ',"guest":true' : '')
             . '}';
     }
 

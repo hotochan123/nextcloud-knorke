@@ -4,8 +4,14 @@
  */
 /*
  * Client copy of the route table (SPEC-M0 §4.1, SPEC-M1 §4.1: 26 routes,
- * frozen from stage 0 on; route 27 of the M2 privacy notice appended) and the
- * only place that builds app URLs.
+ * frozen from stage 0 on; route 27 of the M2 privacy notice appended, then
+ * routes 28–34 of the template suggestions, factory job 182, then routes
+ * 35–43 of the comments, factory job 189, then routes 44–45 of the tags,
+ * factory job 191, then routes 46–54 of the own shape libraries, factory job
+ * 203, then routes 55–56 of the board list favorites, factory job 219, then
+ * route 57 of the board list sketches, factory job 221, then routes 58–62 of
+ * the AI, factory job 267) and the only place
+ * that builds app URLs.
  * tests/js/shell/routes.test.mjs reads appinfo/routes.php as text and keeps
  * ROUTES identical to it (name, verb, URL, requirements).
  *
@@ -64,6 +70,44 @@ export const ROUTES = Object.freeze({
 	'moderationApi#summon': Object.freeze({ verb: 'POST', url: '/api/v1/boards/{id}/summon' }),
 	'moderationApi#endSummon': Object.freeze({ verb: 'DELETE', url: '/api/v1/boards/{id}/summon' }),
 	'settingsApi#update': Object.freeze({ verb: 'PUT', url: '/api/v1/settings/privacy' }),
+	'templateApi#index': Object.freeze({ verb: 'GET', url: '/api/v1/templates' }),
+	'templateApi#create': Object.freeze({ verb: 'POST', url: '/api/v1/templates' }),
+	'templateApi#show': Object.freeze({ verb: 'GET', url: '/api/v1/templates/{id}' }),
+	'templateApi#update': Object.freeze({ verb: 'PATCH', url: '/api/v1/templates/{id}' }),
+	'templateApi#destroy': Object.freeze({ verb: 'DELETE', url: '/api/v1/templates/{id}' }),
+	'templateApi#adopt': Object.freeze({ verb: 'POST', url: '/api/v1/templates/{id}/adopt' }),
+	'templateApi#review': Object.freeze({ verb: 'GET', url: '/api/v1/templates/review' }),
+	'commentApi#index': Object.freeze({ verb: 'GET', url: '/api/v1/boards/{id}/comments' }),
+	'commentApi#create': Object.freeze({ verb: 'POST', url: '/api/v1/boards/{id}/comments' }),
+	'commentApi#update': Object.freeze({ verb: 'PATCH', url: '/api/v1/boards/{id}/comments' }),
+	'commentApi#destroy': Object.freeze({ verb: 'DELETE', url: '/api/v1/boards/{id}/comments' }),
+	'commentApi#mentions': Object.freeze({ verb: 'GET', url: '/api/v1/boards/{id}/mentions' }),
+	'publicComment#index': Object.freeze({ verb: 'GET', url: '/pub/v1/boards/{id}/comments' }),
+	'publicComment#create': Object.freeze({ verb: 'POST', url: '/pub/v1/boards/{id}/comments' }),
+	'publicComment#update': Object.freeze({ verb: 'PATCH', url: '/pub/v1/boards/{id}/comments' }),
+	'publicComment#destroy': Object.freeze({ verb: 'DELETE', url: '/pub/v1/boards/{id}/comments' }),
+	'tagApi#update': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/tags' }),
+	'publicTag#update': Object.freeze({ verb: 'PUT', url: '/pub/v1/boards/{id}/tags' }),
+	'shapeLibApi#index': Object.freeze({ verb: 'GET', url: '/api/v1/shapelibs' }),
+	'shapeLibApi#create': Object.freeze({ verb: 'POST', url: '/api/v1/shapelibs' }),
+	'shapeLibApi#show': Object.freeze({ verb: 'GET', url: '/api/v1/shapelibs/{id}' }),
+	'shapeLibApi#update': Object.freeze({ verb: 'PATCH', url: '/api/v1/shapelibs/{id}' }),
+	'shapeLibApi#destroy': Object.freeze({ verb: 'DELETE', url: '/api/v1/shapelibs/{id}' }),
+	'shapeLibApi#suggest': Object.freeze({ verb: 'POST', url: '/api/v1/shapelibs/{id}/suggest' }),
+	'shapeLibApi#adopt': Object.freeze({ verb: 'POST', url: '/api/v1/shapelibs/{id}/adopt' }),
+	'shapeLibApi#review': Object.freeze({ verb: 'GET', url: '/api/v1/shapelibs/review' }),
+	'shapeLibApi#withdraw': Object.freeze({ verb: 'DELETE', url: '/api/v1/shapelibs/{id}/suggest' }),
+	'boardApi#favorite': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/favorite' }),
+	'boardApi#opened': Object.freeze({ verb: 'POST', url: '/api/v1/boards/{id}/opened' }),
+	'boardApi#sketch': Object.freeze({ verb: 'GET', url: '/api/v1/boards/{id}/sketch' }),
+	'settingsApi#ai': Object.freeze({ verb: 'PUT', url: '/api/v1/settings/ai' }),
+	'aiApi#index': Object.freeze({ verb: 'GET', url: '/api/v1/boards/{id}/ai' }),
+	'aiApi#start': Object.freeze({ verb: 'POST', url: '/api/v1/boards/{id}/ai' }),
+	'aiApi#cancel': Object.freeze({ verb: 'DELETE', url: '/api/v1/boards/{id}/ai' }),
+	'aiApi#allow': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/aiswitch' }),
+	'moderationApi#moveSummon': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/summon' }),
+	'moderationApi#slides': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/slides' }),
+	'moderationApi#privateWriting': Object.freeze({ verb: 'PUT', url: '/api/v1/boards/{id}/private' }),
 })
 
 /**
@@ -90,7 +134,8 @@ export function route(name, params = {}) {
 }
 
 /**
- * Appends a query string to a GET route (route 21 only, SPEC-M1 §4.1). Values
+ * Appends a query string to a route (route 21, SPEC-M1 §4.1; factory job
+ * 189: routes 38, 39 and 43). Values
  * follow the server rule of JsonBody::query: strings of at most
  * QUERY_MAX_BYTES bytes; anything else throws, like a bad route parameter.
  * encodeURIComponent also escapes braces, so @nextcloud/router never mistakes
@@ -131,6 +176,19 @@ export function ncUrl(path) {
 	return generateUrl(path)
 }
 
+/**
+ * (Job 175) The Nextcloud login that leads back to the board's link: after
+ * the sign-in Nextcloud opens /p/<token>, and PublicPageController::show
+ * sends the account on to page#join. redirect_url is a relative app path
+ * (Nextcloud refuses targets with "@", so it is no open redirect).
+ *
+ * @param {string} token link token of the guest session
+ * @return {string} URL of the login page
+ */
+export function signInUrl(token) {
+	return ncUrl('/login') + '?redirect_url=' + encodeURIComponent(appUrl('/p/' + encodeURIComponent(String(token ?? ''))))
+}
+
 /*
  * Builders, one per route. Each returns {method, path}; tests check every one
  * of them against appinfo/routes.php.
@@ -162,7 +220,69 @@ export const api = Object.freeze({
 	endSummon: (id) => route('moderationApi#endSummon', { id }),
 	// M2 privacy notice: the admin setting (admins only).
 	savePrivacy: () => route('settingsApi#update'),
+	// Factory job 182: template suggestions (accounts only; update, adopt and review for admins).
+	listTemplates: () => route('templateApi#index'),
+	createTemplate: () => route('templateApi#create'),
+	showTemplate: (id) => route('templateApi#show', { id }),
+	updateTemplate: (id) => route('templateApi#update', { id }),
+	deleteTemplate: (id) => route('templateApi#destroy', { id }),
+	adoptTemplate: (id) => route('templateApi#adopt', { id }),
+	reviewTemplates: () => route('templateApi#review'),
+	// Factory job 189: comments; accounts (35–39, the @ list only for accounts) and guests (40–43).
+	listComments: (id) => route('commentApi#index', { id }),
+	createComment: (id) => route('commentApi#create', { id }),
+	updateComment: (id) => route('commentApi#update', { id }),
+	deleteComment: (id, comment) => withQuery(route('commentApi#destroy', { id }), { comment: commentId(comment) }),
+	searchMentions: (id, q) => withQuery(route('commentApi#mentions', { id }), { q }),
+	guestComments: (id) => route('publicComment#index', { id }),
+	guestCreateComment: (id) => route('publicComment#create', { id }),
+	guestUpdateComment: (id) => route('publicComment#update', { id }),
+	guestDeleteComment: (id, comment) => withQuery(route('publicComment#destroy', { id }), { comment: commentId(comment) }),
+	// Factory job 191: the board's tag list; accounts (44) and guests of the edit link (45).
+	saveTags: (id) => route('tagApi#update', { id }),
+	guestSaveTags: (id) => route('publicTag#update', { id }),
+	// Factory job 203: own shape libraries (accounts only; adopt and review for admins).
+	listShapeLibs: () => route('shapeLibApi#index'),
+	createShapeLib: () => route('shapeLibApi#create'),
+	showShapeLib: (id) => route('shapeLibApi#show', { id }),
+	updateShapeLib: (id) => route('shapeLibApi#update', { id }),
+	deleteShapeLib: (id) => route('shapeLibApi#destroy', { id }),
+	suggestShapeLib: (id) => route('shapeLibApi#suggest', { id }),
+	adoptShapeLib: (id) => route('shapeLibApi#adopt', { id }),
+	reviewShapeLibs: () => route('shapeLibApi#review'),
+	withdrawShapeLib: (id) => route('shapeLibApi#withdraw', { id }),
+	// Factory job 219: the account's own marks of the board list, star and last opened.
+	setFavorite: (id) => route('boardApi#favorite', { id }),
+	markOpened: (id) => route('boardApi#opened', { id }),
+	// Factory job 221: the sketch of a board for its row in the board list.
+	boardSketch: (id) => route('boardApi#sketch', { id }),
+	// Factory job 267: the AI settings (admins) and the AI tasks of a board.
+	saveAiSettings: () => route('settingsApi#ai'),
+	aiState: (id) => route('aiApi#index', { id }),
+	startAi: (id) => route('aiApi#start', { id }),
+	forgetAi: (id, task) => withQuery(route('aiApi#cancel', { id }), { task: commentId(task) }),
+	allowAi: (id) => route('aiApi#allow', { id }),
+	// Factory job 272: presenting frames (the shown frame, the saved slide order).
+	moveSummon: (id) => route('moderationApi#moveSummon', { id }),
+	saveSlides: (id) => route('moderationApi#slides', { id }),
+	privateWriting: (id) => route('moderationApi#privateWriting', { id }),
 })
+
+/**
+ * (Job 189) A comment id for a query: a decimal string without a leading
+ * zero (the server's CommentService::ID_RE); anything else throws like a
+ * bad route parameter.
+ *
+ * @param {string|number} v comment id
+ * @return {string}
+ */
+function commentId(v) {
+	const s = typeof v === 'number' ? String(v) : v
+	if (typeof s !== 'string' || !/^[1-9][0-9]{0,18}$/.test(s)) {
+		throw new Error('Invalid comment id')
+	}
+	return s
+}
 
 export const pages = Object.freeze({
 	list: () => route('page#index'),

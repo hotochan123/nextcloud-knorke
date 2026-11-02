@@ -28,7 +28,8 @@ import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { dispatch } from './fakeDom.mjs'
 import { frameItem, note, setupScene, shapeItem, textItem } from './sceneHarness.mjs'
-import { ignoresShortcuts } from '../../../src/scene/InputController.js'
+import { ignoresShortcuts, sideToward } from '../../../src/scene/InputController.js'
+import { MAX_SCALE } from '../../../src/model/tokens.js'
 
 const A = '01JA0000000000000000000001'
 const B = '01JA0000000000000000000002'
@@ -194,6 +195,25 @@ describe('focus rule', () => {
 		assert.equal(h.scene.getTool(), 'select')
 		h.key('h')
 		assert.equal(h.scene.getTool(), 'hand')
+	})
+
+	test('job 171 AK1: K chooses the laser pointer only in mode edit (onTool), not in vote or view, nor without the canvas focus', () => {
+		h = setupScene([note(A)])
+		h.key('k', { target: h.dom.doc.body })
+		assert.equal(h.scene.getTool(), 'select', 'without the canvas focus: nothing')
+		h.focusCanvas()
+		h.key('k')
+		assert.equal(h.scene.getTool(), 'laser')
+		assert.deepEqual(h.log.filter((x) => x[0] === 'onTool').map((x) => x[1]), ['laser'])
+		h.scene.setTool('select')
+		h.key('K', { shiftKey: true })
+		assert.equal(h.scene.getTool(), 'select', 'Shift+K changes nothing')
+		for (const mode of ['vote', 'view']) {
+			h.scene.setMode(mode)
+			h.focusCanvas()
+			h.key('k')
+			assert.equal(h.scene.getTool(), 'select', mode + ': K changes nothing')
+		}
 	})
 })
 
@@ -473,6 +493,28 @@ describe('camera keys and onUserCamera', () => {
 		assert.equal(h.log.filter((e) => e[0] === 'onUserCamera').length, 5)
 	})
 
+	test('job 238 AK1: + from 900 % gives 1000 % and stops there, − zooms out again; zoomBy (the zoom bar) and setCamera end at 1000 % too', () => {
+		h = setupScene([note(A)])
+		h.focusCanvas()
+		h.scene.setCamera({ x: 0, y: 0, scale: 9 })
+		h.key('+')
+		h.frame()
+		assert.equal(h.scene.getCamera().scale, 10)
+		h.key('+')
+		h.frame()
+		assert.equal(h.scene.getCamera().scale, 10, 'no further')
+		h.key('-')
+		h.frame()
+		assert.ok(Math.abs(h.scene.getCamera().scale - 8) < 1e-9)
+		h.scene.setCamera({ x: 0, y: 0, scale: 9 })
+		h.scene.zoomBy(1.25)
+		assert.equal(h.scene.getCamera().scale, 10, 'the zoom bar button +')
+		h.scene.zoomBy(0.8)
+		assert.ok(Math.abs(h.scene.getCamera().scale - 8) < 1e-9, 'the zoom bar button −')
+		h.scene.setCamera({ x: 3, y: 4, scale: 100 })
+		assert.deepEqual(h.scene.getCamera(), { x: 3, y: 4, scale: 10 })
+	})
+
 	test('the facade never reports onUserCamera (setCamera, fit, zoomBy)', () => {
 		h = setupScene([note(A)])
 		h.scene.setCamera({ x: 5, y: 5, scale: 2 })
@@ -493,9 +535,26 @@ describe('camera keys and onUserCamera', () => {
 		h.frame()
 		const c = h.scene.getCamera()
 		assert.equal(Math.min(920 / 92, 720 / 72), 10, 'the 40 px margin asks for 1000 %')
-		assert.equal(c.scale, 4, '… clamped to MAX_SCALE, far beyond the 100 % of fit()')
-		assert.ok(Math.abs(c.x + 500 / 4 - 1046) < 1e-9 && Math.abs(c.y + 400 / 4 - 1036) < 1e-9, 'selection centred')
+		assert.equal(c.scale, 10, '… and gets it (job 242 AK1: up to MAX_SCALE, not ZOOM_TO_MAX_SCALE), far beyond the 100 % of fit()')
+		assert.ok(Math.abs(c.x + 500 / 10 - 1046) < 1e-9 && Math.abs(c.y + 400 / 10 - 1036) < 1e-9, 'selection centred')
 		assert.equal(h.log.filter((e) => e[0] === 'onUserCamera').length, 1)
+	})
+
+	test('job 242 AK1: Shift+2 never beyond MAX_SCALE; a large selection gets its fit as before', () => {
+		h = setupScene([note(A, { x: 1000, y: 1000, w: 46, h: 36 }), note(B, { x: 0, y: 0, w: 1840, h: 720 })])
+		h.focusCanvas()
+		h.scene.setSelection([A])
+		h.key('@', { shiftKey: true, code: 'Digit2' })
+		h.frame()
+		const c = h.scene.getCamera()
+		assert.equal(Math.min(920 / 46, 720 / 36), 20, 'the margin asks for 2000 %')
+		assert.equal(c.scale, MAX_SCALE, '… clamped to 1000 %')
+		assert.ok(Math.abs(c.x + 500 / 10 - 1023) < 1e-9 && Math.abs(c.y + 400 / 10 - 1018) < 1e-9, 'selection centred')
+		h.scene.setSelection([B])
+		h.key('@', { shiftKey: true, code: 'Digit2' })
+		h.frame()
+		assert.equal(h.scene.getCamera().scale, 0.5, 'min(920 / 1840, 720 / 720): the fit, below 400 % unchanged')
+		assert.equal(h.log.filter((e) => e[0] === 'onUserCamera').length, 2)
 	})
 
 	test('(stage 3) a camera key during a wheel gesture works on the camera the user sees: the gesture ends first, its way is kept', () => {
@@ -636,5 +695,235 @@ describe('group keys (job 026, M2 R20 Gruppieren)', () => {
 		h.key('g')
 		assert.equal(h.scene.getGrid(), !grid, 'G alone: the grid (R12)')
 		assert.deepEqual(h.intents('group'), [])
+	})
+})
+
+describe('Alt/Option+arrow: neighbour (job 136)', () => {
+	const C1 = '01JA00000000000000000000C1'
+	const conn = () => ({ id: C1, t: 'connector', x: 0, y: 0, w: 0, h: 0, r: 0, z: 'b1', parent: null, data: { start: { item: A }, end: { item: B }, route: 'straight' }, style: { stroke: '#1a1a1a', strokeWidth: 2, endCap: 'arrow' } })
+	/** Alt+key on the canvas; the keydown event. */
+	const alt = (key, props = {}) => h.key(key, { altKey: true, ...props })
+
+	test('AK7: Alt+→/←/↑/↓ with the canvas focus give the sides r/l/t/b, with preventDefault; note, shape and text alike; (job 148) never with connect', () => {
+		h = setupScene([note(A), shapeItem(B, { x: 400 }), textItem(C, { x: 800 })])
+		h.focusCanvas()
+		for (const id of [A, B, C]) {
+			h.scene.setSelection([id])
+			const events = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].map((k) => alt(k))
+			assert.ok(events.every((e) => e.defaultPrevented), 'Alt+← must not be the browser\'s Back')
+		}
+		assert.deepEqual(h.intents(), [A, B, C].flatMap((id) => ['r', 'l', 't', 'b'].map((side) => ({ type: 'neighbour', id, side }))), 'whole intents: no connector from the keyboard')
+	})
+
+	test('AK7: rotated: at r = 90 Alt+→ gives the side t (its outer normal points right on screen); ties go t, r, b, l', () => {
+		h = setupScene([note(A, { r: 90 })])
+		h.scene.setSelection([A])
+		h.focusCanvas()
+		alt('ArrowRight')
+		alt('ArrowDown')
+		assert.deepEqual(h.intents().map((i) => i.side), ['t', 'r'])
+		assert.deepEqual([0, 90, 180, 270, -90].map((r) => sideToward(r, 1, 0)), ['r', 't', 'l', 'b', 'b'])
+		assert.deepEqual([sideToward(45, 1, 0), sideToward(45, 0, 1), sideToward(30, 1, 0), sideToward(60, 1, 0)], ['t', 'r', 'r', 't'])
+	})
+
+	test('AK7: preventDefault but no intent for two items, a frame, a connector, auto-repeat, Shift, a press; nothing without the canvas focus, with Ctrl/⌘ (AltGr) or in the editor', () => {
+		h = setupScene([frameItem(F, { x: 0, y: 1000 }), note(A), note(B, { x: 600 }), conn()])
+		h.focusCanvas()
+		const prevented = []
+		h.scene.setSelection([A, B])
+		prevented.push(alt('ArrowRight').defaultPrevented)
+		h.scene.setSelection([F])
+		prevented.push(alt('ArrowRight').defaultPrevented)
+		h.scene.setSelection([C1])
+		prevented.push(alt('ArrowRight').defaultPrevented)
+		h.scene.setSelection([A])
+		prevented.push(alt('ArrowRight', { repeat: true }).defaultPrevented)
+		prevented.push(alt('ArrowRight', { shiftKey: true }).defaultPrevented)
+		h.pointer('pointerdown', 700, 700)
+		prevented.push(alt('ArrowRight').defaultPrevented)
+		h.pointer('pointerup', 700, 700)
+		h.scene.setSelection([A])
+		h.focusCanvas()
+		assert.deepEqual(prevented, [true, true, true, true, true, true])
+		assert.equal(alt('ArrowRight', { target: h.dom.doc.body }).defaultPrevented, false, 'no canvas focus')
+		assert.equal(alt('ArrowRight', { ctrlKey: true }).defaultPrevented, false, 'Ctrl+Alt (AltGr) is not ours')
+		assert.equal(alt('ArrowRight', { metaKey: true }).defaultPrevented, false)
+		assert.deepEqual(h.intents('neighbour'), [])
+		h.scene.openTextEditor(A)
+		const ta = h.container.descendants().find((el) => el.tagName === 'TEXTAREA' && el.hasAttribute('data-knorke-editor'))
+		assert.equal(alt('ArrowLeft', { target: ta }).defaultPrevented, false, 'Option+← stays text navigation in the editor')
+		assert.equal(ta.isConnected, true)
+		assert.deepEqual(h.intents('neighbour'), [])
+	})
+
+	test('AK7: modes vote and view: no intent and no preventDefault', () => {
+		h = setupScene([note(A)])
+		h.scene.setSelection([A])
+		for (const mode of ['vote', 'view']) {
+			h.scene.setMode(mode)
+			h.focusCanvas()
+			assert.equal(alt('ArrowRight').defaultPrevented, false, mode)
+		}
+		assert.deepEqual(h.intents('neighbour'), [])
+	})
+})
+
+describe('the key ? (factory job 145, shortcuts overview)', () => {
+	/** @return {number} onShortcuts calls so far */
+	const asked = () => h.log.filter((e) => e[0] === 'onShortcuts').length
+
+	test('AK1: ? with the canvas focus calls onShortcuts once with preventDefault, with and without Shift (US Shift+/, DE Shift+ß); no intent, selection and tool stay', () => {
+		h = setupScene([note(A), note(B, { x: 300 })])
+		h.scene.setSelection([A, B])
+		h.scene.setTool('sticky')
+		h.focusCanvas()
+		h.log.length = 0
+		const plain = h.key('?')
+		assert.equal(plain.defaultPrevented, true)
+		assert.equal(asked(), 1, 'exactly once')
+		const us = h.key('?', { shiftKey: true, code: 'Slash' })
+		const de = h.key('?', { shiftKey: true, code: 'Minus' })
+		assert.deepEqual([us.defaultPrevented, de.defaultPrevented], [true, true])
+		assert.equal(asked(), 3)
+		assert.deepEqual(h.intents(), [], 'never an intent')
+		assert.deepEqual(h.log.filter((e) => e[0] !== 'onShortcuts'), [], 'no selection, tool, camera or grid callback')
+		assert.deepEqual(h.scene.getSelection(), [A, B])
+		assert.equal(h.scene.getTool(), 'sticky')
+		assert.equal(h.scene.getGrid(), false)
+	})
+
+	test('AK1: modes vote and view and a view-only scene (a frozen board): ? still calls onShortcuts, with preventDefault', () => {
+		h = setupScene([note(A)])
+		for (const mode of ['vote', 'view']) {
+			h.scene.setMode(mode)
+			h.focusCanvas()
+			const before = asked()
+			assert.equal(h.key('?').defaultPrevented, true, mode)
+			assert.equal(h.key('?', { shiftKey: true }).defaultPrevented, true, mode + ' with Shift')
+			assert.equal(asked(), before + 2, mode)
+		}
+		h.scene.setMode('edit')
+		h.scene.setViewOnly(true)
+		const before = asked()
+		assert.equal(h.key('?').defaultPrevented, true, 'view-only')
+		assert.equal(asked(), before + 1)
+		assert.deepEqual(h.intents(), [])
+	})
+
+	test('AK1: no call (and no preventDefault) without the canvas focus, in a text field or the editor, with Ctrl/⌘ or Alt, on auto-repeat, during a press', () => {
+		h = setupScene([note(A)])
+		h.scene.setSelection([A])
+		const events = []
+		events.push(h.key('?', { target: h.dom.doc.body }))
+		const input = h.dom.doc.createElement('input')
+		h.dom.doc.body.appendChild(input)
+		events.push(h.key('?', { target: input, shiftKey: true }))
+		events.push(h.key('?', { ctrlKey: true, shiftKey: true }))
+		events.push(h.key('?', { metaKey: true }))
+		events.push(h.key('?', { altKey: true }))
+		events.push(h.key('?', { ctrlKey: true, altKey: true }))
+		events.push(h.key('?', { repeat: true }))
+		h.pointer('pointerdown', 100, 100)
+		events.push(h.key('?'))
+		h.pointer('pointerup', 100, 100)
+		assert.equal(h.scene.openTextEditor(A), true)
+		const ta = h.container.descendants().find((el) => el.tagName === 'TEXTAREA' && el.hasAttribute('data-knorke-editor'))
+		assert.ok(ta, 'editor open')
+		events.push(h.key('?', { target: ta, shiftKey: true }))
+		assert.equal(asked(), 0)
+		assert.deepEqual(events.map((e) => e.defaultPrevented), events.map(() => false))
+		assert.equal(ta.isConnected, true, 'the editor stays open')
+		assert.deepEqual(h.intents().filter((i) => i.type !== 'text'), [], 'no intent but the editor\'s own')
+	})
+
+	test('AK1: ? disturbs neither zoom out (-, _) nor Shift+digit; / alone does nothing', () => {
+		h = setupScene([note(A)])
+		h.focusCanvas()
+		h.key('/', { code: 'Slash' })
+		assert.equal(asked(), 0, '/ is no ?')
+		h.key('_', { shiftKey: true, code: 'Minus' })
+		h.key('!', { shiftKey: true, code: 'Digit1' })
+		assert.equal(asked(), 0)
+		assert.equal(h.log.filter((e) => e[0] === 'onUserCamera').length, 2, 'zoom out and fit as before')
+	})
+})
+
+describe('the key C (factory job 147, other people\'s cursors)', () => {
+	/** @return {number} onCursors calls so far */
+	const asked = () => h.log.filter((e) => e[0] === 'onCursors').length
+
+	test('AK6: c and C (Caps Lock) with the canvas focus call onCursors once each, without preventDefault; no intent, selection, tool and grid stay', () => {
+		h = setupScene([note(A), note(B, { x: 300 })])
+		h.scene.setSelection([A, B])
+		h.scene.setTool('sticky')
+		h.focusCanvas()
+		h.log.length = 0
+		const lower = h.key('c', { code: 'KeyC' })
+		assert.equal(lower.defaultPrevented, false, 'like G')
+		assert.equal(asked(), 1, 'exactly once')
+		const caps = h.key('C', { code: 'KeyC' })
+		assert.equal(caps.defaultPrevented, false)
+		assert.equal(asked(), 2)
+		assert.deepEqual(h.log.filter((e) => e[0] !== 'onCursors'), [], 'no intent, selection, tool, camera or grid callback')
+		assert.deepEqual(h.log.filter((e) => e[0] === 'onCursors'), [['onCursors'], ['onCursors']], 'no arguments')
+		assert.deepEqual(h.scene.getSelection(), [A, B])
+		assert.equal(h.scene.getTool(), 'sticky')
+		assert.equal(h.scene.getGrid(), false)
+	})
+
+	test('AK6: modes vote and view and a view-only scene (a frozen board): c still calls onCursors', () => {
+		h = setupScene([note(A)])
+		for (const mode of ['vote', 'view']) {
+			h.scene.setMode(mode)
+			h.focusCanvas()
+			const before = asked()
+			assert.equal(h.key('c').defaultPrevented, false, mode)
+			assert.equal(asked(), before + 1, mode)
+		}
+		h.scene.setMode('edit')
+		h.scene.setViewOnly(true)
+		const before = asked()
+		h.key('c')
+		assert.equal(asked(), before + 1, 'view-only')
+		assert.deepEqual(h.intents(), [])
+	})
+
+	test('AK6: no call with Shift, Alt, Ctrl/⌘ (Ctrl/⌘+C still copies), on auto-repeat, during a press, without the canvas focus, in a field, the editor or a dialog, during IME composition', () => {
+		h = setupScene([note(A)])
+		h.scene.setSelection([A])
+		h.focusCanvas()
+		h.key('C', { shiftKey: true, code: 'KeyC' })
+		h.key('c', { altKey: true })
+		h.key('ç', { altKey: true, code: 'KeyC' })
+		h.key('c', { repeat: true })
+		h.key('c', { isComposing: true })
+		h.key('c', { target: h.dom.doc.body })
+		const input = h.dom.doc.createElement('input')
+		h.dom.doc.body.appendChild(input)
+		h.key('c', { target: input })
+		const dialog = h.dom.doc.createElement('div')
+		dialog.setAttribute('role', 'dialog')
+		const inDialog = h.dom.doc.createElement('button')
+		dialog.appendChild(inDialog)
+		h.dom.doc.body.appendChild(dialog)
+		h.key('c', { target: inDialog })
+		h.pointer('pointerdown', 100, 100)
+		h.key('c')
+		h.pointer('pointerup', 100, 100)
+		assert.equal(asked(), 0)
+		h.scene.setSelection([A])
+		h.log.length = 0
+		const ctrl = h.key('c', { ctrlKey: true, code: 'KeyC' })
+		const meta = h.key('c', { metaKey: true, code: 'KeyC' })
+		assert.deepEqual([ctrl.defaultPrevented, meta.defaultPrevented], [true, true])
+		assert.deepEqual(h.intents().map((i) => i.type), ['copy', 'copy'], 'Ctrl/⌘+C copies as before')
+		assert.equal(asked(), 0, 'and never toggles')
+		assert.equal(h.scene.openTextEditor(A), true)
+		const ta = h.container.descendants().find((el) => el.tagName === 'TEXTAREA' && el.hasAttribute('data-knorke-editor'))
+		assert.ok(ta, 'editor open')
+		h.key('c', { target: ta })
+		h.key('C', { target: ta })
+		assert.equal(asked(), 0)
+		assert.equal(ta.isConnected, true, 'the editor stays open')
 	})
 })

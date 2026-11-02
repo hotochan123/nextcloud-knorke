@@ -108,6 +108,15 @@ final class PageControllerTest extends TestCase {
         }]));
     }
 
+    /** (Job 228) Theming with an imprint and a privacy policy URL the server must drop. */
+    private static function theming(): IAppConfig {
+        return Fake::of(IAppConfig::class, ['getValueString' => fn (string $app, string $key, string $default = '', ?bool $lazy = false): string => match ("$app/$key") {
+            'theming/imprintUrl' => 'https://example.org/impressum',
+            'theming/privacyUrl' => 'javascript:alert(1)',
+            default => $default,
+        }]);
+    }
+
     public function testRoutes1To3CarryPrivacyInTheAccountsLanguage(): void {
         $stored = ['default' => ['text' => "T0\nline 2", 'url' => ''], 'languages' => ['de' => ['text' => 'Tde', 'url' => 'https://example.org/ude']]];
         foreach ([['de', 'Tde', 'https://example.org/ude'], ['de_DE', 'Tde', 'https://example.org/ude'], ['fr', "T0\nline 2", 'https://example.org/theming']] as [$lang, $text, $url]) {
@@ -116,20 +125,21 @@ final class PageControllerTest extends TestCase {
             $state = Fake::of(IInitialState::class, ['provideInitialState' => function (string $key, $data) use (&$got): void {
                 $got[$key] = json_encode($data);
             }]);
-            $c = new PageController(Fake::of(IRequest::class), $state, self::config(false), self::limits(), self::privacy($lang, $stored, 'https://example.org/theming', $asked));
+            $c = new PageController(Fake::of(IRequest::class), $state, self::config(false), self::limits(), self::privacy($lang, $stored, 'https://example.org/theming', $asked), self::theming());
             foreach (['index' => [], 'board' => [7], 'join' => [str_repeat('a', 24)]] as $route => $args) {
                 $got = [];
                 $r = $c->$route(...$args);
                 $this->assertInstanceOf(TemplateResponse::class, $r);
                 $this->assertSame(PageController::INITIAL_STATE_KEYS, array_keys($got), "$route: every key");
                 $this->assertSame(['text' => $text, 'url' => $url], json_decode($got['privacy'], true), "$lang $route: privacy");
-                $this->assertSame(['null', 'null', '"user"'], [$got['privacyAdmin'], $got['legal'], $got['page']], "$route: no admin data, legal stays null");
+                $this->assertSame(['null', '"user"'], [$got['privacyAdmin'], $got['page']], "$route: no admin data");
+                $this->assertSame(['imprintUrl' => 'https://example.org/impressum', 'privacyUrl' => ''], json_decode($got['legal'], true), "$route: job 228, the instance's legal links (a javascript: URL is '')");
             }
             $this->assertSame([null, null, null], $asked, 'IFactory::findLanguage() without an app id, once per page');
         }
         $c = new PageController(Fake::of(IRequest::class), Fake::of(IInitialState::class, ['provideInitialState' => function (string $key, $data) use (&$got): void {
             $got[$key] = json_encode($data);
-        }]), self::config(false), self::limits(), self::privacy('de', []));
+        }]), self::config(false), self::limits(), self::privacy('de', []), self::theming());
         $got = [];
         $c->index();
         $this->assertSame('{"text":null,"url":""}', $got['privacy'], 'nothing set: text null (built-in text), url ""');

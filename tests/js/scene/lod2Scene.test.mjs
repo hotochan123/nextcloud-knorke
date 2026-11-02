@@ -7,9 +7,11 @@
  * WP-S2, finding SCN-01), deterministic in Node with the real SceneManager,
  * InputController and SceneModel on the fake DOM; the stubbed renderer
  * reports the level (setStubLod), as the Konva renderer does from its camera:
- * - a click (hitTest with accept) and the marquee pass over connectors at
- *   LOD 2, Ctrl+A and Tab still select them; at LOD 0 the same presses select
- *   the connector (control)
+ * - (job 209) a click (mouse, pen), a right click, a double click and the
+ *   marquee reach connectors at LOD 2 as at LOD 0 (control): select, menu,
+ *   label editor, taken along when completely inside, moved and deleted with
+ *   the selection; a finger's press passes over them (it pans), its tap
+ *   selects; Ctrl+A and Tab select them
  * - a selected connector shows only its halo (renderer selection) at LOD 2,
  *   no end handles; one note gets its transformer handles but no "+" handles;
  *   the handles come back when the camera leaves LOD 2
@@ -24,8 +26,9 @@
  *   selects and drags the frame instead of panning); beside the title and at
  *   LOD 0 neither happens
  */
-import { test, describe, afterEach } from 'node:test'
+import { test, describe, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { dispatch } from './fakeDom.mjs'
 import { COARSE_TITLE_BOX_PX } from '../../../src/scene/nodes/coarse.js'
 import { FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND } from '../../../src/model/tokens.js'
 import { HIT_TOL_MOUSE_PX, HIT_TOL_TOUCH_PX } from '../../../src/scene/InputController.js'
@@ -48,6 +51,7 @@ let h
 afterEach(() => {
 	h?.restore()
 	h = null
+	mock.timers.reset()
 })
 
 /** @param {number} x container x @param {number} y container y */
@@ -56,36 +60,91 @@ function click(x, y) {
 	h.pointer('pointerup', x, y)
 }
 
-describe('click and marquee pass over connectors at LOD 2', () => {
+/**
+ * A rubber band with the mouse from one container point to another.
+ *
+ * @param {number} x0 start x @param {number} y0 start y @param {number} x1 end x @param {number} y1 end y
+ */
+function marquee(x0, y0, x1, y1) {
+	h.pointer('pointerdown', x0, y0)
+	h.pointer('pointermove', (x0 + x1) / 2, (y0 + y1) / 2)
+	h.pointer('pointermove', x1, y1)
+	h.pointer('pointerup', x1, y1)
+}
+
+describe('(job 209) click and marquee reach connectors at LOD 2 as at LOD 0', () => {
 	for (const lod of [0, 2]) {
-		test(`LOD ${lod}: a click on the connector line ${lod === 2 ? 'selects nothing' : 'selects it'}; a click on a note selects it`, () => {
+		test(`LOD ${lod} AK1: a click on the connector line selects it, Shift+click on a note adds the note, a click on the note selects it, a pen click on the line selects the connector`, () => {
 			h = setupScene(items())
 			setStubLod(lod)
 			click(450, 200)
-			assert.deepEqual(h.scene.getSelection(), lod === 2 ? [] : [C1])
+			assert.deepEqual(h.scene.getSelection(), [C1])
+			h.pointer('pointerdown', 150, 150, { shiftKey: true })
+			h.pointer('pointerup', 150, 150, { shiftKey: true })
+			assert.deepEqual(h.scene.getSelection(), [C1, A])
 			click(150, 150)
+			assert.deepEqual(h.scene.getSelection(), [A])
+			h.pointer('pointerdown', 450, 200, { pointerType: 'pen', pointerId: 9 })
+			h.pointer('pointerup', 450, 200, { pointerType: 'pen', pointerId: 9 })
+			assert.deepEqual(h.scene.getSelection(), [C1])
+		})
+
+		test(`LOD ${lod} AK1: a right click on the connector line gives its menu; a double click opens its label editor`, () => {
+			h = setupScene(items())
+			setStubLod(lod)
+			h.pointer('pointerdown', 450, 200, { button: 2 })
+			dispatch(h.container, 'contextmenu', { clientX: 450, clientY: 200, button: 2, pointerId: 1, pointerType: 'mouse' })
+			h.pointer('pointerup', 450, 200, { button: 2 })
+			assert.deepEqual(h.intents('contextMenu').map((i) => i.id), [C1])
+			h.pointer('dblclick', 450, 200)
+			assert.deepEqual(h.log.filter((e) => e[0] === 'onEditing').map((e) => e[1]), [C1])
+			assert.equal(h.dom.doc.activeElement?.getAttribute('data-knorke-editor-kind'), 'label')
+		})
+
+		test(`LOD ${lod} AK2: a marquee around everything takes the connector too; one around A and part of the connector takes only A`, () => {
+			h = setupScene(items())
+			setStubLod(lod)
+			marquee(50, 50, 900, 400)
+			assert.deepEqual(h.scene.getSelection().sort(), [A, B, C1].sort())
+			click(950, 750)
+			marquee(50, 50, 400, 350)
 			assert.deepEqual(h.scene.getSelection(), [A])
 		})
 
-		test(`LOD ${lod}: a marquee around everything ${lod === 2 ? 'leaves the connector out' : 'takes the connector too'}`, () => {
+		test(`LOD ${lod} AK2: after the marquee around everything a drag moves the connector with the notes and Delete deletes all three`, () => {
 			h = setupScene(items())
 			setStubLod(lod)
-			h.pointer('pointerdown', 50, 50)
-			h.pointer('pointermove', 400, 300)
-			h.pointer('pointermove', 900, 400)
-			h.pointer('pointerup', 900, 400)
-			assert.deepEqual(h.scene.getSelection().sort(), (lod === 2 ? [A, B] : [A, B, C1]).sort())
+			marquee(50, 50, 900, 400)
+			h.pointer('pointerdown', 150, 150)
+			h.pointer('pointermove', 200, 200)
+			h.frame()
+			h.pointer('pointermove', 250, 250)
+			h.frame()
+			h.pointer('pointerup', 250, 250)
+			const moves = h.intents('move')
+			assert.equal(moves.length, 1)
+			assert.deepEqual([...moves[0].ids].sort(), [A, B, C1].sort())
+			h.focusCanvas()
+			h.key('Delete')
+			const del = h.intents('delete')
+			assert.equal(del.length, 1)
+			assert.deepEqual([...del[0].ids].sort(), [A, B, C1].sort())
 		})
 	}
 
-	for (const lod of [0, 2]) {
-		test(`LOD ${lod}: a double click on the connector ${lod === 2 ? 'opens no' : 'opens the'} label editor`, () => {
-			h = setupScene(items())
-			setStubLod(lod)
-			h.pointer('dblclick', 450, 200)
-			assert.deepEqual(h.log.filter((e) => e[0] === 'onEditing').map((e) => e[1]), lod === 2 ? [] : [C1])
-		})
-	}
+	test('LOD 2, 5 %: a click in the middle of a 10-px note at whose edge a connector starts selects the note; on the line between the notes the connector', () => {
+		h = setupScene(items())
+		h.scene.setCamera({ x: 0, y: 0, scale: 0.05 })
+		h.frame()
+		setStubLod(2)
+		// A spans (5, 5)–(15, 15) on screen, the line runs from (15, 10) to (30, 10)
+		click(10, 10)
+		assert.deepEqual(h.scene.getSelection(), [A])
+		// (job 140) the gap of the selected A would reach 8 px beyond its edge: start without a selection
+		h.scene.setSelection([])
+		click(22, 10)
+		assert.deepEqual(h.scene.getSelection(), [C1])
+	})
 
 	test('LOD 2: Ctrl+A and Tab still select connectors', () => {
 		h = setupScene(items())
@@ -112,6 +171,59 @@ describe('click and marquee pass over connectors at LOD 2', () => {
 		click(400, 700)
 		click(100, 300)
 		assert.deepEqual(h.scene.getSelection(), [F], 'border')
+	})
+})
+
+describe('(job 209) AK3: at LOD 2 a finger on a connector line pans, its tap selects the connector (the real GestureController)', () => {
+	const finger = { pointerType: 'touch', pointerId: 5 }
+	/**
+	 * One finger pressed on the connector line far from the notes, moved 80 px, lifted.
+	 *
+	 * @return {{sel:string[], panned:boolean, moved:number}} selection after it, camera moved, move intents
+	 */
+	const swipe = () => {
+		const cam = h.scene.getCamera()
+		h.pointer('pointerdown', 450, 200, finger)
+		h.pointer('pointermove', 490, 240, finger)
+		h.frame()
+		h.pointer('pointermove', 530, 280, finger)
+		h.frame()
+		h.pointer('pointerup', 530, 280, finger)
+		h.frame()
+		const c = h.scene.getCamera()
+		return { sel: h.scene.getSelection(), panned: c.x !== cam.x || c.y !== cam.y, moved: h.intents('move').length }
+	}
+
+	for (const lod of [0, 2]) {
+		test(`LOD ${lod}: a swipe from the line ${lod === 2 ? 'pans and selects nothing' : 'is claimed: the connector is selected, no pan'}; a tap there selects the connector`, () => {
+			mock.timers.enable({ apis: ['setTimeout'] })
+			h = setupScene(items())
+			setStubLod(lod)
+			assert.deepEqual(swipe(), lod === 2 ? { sel: [], panned: true, moved: 0 } : { sel: [C1], panned: false, moved: 0 })
+			h.scene.setCamera({ x: 0, y: 0, scale: 1 })
+			h.frame()
+			h.scene.setSelection([])
+			h.pointer('pointerdown', 450, 200, finger)
+			h.pointer('pointerup', 450, 200, finger)
+			h.frame()
+			assert.deepEqual(h.scene.getSelection(), [C1])
+		})
+	}
+
+	test('LOD 2: a finger on a note where a free connector crosses it above the note drags the note, not the connector', () => {
+		mock.timers.enable({ apis: ['setTimeout'] })
+		const C2 = '01JA00000000000000000000C2'
+		h = setupScene([...items(), conn(C2, { x: 0, y: 150 }, { x: 1000, y: 150 })])
+		setStubLod(2)
+		h.pointer('pointerdown', 150, 150, finger)
+		h.pointer('pointermove', 190, 190, finger)
+		h.frame()
+		h.pointer('pointermove', 230, 230, finger)
+		h.frame()
+		h.pointer('pointerup', 230, 230, finger)
+		h.frame()
+		assert.deepEqual(h.scene.getSelection(), [A])
+		assert.deepEqual(h.intents('move').map((i) => i.ids), [[A]])
 	})
 })
 

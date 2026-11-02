@@ -28,6 +28,13 @@
 #    T4-26) and no code signature (EXCLUDE: appinfo/signature.json; with it
 #    Nextcloud checks the app's integrity from then on). dev/selftest/release.test.mjs
 #    pins both lists.
+# 3b. On every run, signed or not: every file of the release directory (binaries
+#    and the root files too) is searched for a PEM private key. A hit (named by
+#    its path below the release, which is its path in the source tree; never its
+#    content) or a search that fails (grep 2, e.g. an unreadable file) removes the
+#    release directory and ends with exit 1: no archive, no docker call. So
+#    factory/deploy.sh, P9 and the hotfix stop before they touch any target.
+#    Only PEM text is found (no DER or PGP key, no password or token).
 # 4. The archive holds the folder knorke/ (the app id, as Nextcloud expects
 #    it below custom_apps/), its entries sorted, owner 0, one fixed mtime, so
 #    the same tree gives the same archive; the .sha256 file is in the format
@@ -43,7 +50,7 @@
 #    The host then checks that the signed tree is exactly the release plus
 #    appinfo/signature.json (no other, changed, removed or linked file; the
 #    differences go to stderr) and that it holds no PEM private key (the
-#    release is scanned too, before any docker call), then occ
+#    release itself was searched in step 3b, before any docker call), then occ
 #    integrity:check-app verifies it (without the key; it refuses a
 #    certificate Nextcloud did not issue). With umask 022, modes normalised, packed
 #    as in step 4, and the archive signed with openssl dgst -sha512 on the
@@ -59,9 +66,10 @@
 # Nothing outside dev/release/out is written; an existing release directory
 # of the same version is replaced. Needs node, tar, gzip, sha256sum; signing
 # also docker, openssl and diff.
-# Exit: 0 written; 1 check-fresh not green, a step failed, signing, check-app
-# or openssl failed, or docker or openssl missing; 2 usage, also a key in the
-# repository or a key or certificate that is missing or not readable.
+# Exit: 0 written; 1 check-fresh not green, a private key in the release or a
+# failed search for one, a step failed, signing, check-app or openssl failed, or
+# docker or openssl missing; 2 usage, also a key in the repository or a key or
+# certificate that is missing or not readable.
 set -euo pipefail
 
 # release.sh works on no namespace: a KD_NS in the caller's environment must not
@@ -204,6 +212,15 @@ find "$DEST" -type l -exec rm -f -- {} +
 find "$DEST" -type f -exec chmod 0644 {} +
 find "$DEST" -type d -exec chmod 0755 {} +
 
+# --- 3b. no private key in the release (every run) -------------------------------
+# a second copy or hard link of the signing key, a stray test key: nothing of it ships, and no
+# copy of it stays below dev/release/out to be copied by hand; the path below the release is
+# the path in the source tree
+if ! (no_private_key "$DEST" "" "aus dem Quellbaum entfernen, kein Release geschrieben. War er schon auf try oder Prod, gilt er als offengelegt (docs/ENTWICKLUNG.md §11)"); then
+    rm -rf -- "${DEST:?}"
+    exit 1
+fi
+
 # --- 4. archive -----------------------------------------------------------------
 pack "$OUT"
 FILES="$(find "$DEST" -type f | wc -l)"
@@ -214,9 +231,7 @@ if [ "$SIGN" = 0 ]; then
 fi
 
 # --- 5. signed build for the App Store (only with --key and --cert) ------------
-# a key that lies in a runtime folder after all (a second copy, a hard link) never goes public;
-# the path below the release is the path in the source tree
-no_private_key "$DEST" "" "aus dem Quellbaum entfernen. Das unsignierte Release dev/release/out/$NAME/ enthält ihn auch: nicht einspielen. War er schon auf try oder Prod, gilt er als offengelegt (docs/ENTWICKLUNG.md §11)"
+# (the release itself was searched for a private key in step 3b)
 # the signed outputs are public, but nobody else may change them before openssl signs:
 # umask 022 covers every new path, the chmod after mkdir an existing signed/;
 # dev/release/out/ keeps its mode (whoever may write there can still swap signed/)

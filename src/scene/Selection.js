@@ -42,6 +42,14 @@ export class Selection {
 	/** @type {string[]} */
 	#ids = []
 
+	/**
+	 * Factory job 275: ids this returns false for never enter the selection
+	 * (a covered note of private writing); null = every id.
+	 *
+	 * @type {((id: string) => boolean)|null}
+	 */
+	accept = null
+
 	/** @return {string[]} copy of the selected ids */
 	values() {
 		return this.#ids.slice()
@@ -65,7 +73,7 @@ export class Selection {
 	 * @return {boolean} true when it changed
 	 */
 	set(ids) {
-		const next = [...new Set(ids)].filter((id) => typeof id === 'string')
+		const next = [...new Set(ids)].filter((id) => typeof id === 'string' && (this.accept === null || this.accept(id)))
 		if (next.length === this.#ids.length && next.every((id, i) => id === this.#ids[i])) {
 			return false
 		}
@@ -81,7 +89,7 @@ export class Selection {
 		const i = this.#ids.indexOf(id)
 		if (i >= 0) {
 			this.#ids.splice(i, 1)
-		} else {
+		} else if (this.accept === null || this.accept(id)) {
 			this.#ids.push(id)
 		}
 		return true

@@ -6,7 +6,9 @@
  * Locked items (M2, SPEC-M1 §1.2 "(R20) Sperren"), pure. The server sets
  * `lock` of a WireItem: null (not locked) or {by, name} (by = the locker's
  * pid on this board, name = the display name when locked; each null when
- * unknown, e.g. after the locker's account was deleted). The server enforces
+ * unknown, e.g. after the locker's account was deleted); (job 151) a guest's
+ * lock carries a third key, guest: true (the server takes it from the
+ * stored locker, never from the value sent). The server enforces
  * every rule (SyncService::authorize, result code `itemlocked`); this module
  * only mirrors them for the client:
  *
@@ -15,11 +17,13 @@
  *   lock is me's own (by === me.pid, never for an unknown locker) or me may
  *   moderate (me.mod)
  * - lockValue(me): the value a lock op sends, {by: me.pid, name: me.name ??
- *   null} in this key order: exactly what the server hands out afterwards,
- *   so the optimistic state and the server echo have the same itemKey
+ *   null} in this key order, (job 151) plus guest: true for a guest
+ *   (me.guest true): exactly what the server hands out afterwards, so the
+ *   optimistic state and the server echo have the same itemKey
  * - lockSummary(items, me, {writable}): the counts and the lockers of a
  *   selection for the context bar and the context menu (selection v2:
- *   locked, unlocked, lockable, unlockable, lockedBy, unlockBy)
+ *   locked, unlocked, lockable, unlockable, lockedBy, unlockBy; a named
+ *   guest locker carries guest: true)
  */
 /**
  * @param {unknown} role me.role
@@ -59,11 +63,14 @@ export function mayUnlock(item, me) {
 }
 
 /**
- * @param {{pid?: string, name?: (string|null)}|null|undefined} me the own session
- * @return {{by: (string|null), name: (string|null)}} the lock op's value (keys in this order)
+ * @param {{pid?: string, name?: (string|null), guest?: boolean}|null|undefined} me the own session
+ * @return {{by: (string|null), name: (string|null), guest?: true}} the lock op's value (keys in this
+ *   order; guest only for a guest, like the server's echo)
  */
 export function lockValue(me) {
-	return { by: typeof me?.pid === 'string' ? me.pid : null, name: typeof me?.name === 'string' ? me.name : null }
+	const v = { by: typeof me?.pid === 'string' ? me.pid : null, name: typeof me?.name === 'string' ? me.name : null }
+	if (me?.guest === true) v.guest = true
+	return v
 }
 
 /**
@@ -81,10 +88,11 @@ function lockerKey(lock) {
 
 /**
  * Who locked these items (none of them me's own): one locker with a name,
- * nobody known, or several.
+ * nobody known, or several. (job 151) A named locker who locked as a guest
+ * (every named lock of that locker carries guest) adds guest: true.
  *
- * @param {Array<{by: (string|null), name: (string|null)}>} locks foreign locks (at least one)
- * @return {{kind: 'name', name: string}|{kind: 'unknown'}|{kind: 'several'}}
+ * @param {Array<{by: (string|null), name: (string|null), guest: boolean}>} locks foreign locks (at least one)
+ * @return {{kind: 'name', name: string, guest?: true}|{kind: 'unknown'}|{kind: 'several'}}
  */
 function foreign(locks) {
 	const named = locks.filter((l) => typeof l.name === 'string' && l.name !== '')
@@ -93,7 +101,8 @@ function foreign(locks) {
 	}
 	const keys = new Set(locks.map(lockerKey))
 	if (keys.size === 1 && !keys.has(null)) {
-		return { kind: 'name', name: named[0].name }
+		const name = named[0].name
+		return named.every((l) => l.guest) ? { kind: 'name', name, guest: true } : { kind: 'name', name }
 	}
 	return { kind: 'several' }
 }
@@ -108,7 +117,8 @@ function foreign(locks) {
  *   or me may not edit
  * - lockedBy (null without a locked item): {kind: 'mine'} when every lock
  *   is me's own, {kind: 'name', name} when all are the same foreign locker
- *   with a name (grouped by by, without by by name), {kind: 'unknown'}
+ *   with a name (grouped by by, without by by name; job 151: plus guest:
+ *   true when that locker locked as a guest), {kind: 'unknown'}
  *   when all are foreign and nameless, else {kind: 'several'}
  * - unlockBy (null when unlockable is 0): the same over the unlockable
  *   items: {kind: 'mine'} when all of them are me's own, else over the
@@ -132,7 +142,7 @@ export function lockSummary(items, me, { writable = true } = {}) {
 			unlocked++
 			continue
 		}
-		const lock = { by: it.lock.by ?? null, name: it.lock.name ?? null }
+		const lock = { by: it.lock.by ?? null, name: it.lock.name ?? null, guest: it.lock.guest === true }
 		locks.push(lock)
 		if (may && mayUnlock(it, me)) {
 			unlockable.push(lock)

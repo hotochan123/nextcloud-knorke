@@ -41,6 +41,18 @@
  *   shell, §9.6), and a click that the entry did not take names the topmost
  *   element at the entry's centre (document.elementFromPoint), so a remaining
  *   timeout says whether something lay over the entry.
+ *   (Factory job 178) Option menus: the menus to look in, in this order
+ *   (default MENUS); BOARD_MENUS finds the board menu's entries
+ *   (export-png): the board menu of the wide top bar
+ *   ([data-knorke-menu=board]), else the narrow layout's overflow menu,
+ *   which since job 178 shows for every role (a visible overflow menu says
+ *   nothing about the moderation right any more).
+ *   (Factory job 228) The board menu's levels: an entry of a submenu
+ *   (SUBMENU_OF: the exports, the inserts) is reached by a click on its
+ *   submenu entry ([data-knorke-submenu=export|insert]) after the trigger
+ *   opened the menu; the submenu keeps the menu open.
+ *   (Factory job 229) ZOOM_MENUS finds the entries of the zoom menu
+ *   (zoom-100, zoom-selection, shortcuts).
  * - cullClass / countCullSet: the renderer's culled set of SPEC-M1 §6.3
  *   (stats().voteState counts the rings among the items it draws nodes
  *   for): its cull rectangle, the stage with its overscan (job 034,
@@ -56,12 +68,21 @@
 
 /** The menus of a moderation entry (§6.8 R16), in this order. */
 export const MENUS = Object.freeze(['[data-knorke-menu=moderation]', '[data-knorke-menu=overflow]'])
+/** The menus of a board menu entry such as export-png (factory job 178), in this order. */
+export const BOARD_MENUS = Object.freeze(['[data-knorke-menu=board]', '[data-knorke-menu=overflow]'])
+/** (Job 229) The zoom menu (its entries zoom-100, zoom-selection, shortcuts). */
+export const ZOOM_MENUS = Object.freeze(['[data-knorke-menu=zoom]'])
+/** (Job 228) The submenu of "More" that holds an entry (src/components/boardMenu.js groups). */
+export const SUBMENU_OF = Object.freeze({
+	'export-png': 'export', 'export-svg': 'export', 'export-pdf': 'export', 'export-bpmn': 'export', 'export-csv': 'export', 'download-board': 'export',
+	'insert-template': 'insert', 'insert-board-file': 'insert', 'insert-bpmn-file': 'insert', 'import-csv': 'insert',
+})
 /** Every open menu trigger of the page (NcActions: aria-haspopup with aria-expanded="true"; R17 K6). */
 export const OPEN_TRIGGERS = 'button[aria-haspopup][aria-expanded="true"]'
 /** Culled set: viewport + this fraction of its width/height on every side (src/scene/KonvaRenderer.js CULL_MARGIN). */
 export const CULL_MARGIN = 0.1
-/** rbush padding of a note in world units: SHADOW.blur · 1.5 + |SHADOW.y| (src/model/SceneModel.js STICKY_PAD). */
-export const STICKY_PAD_WORLD = 11
+/** rbush padding of a note in world units: the largest blur · 1.5 + |offset| of NOTE_SHADOWS (src/model/SceneModel.js STICKY_PAD; job 259: 14 · 1.5 + 5). */
+export const STICKY_PAD_WORLD = 26
 
 const pause = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)))
 const firstLine = (e) => String(e?.message || e).split('\n')[0]
@@ -123,14 +144,15 @@ export function hitText(h) {
  * Clicks a moderation entry (see the header).
  * @param {object} page Playwright page (or a fake with locator/first/isVisible/click/count/evaluate/getAttribute, keyboard.press, evaluate)
  * @param {string} name value of data-knorke-action
- * @param {{attempts?: number, timeout?: number, settle?: number, every?: number, log?: (line: string) => void}} [o]
+ * @param {{attempts?: number, timeout?: number, settle?: number, every?: number, log?: (line: string) => void,
+ *   menus?: readonly string[]}} [o]
  *   attempts: tries in all (2); timeout: per click and wait in ms (5000);
  *   settle: how long a closing menu may take in ms (2000); every: poll step in ms (50);
  *   log: gets one line per further try with the reason (default console.log, so a retry
- *   shows in the run log and a flake gate does not hide it)
+ *   shows in the run log and a flake gate does not hide it); menus: the menu roots to look in (MENUS)
  * @return {Promise<{menu: string|null, attempt: number}>} the menu (null: fast path outside a popover) and the try that clicked
  */
-export async function menuAction(page, name, { attempts = 2, timeout = 5000, settle = 2000, every = 50, log = (line) => console.log(line) } = {}) {
+export async function menuAction(page, name, { attempts = 2, timeout = 5000, settle = 2000, every = 50, log = (line) => console.log(line), menus = MENUS } = {}) {
 	const entry = page.locator(`[data-knorke-action=${name}]:visible`).first()
 	const open = page.locator(OPEN_TRIGGERS)
 	let last = null
@@ -164,10 +186,13 @@ export async function menuAction(page, name, { attempts = 2, timeout = 5000, set
 			continue
 		}
 		let menu = null
-		for (const sel of MENUS) {
+		for (const sel of menus) {
 			if (await isVisible(page.locator(sel).first())) { menu = sel; break }
 		}
-		if (!menu) throw new Error(`[C] menuAction ${name}: kein Moderationsmenü sichtbar ([data-knorke-menu=moderation|overflow])`)
+		if (!menu) {
+			const which = menus.map((m) => m.replace(/^\[data-knorke-menu=|\]$/g, '')).join('|')
+			throw new Error(`[C] menuAction ${name}: kein ${menus === MENUS ? 'Moderationsmenü' : 'Menü'} sichtbar ([data-knorke-menu=${which}])`)
+		}
 		const trigger = page.locator(menu).first().locator('button[aria-haspopup]').first()
 		// 2. the menu is open and shows the entry
 		if ((await expandedOf(trigger)) === 'true' && (await isVisible(entry))) {
@@ -184,6 +209,23 @@ export async function menuAction(page, name, { attempts = 2, timeout = 5000, set
 		} catch (e) {
 			last = `${menu}: Auslöser nicht klickbar (${firstLine(e)})`
 			continue
+		}
+		// job 228: an entry of a submenu: its submenu entry first (the menu stays open)
+		const sub = SUBMENU_OF[name]
+		if (sub) {
+			const subEntry = page.locator(`[data-knorke-submenu=${sub}]:visible`).first()
+			if (!(await poll(() => isVisible(subEntry), timeout, every))) {
+				last = `${menu}: kein Untermenü [data-knorke-submenu=${sub}] im Menü`
+				await closeMenus()
+				continue
+			}
+			try {
+				await subEntry.click({ timeout })
+			} catch (e) {
+				last = `${menu}: Untermenü ${sub} nicht klickbar (${firstLine(e)})`
+				await closeMenus()
+				continue
+			}
 		}
 		if (!(await poll(() => isVisible(entry), timeout, every))) {
 			last = `${menu}: kein Eintrag [data-knorke-action=${name}] im Menü`

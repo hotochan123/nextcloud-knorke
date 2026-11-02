@@ -11,6 +11,7 @@ use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\BackgroundJob\ShareNotifyJob;
 use OCA\Knorke\Db\BoardStore;
 use OCA\Knorke\Db\ShareStore;
+use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\SharePolicy;
 use OCP\App\IAppManager;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -49,6 +50,7 @@ class ShareNotifications {
     public const FANOUT_MAX = 500;
 
     private ?ITeamManager $teams = null;
+    private ?LinkPolicy $linkPolicy = null;
 
     public function __construct(
         private BoardStore $boards,
@@ -110,10 +112,14 @@ class ShareNotifications {
     /**
      * Notifies one account about $board, replacing an earlier notification
      * of the same board. false = not sent (the owner, unknown, disabled, no
-     * access to the app).
+     * access to the app, a hidden owner).
      */
     public function notifyUser(int $board, string $ownerUid, string $uid): bool {
         if ($uid === $ownerUid) {
+            return false;
+        }
+        // A disabled owner hides its boards (job 245): a queued fan-out sends nothing.
+        if (($this->linkPolicy ??= $this->container->get(LinkPolicy::class))->ownerHidden($ownerUid)) {
             return false;
         }
         $user = $this->users->get($uid);

@@ -6,7 +6,8 @@
  * QR code of a link (SPEC-M1 §6.6 QrCode, R2) and the licence notice of the
  * built vendor chunk (SPEC-M1 §24, R13: qrcode-generator 1.5.2 ships no
  * LICENSE file; js/vendor-*.chunk.mjs.license must name it, MIT and
- * Kazuhiko Arase once QrCode.vue imports the package). R14-11: the text goes
+ * Kazuhiko Arase once QrCode.vue imports the package; factory job 217: the
+ * notice of the lazy share chunk, which holds it since). R14-11: the text goes
  * into byte mode as UTF-8, the library's global stringToBytes untouched.
  */
 import { test } from 'node:test'
@@ -152,13 +153,13 @@ test('R14-11: a URL with "ü" is encoded as its UTF-8 bytes; the global qrcode.s
 	assert.equal(samePicture(qrPath(euro), reference(euro)), false)
 })
 
-test('R13: QrCode.vue uses the package (through qr.js) → the vendor notice of the build credits qrcode-generator, MIT, Kazuhiko Arase', (t) => {
+test('R13: QrCode.vue uses the package (through qr.js) → the notice of the chunk that holds it (job 217: the lazy share chunk) credits qrcode-generator, MIT, Kazuhiko Arase', (t) => {
 	const qrVue = readFileSync(join(ROOT, 'src/components/QrCode.vue'), 'utf8')
 	assert.match(qrVue, /import \{ qrPath \} from '\.\/qr\.js'/)
 	assert.match(readFileSync(join(ROOT, 'src/components/qr.js'), 'utf8'), /^import qrcode from 'qrcode-generator'$/m)
 	assert.deepEqual(requiredAttributions(ROOT).map((a) => a.name), ['qrcode-generator'])
 	const jsDir = join(ROOT, 'js')
-	const notices = existsSync(jsDir) ? readdirSync(jsDir).filter((f) => /^vendor-[A-Za-z0-9_-]+\.chunk\.mjs\.license$/.test(f)) : []
+	const notices = existsSync(jsDir) ? readdirSync(jsDir).filter((f) => /^share-[A-Za-z0-9_-]+\.chunk\.mjs\.license$/.test(f)) : []
 	if (notices.length === 0) {
 		// build/check-bundle.mjs (the build gate) fails without it; nothing built here yet
 		t.skip('no build output in js/ (run dev/build.sh)')
@@ -169,4 +170,8 @@ test('R13: QrCode.vue uses the package (through qr.js) → the vendor notice of 
 	assert.deepEqual(checkAttribution(text), [])
 	assert.match(text, /^- qrcode-generator\n\t- version: 1\.5\.2\n\t- license: MIT$/m)
 	assert.match(text, /Kazuhiko Arase/)
+	// job 217: the page loads the package only with the share dialog
+	for (const f of readdirSync(jsDir).filter((x) => /^(knorke-main|vendor-[A-Za-z0-9_-]+\.chunk|canvas-[A-Za-z0-9_-]+\.chunk)\.mjs\.license$/.test(x))) {
+		assert.doesNotMatch(readFileSync(join(jsDir, f), 'utf8'), /^- qrcode-generator$/m, f)
+	}
 })

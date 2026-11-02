@@ -17,12 +17,13 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * `occ knorke:orphans [--dry-run]` (P7, SPEC-M1 §33.1 e): removes what
  * accounts and groups that Nextcloud no longer knows left behind in Knorke
- * (shares, link memberships, votes in open sessions, owned boards) exactly
+ * (shares, link memberships, votes in open sessions, owned boards, own shape
+ * libraries and pending template suggestions; the last two job 247) exactly
  * like the deletion listeners — for deletions Knorke missed while it was
  * disabled. Run it after every `occ app:enable knorke` and after Nextcloud
  * major upgrades.
  *
- * stdout: exactly five lines in this order, each "<kind>: <n>" (the orphans
+ * stdout: exactly seven lines in this order, each "<kind>: <n>" (the orphans
  * of that kind, counted before anything is deleted):
  *
  *   user-shares: <n>
@@ -30,10 +31,12 @@ use Symfony\Component\Console\Output\OutputInterface;
  *   link-members: <n>
  *   open-votes: <n>
  *   owned-boards: <n>
+ *   shape-libraries: <n>
+ *   template-suggestions: <n>
  *
- * --dry-run prints the same numbers, changes nothing and adds the sixth line
+ * --dry-run prints the same numbers, changes nothing and adds the eighth line
  * "Dry run: nothing was changed.". Exit 0 = reconciled (also when every
- * number is 0); 1 = at least one id could not be reconciled (a message on
+ * number is 0); 1 = at least one id (or shape library folder) could not be reconciled (a message on
  * stderr, details in the Nextcloud log; the other ids are done) or the run
  * could not start. Registered through <commands> in appinfo/info.xml; like
  * knorke:compact not available in maintenance mode.
@@ -47,7 +50,7 @@ class Orphans extends Command {
 
     protected function configure(): void {
         $this->setName('knorke:orphans')
-            ->setDescription('Remove Knorke shares, link memberships, open votes and boards of accounts and groups that no longer exist.')
+            ->setDescription('Remove Knorke shares, link memberships, open votes, boards, shape libraries and template suggestions of accounts and groups that no longer exist.')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Only count, change nothing.');
     }
 
@@ -67,7 +70,7 @@ class Orphans extends Command {
             $output->writeln('Dry run: nothing was changed.');
         }
         if ($result['failed'] > 0) {
-            $err->writeln(sprintf('%d account(s) or group(s) could not be cleaned up completely; see the Nextcloud log.', $result['failed']));
+            $err->writeln(sprintf('%d account(s), group(s) or folder(s) could not be cleaned up completely; see the Nextcloud log.', $result['failed']));
             return 1;
         }
         return 0;

@@ -16,6 +16,7 @@
 			@click="reload">
 			{{ banner.action === 'signin' ? t('knorke', 'Sign in again') : t('knorke', 'Reload') }}
 		</NcButton>
+		<NoticeClose @close="$emit('close')" />
 	</div>
 	<div v-if="role.kind && !frozen && showRole"
 		class="knorke-banner knorke-banner--role"
@@ -24,6 +25,7 @@
 		data-knorke-bar="banner"
 		role="status">
 		<span class="knorke-banner__text">{{ role.text }}</span>
+		<NoticeClose @close="$emit('close')" />
 	</div>
 </template>
 
@@ -47,8 +49,10 @@
  *
  * Stage 3 (R16 narrow layout (3)): both are banner strips
  * ([data-knorke-bar=banner]) inside the board's banner stack at the top;
- * the board decides which strips show (components/bars.js bannerStrips:
- * at most one in the narrow layout) through showStatus/showRole.
+ * the board decides which strips show (components/bars.js noticeOf: one
+ * notice at a time, job 228) through showStatus/showRole.
+ * Job 228: each ends with the close button (NoticeClose, emit close); the
+ * board shows one notice at a time in every layout (bars.js noticeOf).
  */
 import { computed } from 'vue'
 import NcButton from '@nextcloud/vue/components/NcButton'
@@ -56,6 +60,7 @@ import { FROZEN_STATUSES } from '../board/BoardSession.js'
 import { t } from '../util/l10n.js'
 import { hardReload } from '../util/reload.js'
 import { bannerFor, roleBannerFor } from './banner.js'
+import NoticeClose from './NoticeClose.vue'
 
 const props = defineProps({
 	status: { type: String, default: 'connecting' },
@@ -67,6 +72,8 @@ const props = defineProps({
 	/** the role strip may show */
 	showRole: { type: Boolean, default: true },
 })
+
+defineEmits(['close'])
 
 const banner = computed(() => bannerFor(props.status, props.reason))
 const role = computed(() => roleBannerFor(props.roleBanner))

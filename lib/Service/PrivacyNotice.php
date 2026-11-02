@@ -62,7 +62,7 @@ class PrivacyNotice {
      */
     public function read(): array {
         try {
-            $raw = $this->appConfig->getValueString(Application::APP_ID, self::KEY, '', lazy: true);
+            $raw = $this->appConfig->getValueString(Application::APP_ID, static::KEY, '', lazy: true);
         } catch (\Throwable) {
             return self::blank();
         }
@@ -82,9 +82,9 @@ class PrivacyNotice {
     public function save(array $body): array {
         $s = $this->validate($body);
         if (self::isBlank($s)) {
-            $this->appConfig->deleteKey(Application::APP_ID, self::KEY);
+            $this->appConfig->deleteKey(Application::APP_ID, static::KEY);
         } else {
-            $this->appConfig->setValueString(Application::APP_ID, self::KEY, self::encode($s), lazy: true);
+            $this->appConfig->setValueString(Application::APP_ID, static::KEY, self::encode($s), lazy: true);
         }
         return $s;
     }
@@ -151,9 +151,14 @@ class PrivacyNotice {
             }
         }
         if ($url === '') {
-            $url = PublicPageController::legalLinks($this->appConfig)['privacyUrl'];
+            $url = $this->fallbackUrl();
         }
         return ['text' => $text, 'url' => $url];
+    }
+
+    /** The URL when no entry has one: theming's privacy policy URL (AiNotice: none). */
+    protected function fallbackUrl(): string {
+        return PublicPageController::legalLinks($this->appConfig)['privacyUrl'];
     }
 
     /**
@@ -182,7 +187,7 @@ class PrivacyNotice {
         return [
             'settings' => self::wire($this->read()),
             'languages' => $this->languages(),
-            'themingUrl' => PublicPageController::legalLinks($this->appConfig)['privacyUrl'],
+            'themingUrl' => $this->fallbackUrl(),
             'textMax' => self::TEXT_MAX,
             'languagesMax' => self::LANGUAGES_MAX,
         ];

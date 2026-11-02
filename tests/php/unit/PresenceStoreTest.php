@@ -44,7 +44,7 @@ final class PresenceStoreTest extends TestCase {
             'e' => self::N, 'tk' => 1, 'unknown' => 'ignored',
         ], $this->now);
         $this->assertSame(['n' => 'Gina', 'k' => 'aaaa', 'g' => 1, 'x' => 12.3, 'y' => -40.0, 's' => [self::N, self::M],
-            'd' => [[self::N, 1.3, 2.0]], 'e' => self::N, 'tk' => 1, 'v' => null, 't' => $this->now, 'rk' => 1], $e);
+            'd' => [[self::N, 1.3, 2.0]], 'e' => self::N, 'tk' => 1, 'v' => null, 'l' => null, 't' => $this->now, 'rk' => 1], $e);
         $e = PresenceStore::entry(self::p('bbbb'), ['c' => null, 'e' => 'nope', 'tk' => 1, 's' => 'x'], $this->now);
         $this->assertNull($e['x']);
         $this->assertNull($e['e']);
@@ -478,5 +478,365 @@ final class PresenceStoreTest extends TestCase {
         $this->assertSame([1.0, 2.0, [], [], null, [0.0, 0.0, 10.0, 10.0]], [$e['x'], $e['y'], $e['s'], $e['d'], $e['e'], $e['v']]);
         // A stored entry from before stage 3 (no v key) reads as v null.
         $this->assertNull(PresenceStore::public(['o:c' => ['n' => 'O', 'k' => 'o', 't' => $this->now]], 'x', $this->now)['o:c']['v']);
+    }
+
+    // ---- job 171: the laser trail l (AK6) ----
+
+    public function testLaserTrailIsTakenRoundedFromEditorsOnly(): void {
+        $me = ['c' => [3, 4], 's' => [self::N], 'v' => [0, 0, 100, 100]];
+        $l = [[10.04, -20.06, 900], [11, -21, 860], null, [12.5, -22.56, 400], [13, 1e7, 400], [-1e7, 0, 0]];
+        $e = PresenceStore::entry(self::p('aaaa'), $me + ['l' => $l], $this->now);
+        $this->assertSame([[10.0, -20.1, 900], [11.0, -21.0, 860], null, [12.5, -22.6, 400], [13.0, 1e7, 400], [-1e7, 0.0, 0]], $e['l'], 'valid: taken, x and y on 0.1');
+        $rest = static fn (array $x): array => array_diff_key($x, ['l' => 1]);
+        $base = PresenceStore::entry(self::p('aaaa'), $me, $this->now);
+        $this->assertNull($base['l'], 'no l: null');
+        $this->assertSame($rest($base), $rest($e), 'the rest of the entry does not depend on l');
+        $this->assertCount(100, PresenceStore::entry(self::p('aaaa'), ['l' => array_fill(0, 100, [1, 2, 5])], $this->now)['l'], '100 elements are fine');
+        $this->assertSame([[1.0, 2.0, 10000]], PresenceStore::entry(self::p('aaaa'), ['l' => [[1, 2, 10000]]], $this->now)['l'], 'd = 10000 is fine');
+        foreach ([
+            '101 elements' => array_fill(0, 101, [1, 2, 5]),
+            'd = 10001' => [[1, 2, 10001]],
+            'd < 0' => [[1, 2, -1]],
+            'd rises' => [[1, 2, 100], [3, 4, 101]],
+            'd rises across a break' => [[1, 2, 100], null, [3, 4, 200]],
+            'd is a float' => [[1, 2, 5.0]],
+            'null first' => [null, [1, 2, 5]],
+            'null last' => [[1, 2, 5], null],
+            'null twice' => [[1, 2, 9], null, null, [3, 4, 5]],
+            'only null' => [null],
+            'empty' => [],
+            'a string' => '[[1,2,3]]',
+            'a string element' => [[1, 2, 3], 'x'],
+            '[x, y]' => [[1, 2]],
+            '[x, y, d, more]' => [[1, 2, 3, 4]],
+            'x a string' => [['1', 2, 3]],
+            'y null' => [[1, null, 3]],
+            '|x| > 1e7' => [[1e7 + 1, 0, 3]],
+            'INF' => [[INF, 0, 3]],
+            'an object' => ['a' => [1, 2, 3]],
+            'a point as an object' => [['x' => 1, 'y' => 2, 'd' => 3]],
+        ] as $case => $bad) {
+            $x = PresenceStore::entry(self::p('aaaa'), $me + ['l' => $bad], $this->now);
+            $this->assertNull($x['l'], $case);
+            $this->assertSame($rest($base), $rest($x), "$case: the rest of the entry stays");
+        }
+        $vote = new Principal('u:vic', Role::Vote, 'Vic', 'vvvv', false, 'vic', 'link');
+        $x = PresenceStore::entry($vote, ['c' => [1, 2], 'l' => $l], $this->now);
+        $this->assertNull($x['l'], 'role vote: no l');
+        $this->assertSame([1.0, 2.0], [$x['x'], $x['y']], 'role vote: the cursor stays');
+    }
+
+    public function testLaserTrailInPublicLastWithItsAge(): void {
+        $this->write('aaaa', 'c1', ['c' => [1, 1], 'v' => [0, 0, 10, 10], 'l' => [[5, 6, 300], null, [7, 8, 20]]], $this->now);
+        $this->write('bbbb', 'c2', ['c' => [2, 2]], $this->now);
+        $pub = PresenceStore::public($this->store->read(7, $this->now + 150), 'x:y', $this->now + 150);
+        $this->assertSame(['n', 'k', 'g', 'x', 'y', 's', 'd', 'e', 'h', 'v', 'l'], array_keys($pub['aaaa:c1']), 'l is the last key, after v');
+        $this->assertSame([[5.0, 6.0, 450], null, [7.0, 8.0, 170]], $pub['aaaa:c1']['l'], 'every d + (nowMs − t)');
+        $this->assertSame(['n', 'k', 'g', 'x', 'y', 's', 'd', 'e', 'h', 'v'], array_keys($pub['bbbb:c2']), 'without l: exactly the ten fields');
+        // the next write without l (the trail left the window): the ten fields again
+        $this->write('aaaa', 'c1', ['c' => [1, 1]], $this->now + 400);
+        $pub = PresenceStore::public($this->store->read(7, $this->now + 410), 'x:y', $this->now + 410);
+        $this->assertSame(['n', 'k', 'g', 'x', 'y', 's', 'd', 'e', 'h', 'v'], array_keys($pub['aaaa:c1']));
+        // a vote entry never hands one out
+        $vote = new Principal('u:vic', Role::Vote, 'Vic', 'vvvv', false, 'vic', 'link');
+        [, $map] = $this->store->write(7, 'vvvv:c1', PresenceStore::entry($vote, ['c' => [1, 2], 'l' => [[1, 2, 3]]], $this->now + 500), $this->now + 500);
+        $this->assertArrayNotHasKey('l', PresenceStore::public($map, 'x:y', $this->now + 500)['vvvv:c1']);
+    }
+
+    // ── Job 173: the cell of a table (me.ec) ─────────────────────────────
+
+    private const CA = 'c00000001.r00000001';
+    private const CB = 'c00000002.r00000001';
+
+    public function testCellOnlyWithEAndForEditors(): void {
+        $e = PresenceStore::entry(self::p('aaaa'), ['e' => self::N, 'ec' => self::CA], $this->now);
+        $this->assertSame(self::CA, $e['ec']);
+        $this->assertArrayNotHasKey('ec', PresenceStore::entry(self::p('aaaa'), ['ec' => self::CA], $this->now), 'no e: no ec');
+        $this->assertArrayNotHasKey('ec', PresenceStore::entry(self::p('aaaa'), ['e' => 'nope', 'ec' => self::CA], $this->now), 'an invalid e: no ec');
+        foreach (['C00000001.r00000001', 'c00000001', 'c00000001.r0000001', self::CA . ' ', 5, ['c'], true] as $bad) {
+            $this->assertArrayNotHasKey('ec', PresenceStore::entry(self::p('aaaa'), ['e' => self::N, 'ec' => $bad], $this->now), json_encode($bad));
+        }
+        $vote = new Principal('u:vic', Role::Vote, 'Vic', 'vvvv', false, 'vic', 'link');
+        $this->assertArrayNotHasKey('ec', PresenceStore::entry($vote, ['e' => self::N, 'ec' => self::CA], $this->now), 'role vote: no ec');
+        // a note: nothing changes (the entry of testEntryShape has no ec)
+        $this->assertArrayNotHasKey('ec', PresenceStore::entry(self::p('aaaa'), ['e' => self::N], $this->now));
+    }
+
+    public function testANodeOfAMindMapIsACellToo(): void {
+        // Job 195 (AK2): ec takes a node key n<8> with the same rules; any other form is null
+        $e = PresenceStore::entry(self::p('aaaa'), ['e' => self::N, 'ec' => 'n1abcdefg'], $this->now);
+        $this->assertSame('n1abcdefg', $e['ec']);
+        foreach (['N1abcdefg', 'n1abcdef', 'n1abcdefgh', 'n1abcdefg ', 'b1.n1abcdefg'] as $bad) {
+            $this->assertArrayNotHasKey('ec', PresenceStore::entry(self::p('aaaa'), ['e' => self::N, 'ec' => $bad], $this->now), $bad);
+        }
+        $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => 'n1abcdefg'], $this->now);
+        $this->write('bbbb', 'c2', ['e' => self::N, 'ec' => 'n2abcdefg'], $this->now + 50);
+        $map = $this->store->read(7, $this->now + 70);
+        $this->assertSame('aaaa', PresenceStore::leaseHolder($map, self::N, $this->now + 70, 'n1abcdefg'));
+        $this->assertSame('bbbb', PresenceStore::leaseHolder($map, self::N, $this->now + 70, 'n2abcdefg'), 'another node, another holder');
+        $pub = PresenceStore::public($map, 'x:y', $this->now + 70);
+        $this->assertSame(['n1abcdefg', 1], [$pub['aaaa:c1']['ec'], $pub['aaaa:c1']['h']]);
+    }
+
+    public function testLeasePerCell(): void {
+        $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => self::CA], $this->now);
+        $this->write('bbbb', 'c2', ['e' => self::N, 'ec' => self::CB], $this->now + 50);
+        $this->write('cccc', 'c3', ['e' => self::N, 'ec' => self::CA], $this->now + 60);
+        $map = $this->store->read(7, $this->now + 70);
+        $this->assertSame('aaaa', PresenceStore::leaseHolder($map, self::N, $this->now + 70, self::CA));
+        $this->assertSame('bbbb', PresenceStore::leaseHolder($map, self::N, $this->now + 70, self::CB), 'another cell, another holder');
+        $this->assertNull(PresenceStore::leaseHolder($map, self::N, $this->now + 70), 'nobody holds the table without a cell');
+        $this->assertNull(PresenceStore::leaseHolder($map, self::N, $this->now + 70, 'c00000003.r00000001'));
+        $pub = PresenceStore::public($map, 'x:y', $this->now + 70);
+        $this->assertSame([1, 1, 0], [$pub['aaaa:c1']['h'], $pub['bbbb:c2']['h'], $pub['cccc:c3']['h']], 'h per (e, ec)');
+        $this->assertSame([self::CA, self::CB, self::CA], [$pub['aaaa:c1']['ec'], $pub['bbbb:c2']['ec'], $pub['cccc:c3']['ec']]);
+        $this->assertSame(['n', 'k', 'g', 'x', 'y', 's', 'd', 'e', 'h', 'v', 'ec'], array_keys($pub['aaaa:c1']), 'ec after v');
+    }
+
+    public function testRankStartsAnewWithTheCellAndIsNotThrottled(): void {
+        $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => self::CA], $this->now);
+        $this->write('bbbb', 'c2', ['e' => self::N, 'ec' => self::CB], $this->now + 50);
+        // a moves to b's cell 100 ms later: never throttled, and it queues behind b there
+        $this->assertSame('ok', $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => self::CB], $this->now + 100)[0], 'a change of ec is never throttled');
+        $map = $this->store->read(7, $this->now + 110);
+        $this->assertSame($this->now + 100, $map['aaaa:c1']['es'], 'es starts anew');
+        $this->assertSame('bbbb', PresenceStore::leaseHolder($map, self::N, $this->now + 110, self::CB));
+        $this->assertNull(PresenceStore::leaseHolder($map, self::N, $this->now + 110, self::CA), 'a left CA');
+        // the same cell again within 250 ms: throttled
+        $this->assertSame('skip', $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => self::CB, 'c' => [1, 1]], $this->now + 200)[0]);
+        // tk per cell: a takes CB over; bbbb holding CA elsewhere is untouched
+        $this->write('bbbb', 'c3', ['e' => self::N, 'ec' => self::CA], $this->now + 300);
+        $this->write('aaaa', 'c1', ['e' => self::N, 'ec' => self::CB, 'tk' => 1], $this->now + 400);
+        $map = $this->store->read(7, $this->now + 410);
+        $this->assertSame('aaaa', PresenceStore::leaseHolder($map, self::N, $this->now + 410, self::CB), 'taken over');
+        $this->assertSame('bbbb', PresenceStore::leaseHolder($map, self::N, $this->now + 410, self::CA), 'the other cell stays');
+    }
+
+    public function testPublicWithoutCellHasExactlyTenFields(): void {
+        $this->write('aaaa', 'c1', ['c' => [1, 1], 'e' => self::N], $this->now);
+        $this->write('bbbb', 'c2', ['c' => [2, 2]], $this->now);
+        $pub = PresenceStore::public($this->store->read(7, $this->now + 10), 'x:y', $this->now + 10);
+        foreach (['aaaa:c1', 'bbbb:c2'] as $k) {
+            $this->assertSame(['n', 'k', 'g', 'x', 'y', 's', 'd', 'e', 'h', 'v'], array_keys($pub[$k]), $k);
+        }
+    }
+
+    // ---- job 246: size limits (2 KiB per entry, 150 KiB per blob, guests at most 100) ----
+
+    private static function ids(int $n, string $prefix = ''): array {
+        $out = [];
+        for ($i = 0; $i < $n; $i++) {
+            $out[] = substr(self::N, 0, 22) . $prefix . sprintf('%04d', $i);
+        }
+        return array_map(static fn (string $id): string => substr($id, 0, 26), $out);
+    }
+
+    /** $n laser points [x, y, d], oldest first (d falls), at ±$abs. */
+    private static function trail(int $n, float $abs, int $from = 2490): array {
+        $l = [];
+        for ($i = 0; $i < $n; $i++) {
+            $l[] = [($i % 2 ? -1 : 1) * $abs, -$abs + $i / 10, $from - intdiv($i * $from, $n)];
+        }
+        return $l;
+    }
+
+    /** The largest me of audit S1: cursor, 20 s, 20 d, an invented e, v, 100 laser points, all at ±1e7. */
+    private static function floodMe(?string $e = null): array {
+        return ['c' => [-9999999.9, -9999999.9], 's' => self::ids(20),
+            'd' => array_map(static fn (string $id): array => [$id, -9999999.9, -9999999.9], self::ids(20, 'D')),
+            'e' => $e ?? self::M, 'v' => [-9999999.9, -9999999.9, 9999999.9, 9999999.9],
+            'l' => array_map(static fn (int $i): array => [-9999999.9, -9999999.9, 10000 - $i], range(0, 99))];
+    }
+
+    private static function bytes(array $v): int {
+        return strlen((string)json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE));
+    }
+
+    public function testAFloodEntryIsCutToTwoKibKeepingTheNewestLaserPoint(): void {
+        $me = self::floodMe();
+        $e = PresenceStore::entry(self::p('aaaa', true, str_repeat('G', 40)), $me, $this->now);
+        $this->assertLessThanOrEqual(2048, self::bytes($e));
+        $this->assertNotNull($e['l'], 'l is cut, not dropped, while points fit');
+        $this->assertLessThan(100, count($e['l']));
+        $this->assertSame([-9999999.9, -9999999.9, 9901], end($e['l']), 'the newest point stays');
+        $this->assertSame($e['l'], PresenceStore::laser($e['l']), 'still a valid trail');
+        $this->assertSame([20, 20], [count($e['s']), count($e['d'])], 'l alone was enough');
+        $this->assertSame([self::M, 1, 2048 >= self::bytes($e)], [$e['e'], $e['rk'], true]);
+    }
+
+    public function testCutOrderLaserThenDragThenSelection(): void {
+        // (a) too big only through l: d and s stay whole
+        $e = PresenceStore::entry(self::p('aaaa'), ['s' => self::ids(5), 'd' => [[self::N, 1, 2], [self::M, 3, 4]], 'l' => self::trail(100, 9999999.9)], $this->now);
+        $this->assertSame([5, 2], [count($e['s']), count($e['d'])]);
+        $this->assertLessThan(100, count($e['l']));
+        // (b) too big without l: d loses rows from the end, s stays whole
+        $me = self::floodMe();
+        unset($me['l']);
+        $long = self::p('bbbb', false, str_repeat('😀', 120));
+        $e = PresenceStore::entry($long, $me, $this->now);
+        $this->assertLessThanOrEqual(2048, self::bytes($e));
+        $this->assertNull($e['l']);
+        $this->assertCount(20, $e['s']);
+        $this->assertGreaterThan(0, count($e['d']));
+        $this->assertLessThan(20, count($e['d']));
+        $this->assertSame(array_slice($me['d'], 0, count($e['d']))[0][0], $e['d'][0][0], 'the first rows stay');
+        // (c) s is cut only once d is empty
+        $huge = self::p('cccc', false, str_repeat('n', 1500));
+        $e = PresenceStore::entry($huge, $me, $this->now);
+        $this->assertLessThanOrEqual(2048, self::bytes($e));
+        $this->assertSame([], $e['d']);
+        $this->assertGreaterThan(0, count($e['s']));
+        $this->assertLessThan(20, count($e['s']));
+        $this->assertSame(array_slice(self::ids(20), 0, count($e['s'])), $e['s'], 's loses ids from the end');
+        $this->assertSame(str_repeat('n', 1500), $e['n'], 'the name stays');
+    }
+
+    public function testCutTrailNeverStartsWithAStrokeBreak(): void {
+        // two strokes; the cut ends right behind the break: the break goes with it
+        $first = self::trail(20, 9999999.9, 2490);
+        $second = self::trail(79, 9999999.9, 120);
+        $l = array_merge($first, [null], $second);
+        $this->assertNotNull(PresenceStore::laser($l), 'valid input');
+        $e = PresenceStore::entry(self::p('aaaa'), ['l' => $l], $this->now);
+        $this->assertLessThanOrEqual(2048, self::bytes($e));
+        $this->assertLessThan(79, count($e['l']), 'the cut reached into the second stroke');
+        $this->assertIsArray($e['l'][0], 'no break in front');
+        $this->assertSame($e['l'], PresenceStore::laser($e['l']));
+        $this->assertSame(PresenceStore::laser($second)[78], end($e['l']));
+    }
+
+    public function testNormalLaserEntryIsUnchanged(): void {
+        $me = ['c' => [812.3, -455.1], 'v' => [-1200, -800, 2400, 1600], 'l' => self::trail(80, 999.9)];
+        $e = PresenceStore::entry(self::p('aaaaaaaaaaaaaaaa', false, str_repeat('N', 40)), $me, $this->now);
+        $this->assertLessThanOrEqual(2048, self::bytes($e));
+        $this->assertSame(PresenceStore::laser($me['l']), $e['l'], 'all 80 points');
+        $me = ['c' => [1, 2], 's' => self::ids(5), 'd' => array_map(static fn (string $id): array => [$id, 1234.5, -2345.6], self::ids(3, 'D')), 'e' => self::N];
+        $e = PresenceStore::entry(self::p('aaaaaaaaaaaaaaaa', false, str_repeat('N', 40)), $me, $this->now);
+        $this->assertSame([5, 3], [count($e['s']), count($e['d'])], 'a normal selection and drag stay whole');
+    }
+
+    public function testCuttingKeepsTheLease(): void {
+        $this->write('bbbb', 'c', ['e' => self::N], $this->now);
+        [, $map] = $this->write('aaaa', 'c', ['e' => self::N, 'tk' => 1, 'l' => self::trail(100, 9999999.9)], $this->now + 10);
+        $this->assertSame('aaaa', PresenceStore::leaseHolder($map, self::N, $this->now + 10), 'take-over works with a cut entry');
+        $this->assertSame($map['bbbb:c']['es'] - 1, $map['aaaa:c']['es']);
+    }
+
+    public function testAtMostOneHundredGuestEntries(): void {
+        $t = $this->now;
+        for ($i = 0; $i < 30; $i++) {
+            $this->writeAs(self::principal(sprintf('a%015d', $i), Role::Edit), 'c', ['c' => [1, 1]], $t++);
+        }
+        for ($i = 0; $i < 120; $i++) {
+            [, $map] = $this->writeAs(self::principal(sprintf('g%015d', $i), Role::Edit, false, true), 'c', ['c' => [1, 1]], $t++);
+            $this->assertLessThanOrEqual(PresenceStore::MAX_GUEST_ENTRIES, count(array_filter($map, static fn (array $e): bool => $e['g'] === 1)));
+        }
+        $map = $this->store->read(7, $t);
+        $this->assertCount(100, array_filter($map, static fn (array $e): bool => $e['g'] === 1));
+        $this->assertCount(30, array_filter($map, static fn (array $e): bool => $e['g'] === 0), 'all accounts stay');
+        $this->assertArrayHasKey(sprintf('g%015d', 119) . ':c', $map);
+        $this->assertArrayNotHasKey(sprintf('g%015d', 0) . ':c', $map, 'the oldest guests went');
+    }
+
+    public function testGuestsGoBeforeAccountsHoldersAndModeratorsAsBefore(): void {
+        // 150 accounts and 50 younger guests, all class 3 (with v): a new account evicts a guest
+        $stored = [];
+        for ($i = 0; $i < 150; $i++) {
+            $k = sprintf('a%015d:c', $i);
+            $stored[$k] = ['g' => 0] + self::stored($k, 1, null, [0, 0, 1, 1], $this->now - 5000 + $i);
+        }
+        for ($i = 0; $i < 50; $i++) {
+            $k = sprintf('g%015d:c', $i);
+            $stored[$k] = array_merge(self::stored($k, 1, null, [0, 0, 1, 1], $this->now - 1000 + $i), ['g' => 1]);
+        }
+        $gone = $this->evictedBy($stored, self::principal('newaccount000000', Role::Edit), 'c');
+        $this->assertSame(['g000000000000000:c'], $gone, 'the oldest guest, not the oldest account');
+        // holders (class 5) by age as before, guest or account; moderators last; guests of class 2–4 before account holders
+        $stored = [];
+        $stored['hacc000000000000:c'] = self::stored('hacc000000000000:c', 1, self::N, null, $this->now - 3000, 10);
+        $stored['hgst000000000000:c'] = array_merge(self::stored('hgst000000000000:c', 1, self::M, null, $this->now - 4000, 10), ['g' => 1]);
+        $stored['plgst00000000000:c'] = array_merge(self::stored('plgst00000000000:c', 1, null, null, $this->now - 100), ['g' => 1]);
+        $stored['placc00000000000:c'] = self::stored('placc00000000000:c', 1, null, null, $this->now - 9000);
+        for ($i = 0; $i < 196; $i++) {
+            $k = sprintf('m%015d:c', $i);
+            $stored[$k] = self::stored($k, 2, null, null, $this->now - 9500 + $i);
+        }
+        $order = [];
+        $map = $stored;
+        for ($w = 0; $w < 5; $w++) {
+            $this->mem->set('p:7', json_encode($map), 60);
+            [, $out] = $this->writeAs(self::principal(sprintf('w%015d', $w), Role::Owner), 'c', [], $this->now + $w);
+            $order[] = array_values(array_diff(array_keys($map), array_keys($out)))[0];
+            $map = $out;
+        }
+        $this->assertSame(['plgst00000000000:c', 'placc00000000000:c', 'hgst000000000000:c', 'hacc000000000000:c', 'm000000000000000:c'], $order,
+            'guest without e; account without e; the holders by age (guest first only because older); then the oldest moderator');
+    }
+
+    public function testTheBlobStaysWithin150Kib(): void {
+        $stored = [];
+        for ($i = 0; $i < 199; $i++) {
+            $k = sprintf('a%015d:c', $i);
+            $stored[$k] = PresenceStore::entry(self::principal(sprintf('a%015d', $i), Role::Edit), ['c' => [1, 1], 'l' => self::trail(100, 9999999.9)], $this->now - 2000 + $i)
+                + ['es' => null];
+        }
+        $this->assertGreaterThan(153600, self::bytes($stored));
+        $gone = $this->evictedBy($stored, self::principal('writer0000000000', Role::Edit), 'c');
+        $out = $this->store->read(7, $this->now);
+        $this->assertLessThanOrEqual(153600, strlen((string)$this->mem->get('p:7')), 'the stored blob');
+        $this->assertGreaterThan(153600 - 2100, strlen((string)$this->mem->get('p:7')), 'no more evicted than needed');
+        $this->assertSame(array_slice(array_keys($stored), 0, count($gone)), $gone, 'the oldest first');
+        $this->assertArrayHasKey('writer0000000000:c', $out);
+    }
+
+    public function testTheBlobSumMatchesJsonWithMultibyteNames(): void {
+        $stored = [];
+        for ($i = 0; $i < 199; $i++) {
+            $k = sprintf('e%015d:c', $i);
+            $p = new Principal('u:e' . $i, Role::Edit, str_repeat('😀', 40), sprintf('e%015d', $i), false, 'e' . $i, 'share');
+            $stored[$k] = PresenceStore::entry($p, ['c' => [1, 1], 's' => self::ids(20), 'l' => self::trail(60, 99999.9)], $this->now - 2000 + $i) + ['es' => null];
+        }
+        $this->evictedBy($stored, self::principal('writer0000000000', Role::Edit), 'c');
+        $raw = (string)$this->mem->get('p:7');
+        $this->assertLessThanOrEqual(153600, strlen($raw));
+        $this->assertGreaterThan(153600 - 2100, strlen($raw));
+    }
+
+    public function testTheFloodOfAuditS1InSmall(): void {
+        // 67 guests × 3 clients with the largest me, in turns; three accounts
+        // keep writing: the owner (rk 2), an editor without e, an editor holding a lease
+        $owner = self::principal('owner00000000000', Role::Owner);
+        $bob = self::principal('bob0000000000000', Role::Edit);
+        $carol = self::principal('carol00000000000', Role::Edit);
+        $t = $this->now;
+        for ($round = 0; $round < 2; $round++) {
+            for ($g = 0; $g < 67; $g++) {
+                if ($g % 10 === 0) {
+                    $this->writeAs($owner, 'o', ['c' => [1, 1], 'v' => [0, 0, 10, 10]], $t++);
+                    $this->writeAs($bob, 'b', ['c' => [1, 1], 'v' => [0, 0, 10, 10]], $t++);
+                    $this->writeAs($carol, 'c', ['c' => [1, 1], 'v' => [0, 0, 10, 10], 'e' => self::N], $t++);
+                }
+                foreach (['a1', 'a2', 'a3'] as $i => $c) {
+                    // each key invents its own e (audit S1): every guest entry "holds" a lease
+                    $own = substr(self::M, 0, 20) . sprintf('%04d%02d', $g, $i);
+                    $this->writeAs(self::principal(sprintf('x%015d', $g), Role::Edit, false, true), $c, self::floodMe($own), $t);
+                    $t += 7;
+                    $raw = (string)$this->mem->get('p:7');
+                    $this->assertLessThanOrEqual(153600, strlen($raw));
+                    if ($round === 1) {
+                        $stored = json_decode($raw, true);
+                        foreach (['owner00000000000:o', 'bob0000000000000:b', 'carol00000000000:c'] as $k) {
+                            $this->assertArrayHasKey($k, $stored, $k . ' survives a guest write');
+                        }
+                    }
+                }
+            }
+        }
+        $map = $this->store->read(7, $t);
+        $this->assertLessThanOrEqual(101, count(array_filter($map, static fn (array $e): bool => $e['g'] === 1)));
+        $pub = PresenceStore::public($map, 'nobody:x', $t);
+        foreach (['owner00000000000:o', 'bob0000000000000:b', 'carol00000000000:c'] as $k) {
+            $this->assertArrayHasKey($k, $pub, $k . ' stays visible');
+        }
     }
 }

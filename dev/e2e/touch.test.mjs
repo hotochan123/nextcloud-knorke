@@ -19,6 +19,12 @@
  *   counter window.__vib (E39_VIBRATE_MS = LONG_PRESS_VIBRATE_MS); the
  *   counter-check without the hold and the reduced-motion part are there,
  *   and the media emulation is reset in a finally
+ * - E39 steps (6b) and (8) (job 142, the one-time tip): (6b) runs after (6)
+ *   and before (7), (8) after (7); E39_TIP_KEY is the key of
+ *   src/util/storage.js keys.touchTip(); OK is tapped, the later pans are
+ *   watched with a MutationObserver
+ * - E39 step (9) (job 190): after (8), with X and Y of (7); alice locks them
+ *   over the API and the phone taps [data-knorke-action="select-locked"]
  * - lib/harness.mjs newActor: the options deviceScaleFactor and fine;
  *   finePointerInit answers (any-pointer: fine) with true and hands every
  *   other query to the browser's matchMedia
@@ -111,6 +117,34 @@ test('E39 step (7) (R38): hold ≥ 600 ms, then the ring and the vibration count
 	assert.match(src, /'\[S\] mit reduzierter Bewegung ohne Einblendung \(animation-name none\)'/)
 	assert.match(code, /emulateMedia\(\{ reducedMotion: 'reduce' \}\)\n\ttry \{/)
 	assert.match(code, /\} finally \{\n\t\tawait p\.emulateMedia\(\{ reducedMotion: null \}\)/, 'the emulation is reset in a finally')
+})
+
+test('E39 steps (6b) and (8) (job 142): the tip after the first pan, OK tapped, no tip on later pans and after a reload', () => {
+	const storage = fs.readFileSync(path.join(DIR, '..', '..', 'src', 'util', 'storage.js'), 'utf8')
+	assert.equal(touch.E39_TIP_KEY, storage.match(/^\ttouchTip: \(\) => '([^']+)',$/m)?.[1], 'E39_TIP_KEY = keys.touchTip()')
+	const code = src.replace(/^\s*\*.*$/gm, '').replace(/\/\/.*$/gm, '')
+	const order = ['await touchTip(t, p, cdp)', 'await holdMarquee(t, p, cdp, board)', 'await reloadNoTip(t, p, cdp)'].map((x) => code.indexOf(x))
+	assert.ok(order.every((i) => i > 0) && order[0] < order[1] && order[1] < order[2], '(6b) before (7), (8) after it')
+	assert.match(code, /t\.step\('\(6b\) /)
+	assert.match(code, /t\.step\('\(8\) /)
+	assert.match(code, /const TIP = '\[data-knorke-tip="touch-select"\]'/)
+	assert.match(code, /const TIP_OK = '\[data-knorke-action="touch-tip-ok"\]'/)
+	assert.match(code, /await p\.locator\(TIP_OK\)\.first\(\)\.tap\(\)/, 'OK is tapped')
+	assert.match(code, /await p\.reload\(/)
+	assert.equal((code.match(/await watchTip\(p\)/g) || []).length, 2, 'the pan after OK and the pan after the reload are watched')
+})
+
+test('E39 step (9) (job 190): after (8); alice locks X and Y over the API, held marquees, the button [data-knorke-action="select-locked"] is tapped', () => {
+	const code = src.replace(/^\s*\*.*$/gm, '').replace(/\/\/.*$/gm, '')
+	const order = ['await reloadNoTip(t, p, cdp)', 'await lockedOffer(t, p, cdp, board, X, Y)'].map((x) => code.indexOf(x))
+	assert.ok(order.every((i) => i > 0) && order[0] < order[1], '(9) after (8)')
+	assert.match(code, /const \{ X, Y \} = await holdMarquee\(t, p, cdp, board\)/, 'X and Y of step (7)')
+	assert.match(code, /t\.step\('\(9\) /)
+	assert.match(code, /const OFFER = '\[data-knorke-action="select-locked"\]'/)
+	assert.match(code, /await p\.locator\(OFFER\)\.first\(\)\.tap\(\)/, 'the button is tapped')
+	assert.match(code, /\{ o: 'patch', id: X, p: \{ lock \} \}/, 'alice locks X over the API')
+	assert.match(src, /'\[C\] der Knopf heißt „Select 2 locked items“'/)
+	assert.match(src, /'\[S\] Tipp auf den Knopf: genau X und Y sind ausgewählt'/)
 })
 
 test('E39: every check label names exactly one owner [S], [C], [B] or [D]; waits only from Node', () => {

@@ -73,13 +73,13 @@ const FRAME_NAMES = [
  * Item types the registry does not know; they render as placeholders.
  * SPEC-M1 §8.5: shape, text and connector are registry types from stage 1 on.
  */
-const UNKNOWN_TYPES = ['image', 'pen', 'mindmap', 'sticker']
+const UNKNOWN_TYPES = ['image', 'brush', 'chart', 'sticker']
 
 /**
  * @param {object} rng generator
  * @return {() => string} deterministic ULID factory
  */
-function makeIdFactory(rng) {
+export function makeIdFactory(rng) {
 	let n = 0
 	return () => {
 		let t = BASE_TIME + n++
@@ -101,7 +101,7 @@ function makeIdFactory(rng) {
  * @param {number} [skew] bias towards short texts
  * @return {string}
  */
-function makeText(rng, minWords, maxWords, skew = 2.2) {
+export function makeText(rng, minWords, maxWords, skew = 2.2) {
 	const n = minWords + Math.floor((maxWords - minWords + 1) * Math.pow(rng.next(), skew))
 	const words = []
 	for (let i = 0; i < n; i++) words.push(rng.pick(WORDS))
@@ -122,7 +122,7 @@ function makeText(rng, minWords, maxWords, skew = 2.2) {
  * @param {object} style style
  * @return {object} WireItem without z
  */
-function item(id, t, parent, x, y, w, h, r, data, style) {
+export function item(id, t, parent, x, y, w, h, r, data, style) {
 	return { id, t, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), r, z: null, parent, data, style }
 }
 

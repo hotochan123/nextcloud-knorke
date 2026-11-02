@@ -11,6 +11,7 @@ use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\Exception\HttpError;
 use OCA\Knorke\Http\JsonBody;
 use OCA\Knorke\Service\BoardService;
+use OCA\Knorke\Service\BoardSketch;
 use OCA\Knorke\Service\Input;
 use OCA\Knorke\Service\Limits;
 use OCP\AppFramework\Controller;
@@ -45,6 +46,11 @@ use Psr\Log\LoggerInterface;
  * Over it → 429 slow_down {retryMs = ceil(600000 / link_limit)} with
  * Retry-After, nothing written. Reading (route 19, the snapshot) is never
  * throttled.
+ *
+ * Factory job 219: the account's own marks of the board list, star (route
+ * 55) and last opened (route 56), for any role; no access → 404.
+ * Factory job 221: the sketch of a board for its row in the board list
+ * (route 57, BoardSketch), for any role; no access → 404.
  */
 final class BoardApiController extends Controller {
     use ApiResponses;
@@ -59,6 +65,7 @@ final class BoardApiController extends Controller {
         private ILimiter $limiter,
         private Limits $limits,
         private LoggerInterface $logger,
+        private BoardSketch $sketches,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -154,6 +161,37 @@ final class BoardApiController extends Controller {
     #[NoAdminRequired]
     public function disableVoteLink(int $id): Response {
         return $this->run(fn (): Response => $this->linkOff($id, 'vote'));
+    }
+
+    /** Route 55 `PUT /api/v1/boards/{id}/favorite` {"favorite": bool} → {"favorite": bool} (factory job 219). */
+    #[NoAdminRequired]
+    public function favorite(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            $body = JsonBody::read($this->request, ['favorite']);
+            $favorite = $body['favorite'] ?? null;
+            if (!is_bool($favorite)) {
+                throw new HttpError(400, 'bad_request', 'favorite must be true or false.');
+            }
+            return $this->json(['favorite' => $this->boards->setFavorite($this->user()->getUID(), $id, $favorite)]);
+        });
+    }
+
+    /** Route 56 `POST /api/v1/boards/{id}/opened` {} → {"openedAt": ms} (factory job 219). */
+    #[NoAdminRequired]
+    public function opened(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            JsonBody::read($this->request, []);
+            return $this->json(['openedAt' => $this->boards->markOpened($this->user()->getUID(), $id)]);
+        });
+    }
+
+    /** Route 57 `GET /api/v1/boards/{id}/sketch` → {"sketch": [[x, y, w, h, fill], …]} (factory job 221). */
+    #[NoAdminRequired]
+    public function sketch(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            JsonBody::guardRoute($this->request);
+            return $this->json(['sketch' => $this->sketches->forUser($id)]);
+        });
     }
 
     private function linkOn(int $id, string $role): Response {

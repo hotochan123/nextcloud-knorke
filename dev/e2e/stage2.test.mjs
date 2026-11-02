@@ -20,8 +20,8 @@
  *   stage-3 additions are pinned by stage3.test.mjs);
  *   E29 with the rescue first and bob's password dialog; E30 with its four
  *   sub-cases and the §6.11 texts; E36 with lod and staticChildren
- * - E36 clicks a note or a shape, never a connector: at LOD 2 click and
- *   marquee skip connectors (SPEC-M1 §6.3 rule (c), R13)
+ * - E36 clicks a note or a shape, never a connector: the step checks the
+ *   selection of a note at LOD 2 (connectors: tests/js/scene/lod2Scene)
  * Run: node --test 'dev/e2e/*.test.mjs'
  */
 import test from 'node:test'
@@ -118,7 +118,7 @@ test('R13: E28 keeps its stage-2 part, branching on data-knorke-features (the st
 	assert.match(e36, /back\.lod === 0/)
 })
 
-test('R13 (c): the E36 click aims at a note or a shape, never at a connector (connectors are skipped by click and marquee at LOD 2)', () => {
+test('R13 (c): the E36 click aims at a note or a shape, never at a connector', () => {
 	const e36 = src.slice(src.indexOf('export const E36 = {'))
 	const types = e36.match(/const CLICK_TYPES = new Set\(\[([^\]]*)\]\)/)
 	assert.ok(types, 'E36 names the click target types')
@@ -130,10 +130,10 @@ test('R13 (c): the E36 click aims at a note or a shape, never at a connector (co
 	assert.match(e36, /sel && sel\.length === 1/, 'exactly the target is selected')
 })
 
-test('the full suite fits the per-run board cap of World (MAX_BOARDS_PER_RUN = 48 from stage 4, R19, 56 from factory job 032; stage 2 needed more than the M0 cap of 20)', () => {
+test('the full suite fits the per-run board cap of World (MAX_BOARDS_PER_RUN = 48 from stage 4, R19, 56 from factory job 032, 64 from factory job 140, 72 from factory job 157, 80 from factory job 177, 88 from factory job 189, 96 from factory job 198, 104 from factory job 219, 112 from factory job 228, 120 from factory job 271; stage 2 needed more than the M0 cap of 20)', () => {
 	const world = read('scenarios/world.mjs')
 	const max = Number(world.match(/^export const MAX_BOARDS_PER_RUN = (\d+)$/m)?.[1])
-	assert.equal(max, 56, `cap ${max}: SPEC-M1 §8.4 R19 (T4-24) set MAX_BOARDS_PER_RUN = 48 from stage 4 on; factory job 032 (E43, E44) raised it to 56`)
+	assert.equal(max, 120, `cap ${max}: SPEC-M1 §8.4 R19 (T4-24) set MAX_BOARDS_PER_RUN = 48 from stage 4 on; factory job 032 (E43, E44) raised it to 56, factory job 140 (E50) to 64, factory job 157 (E58, with E56 of job 155: 65 boards) to 72, factory job 177 (E66: 73 boards) to 80, factory job 189 (E73 and E73@820x1180: 81 boards) to 88, factory job 198 (E79, with E80 of job 199: 89 boards) to 96, factory job 219 (E87: 98 boards) to 104, factory job 228 (E93: 105 boards) to 112, factory job 271 (E99: 113 boards) to 120`)
 	assert.match(world, /if \(this\.boards\.size >= MAX_BOARDS_PER_RUN\) throw/)
 	const dir = path.join(DIR, 'scenarios')
 	let used = 0

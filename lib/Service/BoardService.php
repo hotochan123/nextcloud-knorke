@@ -12,6 +12,7 @@ use OCA\Knorke\Db\BoardStore;
 use OCA\Knorke\Exception\HttpError;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\Comments\ICommentsManager;
 use OCP\IAppConfig;
 use OCP\IDBConnection;
 use OCP\IRequest;
@@ -35,6 +36,8 @@ use Psr\Log\LoggerInterface;
  *   {"id": 7, "title": "…", "role": "owner"|"edit"|"vote"|"view", "updatedAt": ms,
  *    "owner": {"uid": "alice", "name": "Alice Adler"}, "viaLink": false,
  *    "linksAllowed": true, "source": "own"|"share"|"link", "mod": bool}
+ * The board list (route 5) adds "favorite": bool and "openedAt": ms|null of
+ * the asking account (factory job 219, BoardMarks); other routes do not.
  *
  * Link object (SPEC-M1 §4.4):
  *   {"token", "role": "edit"|"vote", "url", "password": bool, "expiresAt": ms|null,
@@ -96,6 +99,8 @@ class BoardService {
         private Access $access,
         private IAppConfig $appConfig,
         private LoggerInterface $logger,
+        private ICommentsManager $comments,
+        private BoardMarks $marks,
     ) {
     }
 
@@ -113,14 +118,41 @@ class BoardService {
         $this->boards->pin();
         $rows = $this->boards->listForUser($uid, $user === null ? [] : $this->sharePolicy->groupIdsOf($user),
             $user === null ? [] : $this->sharePolicy->teamsOf($user), $this->nowMs());
+        [$fav, $opened] = $rows === [] ? [[], []] : $this->marks->of($uid);
         $out = [];
         foreach ($rows as $row) {
             [$role, $origin, $facilitator] = $this->rowRole($row, $uid);
             if ($role !== null) {
-                $out[] = $this->boardObject($row, $uid, $role, $origin, $facilitator);
+                $id = (int)$row['id'];
+                $out[] = $this->boardObject($row, $uid, $role, $origin, $facilitator)
+                    + ['favorite' => isset($fav[$id]), 'openedAt' => $opened[$id] ?? null];
             }
         }
         return $out;
+    }
+
+    /**
+     * Route 55 (factory job 219): stars or unstars $board for the account.
+     * Any role may (view and vote too); no access and an unknown board get
+     * the same 404 not_found, and nothing is written.
+     *
+     * @throws HttpError 401 not_logged_in, 404 not_found
+     */
+    public function setFavorite(string $uid, int $board, bool $favorite): bool {
+        $this->access->forUser($board);
+        $this->marks->setFavorite($uid, $board, $favorite);
+        return $favorite;
+    }
+
+    /**
+     * Route 56 (factory job 219): the account opened $board now; returns
+     * that server time in ms. Access as setFavorite.
+     *
+     * @throws HttpError 401 not_logged_in, 404 not_found
+     */
+    public function markOpened(string $uid, int $board): int {
+        $this->access->forUser($board);
+        return $this->marks->markOpened($uid, $board, $this->nowMs());
     }
 
     /** Nextcloud's link policy for the board owner $owner (§4.9.7). */
@@ -174,9 +206,11 @@ class BoardService {
 
     /**
      * Owner only. In one transaction (board row locked first, acl_gen + 1):
-     * changes, items, members, shares and the board go; links are only
-     * revoked and stay 30 days, so an old link answers "revoked" instead of
-     * counting as a miss. After COMMIT a:<board> is marked gone.
+     * changes, items, members, shares, the comment threads (factory job 189:
+     * ICommentsManager::deleteCommentsAtObject in Nextcloud's own table) and
+     * the board go; links are only revoked and stay 30 days, so an old link
+     * answers "revoked" instead of counting as a miss. After COMMIT
+     * a:<board> is marked gone.
      */
     public function delete(string $uid, int $board): void {
         $this->requireOwner($uid, $board);
@@ -508,8 +542,16 @@ class BoardService {
                 $this->boards->revokeLinks($board, $now, $role);
             }
             $this->boards->deleteBoardRows($board);
+            // factory job 189: the comment threads live in Nextcloud's comment table
+            $this->comments->deleteCommentsAtObject(CommentService::OBJECT_TYPE, (string)$board);
         }, $this->db);
         $this->cache->markGone($board);
+        try {
+            $this->marks->forgetBoard($board);
+        } catch (\Throwable $e) {
+            // The board is gone; a mark left behind shows nowhere (the list has visible boards only).
+            $this->logger->warning('Knorke: board list marks of a deleted board stayed', ['exception' => $e, 'app' => Application::APP_ID, 'board' => $board]);
+        }
     }
 
     /**
@@ -554,6 +596,10 @@ class BoardService {
     private function rowRole(array $row, string $uid): array {
         if ($row['owner'] === $uid) {
             return [Role::Owner, 'owner', false];
+        }
+        // A disabled owner hides the board from everybody else (job 245).
+        if ($this->policy->ownerHidden((string)$row['owner'])) {
+            return [null, 'share', false];
         }
         $linkRole = $row['member_role'] === null ? null : Role::tryFrom((string)$row['member_role']);
         if ($linkRole !== null && $row['member_link'] !== null && !$this->policy->allows((string)$row['owner'])) {

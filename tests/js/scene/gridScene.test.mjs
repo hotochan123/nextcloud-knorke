@@ -236,13 +236,13 @@ describe('AK5: a drag snaps to the grid', () => {
 })
 
 describe('AK6: a resize snaps to the grid', () => {
-	/** A shape A (100, 100, 200 × 120) selected, the grid on; press on its handle r and move to x, one frame. */
+	/** A shape A (100, 100, 200 × 120) selected, the grid on; press on its corner br (job 231: no edge handle r) and move to x, one frame. */
 	function pull(x, props = {}, items = []) {
 		h = setupScene([shapeItem(A, { x: 100, y: 100 }), ...items])
 		h.scene.setSelection([A])
 		h.scene.setGrid(true)
-		h.pointer('pointerdown', 300, 160)
-		h.pointer('pointermove', x, 160, props)
+		h.pointer('pointerdown', 300, 220)
+		h.pointer('pointermove', x, 220, props)
 		h.frame()
 	}
 
@@ -251,7 +251,7 @@ describe('AK6: a resize snaps to the grid', () => {
 		assert.equal(h.model.get(A).w, 240)
 		assert.equal(h.scene.stats().snapGuides, 0)
 		assert.deepEqual(shownGuides(), [])
-		h.pointer('pointerup', 333, 160)
+		h.pointer('pointerup', 333, 220)
 		const it = h.intents('transform')
 		assert.equal(it.length, 1)
 		assert.equal(it[0].after.get(A).w, 240)
@@ -260,7 +260,7 @@ describe('AK6: a resize snaps to the grid', () => {
 	test('(b) Ctrl on the move: w 233', () => {
 		pull(333, { ctrlKey: true })
 		assert.equal(h.model.get(A).w, 233)
-		h.pointer('pointerup', 333, 160, { ctrlKey: true })
+		h.pointer('pointerup', 333, 220, { ctrlKey: true })
 		assert.deepEqual(h.intents('transform').map((i) => i.after.get(A).w), [233])
 	})
 
@@ -268,7 +268,7 @@ describe('AK6: a resize snaps to the grid', () => {
 		pull(333, {}, [note(B, { x: 336, y: 300 })])
 		assert.equal(h.model.get(A).w, 236)
 		assert.deepEqual(callsOf('setSnapGuides').at(-1)[0], [{ axis: 'x', at: 336, from: 100, to: 500 }])
-		h.pointer('pointerup', 333, 160)
+		h.pointer('pointerup', 333, 220)
 		assert.deepEqual(h.intents('transform').map((i) => i.after.get(A).w), [236])
 	})
 })
@@ -335,5 +335,92 @@ describe('AK7: the key G', () => {
 		assert.equal(h.scene.getGrid(), false)
 		assert.deepEqual(gridCalls(), [true, false])
 		assert.deepEqual(onGrids(), [true, false])
+	})
+})
+
+describe('job 238 AK6: above 400 % a drag and a resize snap to the 4 grid', () => {
+	/** A note A at (100, 100), the grid on, the camera (cx, cy, scale); press at (px, py), move by (+33, +47) screen px, one frame. */
+	function drag(cam, px, py, props = {}) {
+		h = setupScene([note(A, { x: 100, y: 100 })])
+		h.scene.setGrid(true)
+		h.scene.setCamera(cam)
+		h.frame()
+		h.pointer('pointerdown', px, py)
+		h.pointer('pointermove', px + 33, py + 47, props)
+		h.frame()
+	}
+
+	test('scale 5: (+6.6, +9.4) world units put A at (108, 108), a multiple of 4 and not of 20; one move intent (8, 8)', () => {
+		drag({ x: 0, y: 0, scale: 5 }, 600, 600)
+		assert.deepEqual(posA(), { x: 108, y: 108 })
+		assert.equal(h.scene.stats().snapGuides, 0)
+		h.pointer('pointerup', 633, 647)
+		assert.deepEqual(h.intents('move').map((i) => [i.dx, i.dy]), [[8, 8]])
+	})
+
+	test('scale 2: (+16.5, +23.5) world units put A at (120, 120), the 20 grid as before', () => {
+		drag({ x: 0, y: 0, scale: 2 }, 300, 300)
+		assert.deepEqual(posA(), { x: 120, y: 120 })
+	})
+
+	test('scale 4 (exactly 400 %): still the 20 grid', () => {
+		drag({ x: 0, y: 0, scale: 4 }, 500, 500)
+		// (+8.25, +11.75) → (108.25, 111.75) → (100, 120)
+		assert.deepEqual(posA(), { x: 100, y: 120 })
+	})
+
+	for (const mod of ['ctrlKey', 'metaKey']) {
+		test(`scale 5, ${mod}: no snapping, A at (106.6, 109.4)`, () => {
+			drag({ x: 0, y: 0, scale: 5 }, 600, 600, { [mod]: true })
+			close(posA().x, 106.6, 'x')
+			close(posA().y, 109.4, 'y')
+		})
+	}
+
+	test('a zoom across 400 % during the drag acts from the next step', () => {
+		drag({ x: 0, y: 0, scale: 2 }, 300, 300)
+		assert.deepEqual(posA(), { x: 120, y: 120 })
+		h.scene.zoomBy(2.5, { x: 333, y: 347 })
+		h.frame()
+		assert.equal(h.scene.getCamera().scale, 5)
+		assert.equal(h.intents('move').length, 0, 'the drag goes on')
+		h.pointer('pointermove', 334, 347)
+		h.frame()
+		const p = posA()
+		assert.equal(p.x % 4, 0, `x ${p.x}`)
+		assert.equal(p.y % 4, 0, `y ${p.y}`)
+		assert.ok(p.x % 20 !== 0 || p.y % 20 !== 0, `(${p.x}, ${p.y}) is on the 4 grid, not only on the 20 one`)
+	})
+
+	/** A shape A (100, 100, 200 × 120) selected, the grid on, the camera cam; press on its corner br and move it by +33 screen px. */
+	function pull(cam, props = {}) {
+		h = setupScene([shapeItem(A, { x: 100, y: 100 })])
+		h.scene.setSelection([A])
+		h.scene.setGrid(true)
+		h.scene.setCamera(cam)
+		h.frame()
+		const bx = (300 - cam.x) * cam.scale
+		const by = (220 - cam.y) * cam.scale
+		h.pointer('pointerdown', bx, by)
+		h.pointer('pointermove', bx + 33, by, props)
+		h.frame()
+		return bx
+	}
+
+	test('resize at scale 5: the right edge 306.6 snaps to 308 (w 208), not to 300', () => {
+		const bx = pull({ x: 200, y: 150, scale: 5 })
+		assert.equal(h.model.get(A).w, 208)
+		h.pointer('pointerup', bx + 33, (220 - 150) * 5)
+		assert.deepEqual(h.intents('transform').map((i) => i.after.get(A).w), [208])
+	})
+
+	test('resize at scale 2: the right edge 316.5 snaps to 320 (w 220)', () => {
+		pull({ x: 100, y: 100, scale: 2 })
+		assert.equal(h.model.get(A).w, 220)
+	})
+
+	test('resize at scale 5 with Ctrl: free, w 206.6', () => {
+		pull({ x: 200, y: 150, scale: 5 }, { ctrlKey: true })
+		close(h.model.get(A).w, 206.6, 'w')
 	})
 })

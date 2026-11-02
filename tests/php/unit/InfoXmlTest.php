@@ -22,9 +22,10 @@ use Symfony\Component\Console\Command\Command;
 
 /**
  * appinfo/info.xml of stage 0 (SPEC-M1 §3, §9.1):
- *  - version 0.3.0: the M2 data foundation (Version000300Date20261017000000,
- *    grouping and locking) needs the bump, like the M1 migration needed
- *    0.2.0; since factory job 050 the description names no version or
+ *  - version 0.4.0: the table of the template suggestions (factory job 182,
+ *    Version000400Date20261025000000) needs the bump, like the M2 data
+ *    foundation (Version000300…) needed 0.3.0 and the M1 migration 0.2.0;
+ *    since factory job 050 the description names no version or
  *    milestone (the Apps page shows <version> on its own), so it cannot
  *    go stale with the next bump;
  *  - every class it names exists: Nextcloud registers <background-jobs> only
@@ -57,7 +58,7 @@ final class InfoXmlTest extends TestCase {
     public function testVersionAndId(): void {
         $xml = self::xml();
         $this->assertSame('knorke', (string)$xml->id);
-        $this->assertSame('0.3.0', (string)$xml->version);
+        $this->assertSame('0.4.0', (string)$xml->version);
         $this->assertSame('Knorke', (string)$xml->namespace);
     }
 

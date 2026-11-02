@@ -6,7 +6,8 @@
  * Source guard over src/model/** and src/scene/** (SPEC-M0 §0, §6.9, §9.3):
  * - no HTML sinks (innerHTML, outerHTML, insertAdjacentHTML)
  * - no direct import of @nextcloud/l10n (t only from src/util/l10n.js)
- * - no translated source texts except the four of §6.9, always in the form
+ * - no translated source texts except the four of §6.9 and (job 143) the
+ *   frame title hint "Add title…", always in the form
  *   t('knorke', '<text>' …) so that build/l10n-check.mjs finds them
  * - no stage.scale( / stage.position( (the camera is one setAttrs)
  */
@@ -24,6 +25,13 @@ const ALLOWED_TEXTS = Object.freeze([
 	'Take over',
 	'{name} (guest)',
 	'Unknown item type: {type}',
+	// job 143: the hint above a selected frame without a title (nodes/titleHint.js)
+	'Add title…',
+	// job 262: the word of the "+" for a new lane (nodes/plusButton.js)
+	'+ Lane',
+	// job 267: the header of an AI card (nodes/ai.js)
+	'AI summary',
+	'AI summary · {frame}',
 ])
 
 const files = DIRS.flatMap((d) => walk(join(ROOT, d), /\.(m?js|vue)$/))
@@ -72,7 +80,7 @@ describe('noHtml (src/model, src/scene)', () => {
 		assert.deepEqual([...used].sort(), [...ALLOWED_TEXTS].sort(), 'every §6.9 text is used (l10n:check)')
 	})
 
-	test('the four texts are in l10n/de.json', () => {
+	test('the allowed texts are in l10n/de.json', () => {
 		const de = JSON.parse(readFileSync(join(ROOT, 'l10n/de.json'), 'utf8'))
 		for (const text of ALLOWED_TEXTS) {
 			assert.equal(typeof de.translations[text], 'string', text)

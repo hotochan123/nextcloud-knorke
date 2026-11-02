@@ -27,7 +27,7 @@
  *   rectangle: the stage with its overscan ov, per side at least
  *   CULL_MARGIN; without ov the viewport + CULL_MARGIN; padded index boxes;
  *   ask of [S]; job 034); the constants are tied to the scene's own
- *   (src/scene/KonvaRenderer.js CULL_MARGIN, src/model/tokens.js SHADOW and
+ *   (src/scene/KonvaRenderer.js CULL_MARGIN, src/model/tokens.js NOTE_SHADOWS and
  *   src/model/SceneModel.js STICKY_PAD).
  * Run: node --test 'dev/e2e/*.test.mjs'
  */
@@ -37,7 +37,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-	menuAction, cullClass, countCullSet, CULL_MARGIN, STICKY_PAD_WORLD, MENUS, OPEN_TRIGGERS, entryInPopover, hitAtCentre, hitText,
+	menuAction, cullClass, countCullSet, CULL_MARGIN, STICKY_PAD_WORLD, MENUS, BOARD_MENUS, OPEN_TRIGGERS, SUBMENU_OF, entryInPopover, hitAtCentre, hitText,
 } from './lib/moderation.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -47,7 +47,7 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 /**
  * A fake page with one NcActions-like menu.
  * @param {object} o
- * @param {string} [o.menu] which menu root is visible ('moderation' | 'overflow' | null)
+ * @param {string} [o.menu] which menu root is visible ('moderation' | 'overflow' | 'board' | null)
  * @param {(name: string, opens: number) => boolean} [o.has] does the menu, opened for the `opens`-th time, render this entry
  * @param {number} [o.fadeMs] how long a closing popover keeps its entries visible
  * @param {boolean} [o.expanded] menu open at the start
@@ -74,10 +74,14 @@ function fakePage({
 		asked: [],
 		clicksOnFading: 0,
 		entryClicks: new Map(),
+		level: 'root',
 	}
 	const fadingNow = () => Date.now() < st.fadeUntil
-	const rendered = (name) => inline.includes(name) || (st.expanded && has(name, st.opens)) || (fadingNow() && st.fadeEntries.has(name))
+	// job 228: an entry of a submenu shows only on its level
+	const onLevel = (name) => (SUBMENU_OF[name] ?? 'root') === st.level
+	const rendered = (name) => inline.includes(name) || (st.expanded && has(name, st.opens) && onLevel(name)) || (fadingNow() && st.fadeEntries.has(name))
 	const closeMenu = () => {
+		st.level = 'root'
 		st.fadeEntries = new Set(['share', 'vote-setup', 'timer-open', 'summon', 'summon-end'].filter((n) => has(n, st.opens)))
 		st.expanded = false
 		st.fadeUntil = Date.now() + fadeMs
@@ -128,7 +132,7 @@ function fakePage({
 				st.log.push(`click:${name}`)
 				return
 			}
-			if (!st.expanded || !has(name, st.opens)) {
+			if (!st.expanded || !has(name, st.opens) || !onLevel(name)) {
 				// a fading (or absent) entry: Playwright retries until its timeout
 				if (fadingNow() && st.fadeEntries.has(name)) st.clicksOnFading++
 				await pause(Math.min(timeout, 60))
@@ -173,7 +177,18 @@ function fakePage({
 		locator(sel) {
 			const m = /^\[data-knorke-action=([a-z0-9-]+)\]:visible$/.exec(sel)
 			if (m) return entryLoc(m[1])
-			if (MENUS.includes(sel)) return root(sel)
+			if (MENUS.includes(sel) || BOARD_MENUS.includes(sel)) return root(sel)
+			const sub = /^\[data-knorke-submenu=([a-z]+)\]:visible$/.exec(sel)
+			if (sub) {
+				return {
+					first() { return this },
+					isVisible: async () => st.expanded && st.level === 'root',
+					click: async () => {
+						st.log.push('submenu:' + sub[1])
+						st.level = sub[1]
+					},
+				}
+			}
 			if (sel === OPEN_TRIGGERS) return openTriggers
 			throw new Error(`unexpected selector ${sel}`)
 		},
@@ -270,6 +285,31 @@ test('menuAction: the overflow menu of the narrow layout is used when the modera
 	assert.deepEqual(page.st.log, ['trigger:open', 'click:share'])
 })
 
+test('menuAction (job 178): with menus BOARD_MENUS the board menu of the wide bar, else the overflow menu; MENUS stays the default', async () => {
+	assert.deepEqual(BOARD_MENUS, ['[data-knorke-menu=board]', '[data-knorke-menu=overflow]'])
+	let page = fakePage({ menu: 'board' })
+	let r = await menuAction(page, 'export-png', { ...fast, menus: BOARD_MENUS })
+	assert.deepEqual(r, { menu: '[data-knorke-menu=board]', attempt: 1 })
+	assert.deepEqual(page.st.log, ['trigger:open', 'submenu:export', 'click:export-png'], 'job 228: through the submenu "Export"')
+	page = fakePage({ menu: 'overflow' })
+	r = await menuAction(page, 'export-png', { ...fast, menus: BOARD_MENUS })
+	assert.equal(r.menu, '[data-knorke-menu=overflow]', 'narrow: the overflow menu of every role')
+	await assert.rejects(menuAction(fakePage({ menu: null }), 'export-png', { ...fast, menus: BOARD_MENUS }),
+		/^Error: \[C\] menuAction export-png: kein Menü sichtbar \(\[data-knorke-menu=board\|overflow\]\)$/)
+	await assert.rejects(menuAction(fakePage({ menu: 'board' }), 'summon', fast), /kein Moderationsmenü sichtbar/, 'the board menu is no moderation menu')
+})
+
+test('menuAction (job 228): every export and insert entry goes through its submenu; the other entries stay on the root', async () => {
+	assert.deepEqual(Object.keys(SUBMENU_OF).filter((k) => SUBMENU_OF[k] === 'export'), ['export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv', 'download-board'])
+	assert.deepEqual(Object.keys(SUBMENU_OF).filter((k) => SUBMENU_OF[k] === 'insert'), ['insert-template', 'insert-board-file', 'insert-bpmn-file', 'import-csv'])
+	let page = fakePage({ menu: 'board' })
+	await menuAction(page, 'import-csv', { ...fast, menus: BOARD_MENUS })
+	assert.deepEqual(page.st.log, ['trigger:open', 'submenu:insert', 'click:import-csv'])
+	page = fakePage({ menu: 'board' })
+	await menuAction(page, 'save-template', { ...fast, menus: BOARD_MENUS })
+	assert.deepEqual(page.st.log, ['trigger:open', 'click:save-template'], 'a root entry')
+})
+
 test('menuAction: every error carries the owner tag [C] and names the step – no menu, entry missing in every try, click failing in every try (with elementFromPoint), fast-path click failing', async () => {
 	await assert.rejects(menuAction(fakePage({ menu: null }), 'summon', fast), /^Error: \[C\] menuAction summon: kein Moderationsmenü sichtbar \(\[data-knorke-menu=moderation\|overflow\]\)$/)
 	await assert.rejects(menuAction(fakePage({ has: (n) => n !== 'summon', fadeMs: 20 }), 'summon', fast),
@@ -339,10 +379,10 @@ test('cullClass: inside the viewport and inside the 10-% margin → in; beyond m
 	assert.equal(cullClass(rect(1040, 200), box), 'in', 'in the right margin (1000…1100)')
 	assert.equal(cullClass(rect(200, 30, 50, 50), box), 'in', 'in the top margin (20…100)')
 	assert.equal(cullClass(rect(1200, 200), box), 'out')
-	assert.equal(cullClass(rect(1105, 200), box, { scale: 1 }), 'edge', 'padded by 11 px + 1 reaches 1100')
-	assert.equal(cullClass(rect(1113, 200), box, { scale: 1 }), 'out', 'padded rect starts at 1101')
-	assert.equal(cullClass(rect(1101, 200), box, { scale: 0.05 }), 'edge', 'at 5 % the padding is 0.55 px + 1')
-	assert.equal(cullClass(rect(1102, 200), box, { scale: 0.05 }), 'out')
+	assert.equal(cullClass(rect(1105, 200), box, { scale: 1 }), 'edge', 'padded by 26 px + 1 reaches 1100 (job 259: far shadow blur 14, y 5)')
+	assert.equal(cullClass(rect(1128, 200), box, { scale: 1 }), 'out', 'padded rect starts at 1101')
+	assert.equal(cullClass(rect(1101, 200), box, { scale: 0.05 }), 'edge', 'at 5 % the padding is 1.3 px + 1')
+	assert.equal(cullClass(rect(1103, 200), box, { scale: 0.05 }), 'out')
 	assert.equal(cullClass(rect(1099.5, 200), box), 'edge', 'overlap ≤ 1 px is not certain')
 	assert.equal(cullClass(null, box), 'out')
 	assert.equal(cullClass(rect(Number.NaN, 0), box), 'out')
@@ -358,7 +398,7 @@ const OV = { l: 384, r: 384, t: 384, b: 384 } // area x −384…1384, y −284�
 
 test('cullClass with an overscan: the stage counts, never less than the 10-% margin', () => {
 	assert.equal(cullClass(rect(1300, 200), box, { ov: OV }), 'in', 'inside the right overscan (1000…1384)')
-	assert.equal(cullClass(rect(1390, 200), box, { ov: OV }), 'edge', 'in the padding band: padded by 11 px + 1 reaches 1384')
+	assert.equal(cullClass(rect(1390, 200), box, { ov: OV }), 'edge', 'in the padding band: padded by 26 px + 1 reaches 1384')
 	assert.equal(cullClass(rect(1500, 200), box, { ov: OV }), 'out')
 	assert.equal(cullClass(rect(-420, 200), box, { ov: OV }), 'in', 'left overscan')
 	assert.equal(cullClass(rect(200, 1230), box, { ov: OV }), 'in', 'bottom overscan (900…1284)')
@@ -383,12 +423,14 @@ test('stage3.mjs hands __knorke.scene().overscan to countCullSet', () => {
 	assert.doesNotMatch(src, /Viewport \+ 10 %/)
 })
 
-test('constants match the scene: CULL_MARGIN of KonvaRenderer.js, STICKY_PAD of SceneModel.js from SHADOW in tokens.js', () => {
+test('constants match the scene: CULL_MARGIN of KonvaRenderer.js, STICKY_PAD of SceneModel.js from NOTE_SHADOWS in tokens.js', () => {
 	const m = read('src/scene/KonvaRenderer.js').match(/^export const CULL_MARGIN = ([0-9.]+)$/m)
 	assert.ok(m, 'KonvaRenderer.js exports CULL_MARGIN')
 	assert.equal(CULL_MARGIN, Number(m[1]))
-	assert.match(read('src/model/SceneModel.js'), /^const STICKY_PAD = SHADOW\.blur \* 1\.5 \+ Math\.abs\(SHADOW\.y\)$/m)
-	const sh = read('src/model/tokens.js').match(/^export const SHADOW = Object\.freeze\(\{ x: (-?[0-9.]+), y: (-?[0-9.]+), blur: ([0-9.]+),/m)
-	assert.ok(sh, 'tokens.js SHADOW')
-	assert.equal(STICKY_PAD_WORLD, Number(sh[3]) * 1.5 + Math.abs(Number(sh[2])))
+	assert.match(read('src/model/SceneModel.js'), /^export const STICKY_PAD = Math\.max\(\.\.\.NOTE_SHADOWS\.map\(\(s\) => s\.blur \* 1\.5 \+ Math\.hypot\(s\.x, s\.y\)\)\)$/m)
+	const block = read('src/model/tokens.js').match(/^export const NOTE_SHADOWS = Object\.freeze\(\[\n([\s\S]*?)\n\]\)$/m)
+	assert.ok(block, 'tokens.js NOTE_SHADOWS')
+	const sh = [...block[1].matchAll(/\{ x: (-?[0-9.]+), y: (-?[0-9.]+), blur: ([0-9.]+),/g)]
+	assert.equal(sh.length, 2)
+	assert.equal(STICKY_PAD_WORLD, Math.max(...sh.map((m) => Number(m[3]) * 1.5 + Math.hypot(Number(m[1]), Number(m[2])))))
 })

@@ -30,9 +30,12 @@ use OCP\IMemcacheTTL;
  *                   (LinkPolicy), else 0: guests and link members are refused
  *                   on the fast path too. linkGen is the generation of the
  *                   edit link, voteLinkGen the one of the voting link.
- *                   Readers seed with add(…, 120), administration writes
- *                   with set(…, 120), so a late seeder never overwrites a
- *                   fresh revocation; markGone set(…, 300). Any other shape
+ *                   Readers seed with add(…, 120); administration raises
+ *                   each generation to its maximum (setGens, cas loop,
+ *                   120 s), so neither a late seeder nor a late writer of
+ *                   an older state undoes a fresh revocation; the cleanup
+ *                   raises only minRev (raiseMinRev); markGone set(…, 300),
+ *                   and the mark stays until it expires. Any other shape
  *                   (also the 4-element value of M0) is a miss.
  *  g:<board>:<uh>   "<aclGen>|<role>|<o>" after a full check, 120 s (or
  *                   shorter, $ttl); o = origin of the role: o owner, f share
@@ -144,8 +147,7 @@ class FastCache {
         if ($v === self::GONE) {
             return ['acl' => -1, 'link' => -1, 'minRev' => -1, 'links' => false, 'voteLink' => -1, 'gone' => true];
         }
-        if (!is_array($v) || count($v) !== 5 || !array_is_list($v)
-            || !is_int($v[0]) || !is_int($v[1]) || !is_int($v[2]) || ($v[3] !== 0 && $v[3] !== 1) || !is_int($v[4])) {
+        if (!self::validGens($v)) {
             return null;
         }
         return ['acl' => $v[0], 'link' => $v[1], 'minRev' => $v[2], 'links' => $v[3] === 1, 'voteLink' => $v[4], 'gone' => false];
@@ -159,9 +161,77 @@ class FastCache {
         $this->cache?->add('a:' . $b, [$acl, $link, $minRev, $links ? 1 : 0, $voteLink], self::GENS_TTL);
     }
 
-    /** Administration after a revocation (link rotated/off, member removed): set wins. */
+    /**
+     * Administration after its COMMIT (share changed, link rotated/off,
+     * member removed): raises aclGen, linkGen, minRev and voteLinkGen each to
+     * the maximum of the stored and the given value (cas loop, like
+     * bumpRev), so two writers whose cache writes arrive in the other order
+     * than their commits never leave the older generation behind, and a
+     * revoked grant or guest token stays invalid at once. links is no
+     * generation: this writer's value counts. The deleted mark stays. A
+     * missing key is added, any other shape replaced. Nothing to raise →
+     * nothing written (the TTL is not renewed). cas() drops the TTL, so it
+     * is renewed after a successful cas; if the loop cannot settle, the key
+     * is removed: a missing key means "ask the DB", a too-low one could hide
+     * a revocation.
+     */
     public function setGens(int $b, int $acl, int $link, int $minRev, bool $links, int $voteLink): void {
-        $this->cache?->set('a:' . $b, [$acl, $link, $minRev, $links ? 1 : 0, $voteLink], self::GENS_TTL);
+        if ($this->cache === null) {
+            return;
+        }
+        $key = 'a:' . $b;
+        $new = [$acl, $link, $minRev, $links ? 1 : 0, $voteLink];
+        for ($i = 0; $i < self::CAS_TRIES; $i++) {
+            $cur = $this->cache->get($key);
+            if ($cur === null) {
+                if ($this->cache->add($key, $new, self::GENS_TTL)) {
+                    return;
+                }
+                continue;
+            }
+            if ($cur === self::GONE) {
+                return;
+            }
+            $next = self::validGens($cur)
+                ? [max($cur[0], $acl), max($cur[1], $link), max($cur[2], $minRev), $new[3], max($cur[4], $voteLink)]
+                : $new;
+            if ($next === $cur) {
+                return;
+            }
+            if ($this->cache->cas($key, $cur, $next)) {
+                $this->cache->setTTL($key, self::GENS_TTL);
+                return;
+            }
+        }
+        $this->cache->remove($key);
+    }
+
+    /**
+     * The cleanup after a tombstone block (Compactor): raises only minRev of
+     * a stored value and leaves the other four parts as they are, so it
+     * never writes a generation it read before a concurrent revocation. A
+     * missing key, the deleted mark or any other shape: nothing written (the
+     * next reader seeds from the DB; the slow path reads min_rev there
+     * anyway). Same cas loop, TTL renewal and give-up as setGens.
+     */
+    public function raiseMinRev(int $b, int $minRev): void {
+        if ($this->cache === null) {
+            return;
+        }
+        $key = 'a:' . $b;
+        for ($i = 0; $i < self::CAS_TRIES; $i++) {
+            $cur = $this->cache->get($key);
+            if (!self::validGens($cur) || $cur[2] >= $minRev) {
+                return;
+            }
+            $next = $cur;
+            $next[2] = $minRev;
+            if ($this->cache->cas($key, $cur, $next)) {
+                $this->cache->setTTL($key, self::GENS_TTL);
+                return;
+            }
+        }
+        $this->cache->remove($key);
     }
 
     /** Board deleted: every fast path answers 404 for 300 s, then the DB does. */
@@ -265,6 +335,12 @@ class FastCache {
         }
         $v = $this->cache->inc($key, $step);
         return is_int($v) ? $v : null;
+    }
+
+    /** The 5-int form of a:<board> (not the deleted mark). */
+    private static function validGens(mixed $v): bool {
+        return is_array($v) && count($v) === 5 && array_is_list($v)
+            && is_int($v[0]) && is_int($v[1]) && is_int($v[2]) && ($v[3] === 0 || $v[3] === 1) && is_int($v[4]);
     }
 
     private static function grantKey(int $b, string $uid): string {

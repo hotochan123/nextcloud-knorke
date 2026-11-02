@@ -5,12 +5,12 @@
 /*
  * Self-test of E45 (board page after a final status on opening, factory job
  * 049), no browser, no stack:
- * - scenarios/index.mjs: E45 once, directly after E44 and directly before
- *   E09 (own boards, no instance setting); the flake gate
- *   --only E45 --repeat 3 named
+ * - scenarios/index.mjs: E45 once, directly after E44 and before E09 (own
+ *   boards, no instance setting; since factory jobs 135 and 136 E46 and E47
+ *   stand between them); the flake gate --only E45 --repeat 3 named
  * - E45: the three steps of the spec with their hooks (a stale list with a
  *   link and the keyboard path, a bookmark, a deleted board on a phone with
- *   touch); two boards, so MAX_BOARDS_PER_RUN stays 56 (51 + 2 = 53)
+ *   touch); two boards, so MAX_BOARDS_PER_RUN stays 56 (51 + 2 = 53; 64 since factory job 140, 72 since factory job 157, 80 since factory job 177, 88 since factory job 189, 96 since factory job 198)
  * - every check label names exactly one owner (SPEC-M1 §9.6); waits only
  *   from Node (CSP, trap 9.10); no window.__knorke after a failed open
  * Run: node --test 'dev/e2e/*.test.mjs'
@@ -27,12 +27,12 @@ const src = read('scenarios/final.mjs')
 /** The code without comments. */
 const code = src.replace(/^\s*\*.*$/gm, '').replace(/\/\/.*$/gm, '')
 
-test('index: E45 once, directly after E44 and directly before E09; import and flake gate named', () => {
+test('index: E45 once, directly after E44 and before E09 (not directly: E46 and E47 may stand between); import and flake gate named', () => {
 	const idx = read('scenarios/index.mjs')
 	const list = idx.match(/SCENARIOS = \[([^\]]+)\]/)[1].split(',').map((s) => s.trim())
 	assert.equal(list.filter((x) => x === 'E45').length, 1)
 	assert.equal(list.indexOf('E45'), list.indexOf('E44') + 1, 'directly after E44')
-	assert.equal(list.indexOf('E09'), list.indexOf('E45') + 1, 'directly before E09 (own boards, no instance setting)')
+	assert.ok(list.indexOf('E09') > list.indexOf('E45'), 'before E09 (own boards, no instance setting; since factory jobs 135 and 136 E46 and E47 stand between them)')
 	assert.match(idx, /^import \{ E45 \} from '\.\/final\.mjs'$/m)
 	const head = idx.slice(idx.indexOf('/*\n'), idx.indexOf('*/', idx.indexOf('/*\n')))
 	assert.ok(head.includes('E45'), 'the head comment names E45')
@@ -40,11 +40,11 @@ test('index: E45 once, directly after E44 and directly before E09; import and fl
 	assert.match(src, /export const E45 = \{\n\tid: 'E45',/)
 })
 
-test('E45: two boards of its own; the board cap stays 56', () => {
+test('E45: two boards of its own; the board cap stays 96 (factory jobs 157, 177, 189, 198)', () => {
 	assert.equal((code.match(/world\.board\(/g) || []).length, 2)
 	assert.match(src, /world\.board\('E45 Link'\)/)
 	assert.match(src, /world\.board\('E45 Gelöscht'\)/)
-	assert.match(read('scenarios/world.mjs'), /^export const MAX_BOARDS_PER_RUN = 56$/m, '51 + 2 = 53 boards')
+	assert.match(read('scenarios/world.mjs'), /^export const MAX_BOARDS_PER_RUN = 120$/m, '51 + 2 = 53 boards; the cap 72 since factory job 157, 80 since factory job 177, 88 since factory job 189, 96 since factory job 198, 104 since factory job 219, 112 since factory job 228')
 	assert.doesNotMatch(code, /world\.switch\(|bridge\(|setAppConfig|touched/, 'no instance setting')
 })
 

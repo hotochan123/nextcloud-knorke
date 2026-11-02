@@ -11,7 +11,10 @@
  * counted.
  *
  * Gate per page (replaces "no new requests" and "within limits" of WP-C4):
- * assets below /custom_apps/knorke/(js|css|l10n)/ ≤ 5, exactly ONE snapshot
+ * assets below /custom_apps/knorke/(js|css|l10n)/ ≤ 5 and (factory job 172)
+ * none of them the lazy js/emoji-*.chunk.mjs, nor (factory job 217) one of
+ * the lazy parts js/(vector|bpmn|csv|shapelib|admin|share)-*.chunk.mjs (LAZY_RE;
+ * build/lazy-areas.mjs, not visible in the container), exactly ONE snapshot
  * or join before the first /sync, and no other request below /apps/knorke/
  * or /custom_apps/knorke/ before the first /sync except the page HTML, app
  * assets (js, css, l10n), the app icon (img/) and the snapshot or join.
@@ -30,6 +33,8 @@ const SYNC_RE = /\/(api|pub)\/v1\/boards\/\d+\/sync$/
 const FIRST_RE = /\/(api\/v1\/boards\/\d+\/snapshot|pub\/v1\/boards\/\d+\/snapshot|pub\/v1\/[A-Za-z0-9]{24}\/join)$/
 /** Requests of the app (served by Nextcloud's front controller or as a custom app file). */
 const APP_RE = /\/(custom_)?apps\/knorke\//
+/** Factory jobs 172 and 217: the lazy chunks, which a page never loads at the start. */
+export const LAZY_RE = /^js\/(emoji|vector|bpmn|csv|shapelib|admin|share|shortcuts|search|outline|moderate|ai)-[A-Za-z0-9_-]+\.chunk\.mjs$/
 
 /** M0's totals per page (SPEC-M1 §8.4 E12: 85 signed in, 34 guest public, 32 guest base; the vote link against 34). */
 export const M0_TOTALS = Object.freeze({ user: 85, public: 34, base: 32, vote: 34 })
@@ -115,6 +120,9 @@ export const E12 = {
 		for (const [label, m] of rows) {
 			t.check(m.status === 200, `[C] ${label}: Seite 200`, m.status)
 			t.check(m.assets <= 5, `[C] ${label}: Assets unter /custom_apps/knorke/(js|css|l10n)/ ≤ 5`, m.assetList)
+			// factory job 172: the emoji list loads only with "More…" of the reaction picker;
+			// job 217: the rarely used parts only on their first use
+			t.check(!m.assetList.some((x) => LAZY_RE.test(x.split('?')[0])), `[C] ${label}: keine Anfrage an js/emoji-*.chunk.mjs oder an die selten genutzten Teile (vector, bpmn, csv, shapelib, admin, share)`, m.assetList)
 			t.check(m.sawSync && m.firstBeforeSync === 1, `[C] ${label}: genau ein Snapshot bzw. Beitritt vor dem ersten /sync`, { firstBeforeSync: m.firstBeforeSync, sawSync: m.sawSync })
 			t.check(m.extraBeforeSync.length === 0, `[C] ${label}: keine weitere Anfrage unter /apps/knorke/ oder /custom_apps/knorke/ vor dem ersten /sync (außer Seiten-HTML, Assets, App-Icon, Snapshot/Beitritt)`, m.extraBeforeSync)
 		}

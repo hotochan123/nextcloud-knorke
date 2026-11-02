@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 hotochan123
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+  - Knorke Logo L7 (Vorschlag: Notiz vor gekippter Notiz), Runde 5
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="#fff">
+	<path d="M5,14.03L4.58,13.96L4.01,13.72L3.52,13.33L3.14,12.82L2.91,12.24L1.41,6.22L1.34,5.6L1.44,4.98L1.68,4.41L2.07,3.92L2.58,3.54L3.16,3.31L5,2.85Z M9.18,1.81L9.8,1.74L10.42,1.84L10.99,2.08L11.48,2.47L11.86,2.98L12.09,3.56L12.45,5L5,5L5,2.85Z M9.5 6.5H15.5A3 3 0 0 1 18.5 9.5V13H14.5A1.5 1.5 0 0 0 13 14.5V18.5H9.5A3 3 0 0 1 6.5 15.5V9.5A3 3 0 0 1 9.5 6.5Z M14.5 14.5H18.5L14.5 18.5Z"/>
+</svg>

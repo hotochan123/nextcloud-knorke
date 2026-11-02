@@ -134,6 +134,103 @@ final class FastCacheTest extends TestCase {
         $this->assertSame(300, $this->mem->ttl('a:7'));
     }
 
+    public function testGensAreACasMaximumPerPart(): void {
+        // Two administrations commit A (acl 5) before B (acl 6) but write the
+        // cache in the other order: each generation keeps its maximum.
+        $this->cache->setGens(7, 6, 3, 0, true, 2);
+        $this->assertSame([6, 3, 0, 1, 2], $this->mem->get('a:7'), 'a missing key is added');
+        $this->assertSame(120, $this->mem->ttl('a:7'));
+        $this->mem->now += 50;
+        $this->cache->setGens(7, 5, 4, 1, true, 1);
+        $this->assertSame(['acl' => 6, 'link' => 4, 'minRev' => 1, 'links' => true, 'voteLink' => 2, 'gone' => false], $this->cache->getGens(7));
+        $this->assertSame(120, $this->mem->ttl('a:7'), 'cas dropped the TTL, setGens set it again');
+        // links is no generation: the writer's value counts.
+        $this->cache->setGens(7, 6, 4, 1, false, 2);
+        $this->assertSame([6, 4, 1, 0, 2], $this->mem->get('a:7'));
+        // Nothing to raise: nothing written, the TTL runs on.
+        $this->mem->now += 50;
+        $this->mem->log = [];
+        $this->cache->setGens(7, 4, 2, 0, false, 1);
+        $this->assertSame(['get a:7'], $this->mem->log, 'only read');
+        $this->assertSame([6, 4, 1, 0, 2], $this->mem->get('a:7'));
+        $this->assertSame(70, $this->mem->ttl('a:7'));
+        // A late seeder changes nothing either.
+        $this->cache->seedGens(7, 1, 1, 0, true, 1);
+        $this->assertSame([6, 4, 1, 0, 2], $this->mem->get('a:7'));
+    }
+
+    public function testRevokedGrantStaysInvalidWhenTheOlderWriteArrivesLast(): void {
+        $this->cache->setGens(7, 5, 1, 0, true, 1);
+        $this->cache->setGrant(7, 'bob', 5, 'edit', 's');
+        // Bob's share is removed (acl 6) …
+        $this->cache->setGens(7, 6, 1, 0, true, 1);
+        // … and another change that committed before writes its acl 5 late.
+        $this->cache->setGens(7, 5, 1, 0, true, 1);
+        $this->assertSame(6, $this->cache->getGens(7)['acl']);
+        $this->assertNotSame($this->cache->getGens(7)['acl'], $this->cache->getGrant(7, 'bob')['acl'], 'the old grant no longer matches: full check');
+        // The same for an edit link renewed (link 2) and a late write of link 1.
+        $this->cache->setGens(7, 6, 2, 0, true, 1);
+        $this->cache->setGens(7, 6, 1, 0, true, 1);
+        $this->assertSame(2, $this->cache->getGens(7)['link']);
+    }
+
+    public function testTheDeletedMarkStays(): void {
+        $this->cache->setGens(7, 2, 2, 0, true, 2);
+        $this->cache->markGone(7);
+        $this->mem->log = [];
+        $this->cache->setGens(7, 3, 3, 4, true, 3);
+        $this->cache->raiseMinRev(7, 9);
+        $this->cache->seedGens(7, 3, 3, 4, true, 3);
+        $this->assertTrue($this->cache->getGens(7)['gone']);
+        $this->assertSame([-1, -1, -1], $this->mem->get('a:7'));
+        $this->assertSame(300, $this->mem->ttl('a:7'));
+        $this->assertSame([], array_values(array_filter($this->mem->log, static fn (string $l): bool => !str_starts_with($l, 'get ') && !str_starts_with($l, 'add '))), 'nothing but reads and a failing add');
+    }
+
+    public function testSetGensReplacesOtherShapes(): void {
+        foreach ([[1, 2, 0, 1], 'x', [1, 2, 0, 2, 1], ['a' => 1, 1, 0, 1, 1]] as $v) {
+            $this->mem->set('a:7', $v, 30);
+            $this->cache->setGens(7, 2, 3, 0, true, 4);
+            $this->assertSame([2, 3, 0, 1, 4], $this->mem->get('a:7'), json_encode($v));
+            $this->assertSame(120, $this->mem->ttl('a:7'));
+        }
+    }
+
+    public function testGensGiveUpWithRemove(): void {
+        $this->cache->setGens(7, 2, 2, 0, true, 2);
+        $this->mem->casFailures = 5;
+        $this->cache->setGens(7, 3, 2, 0, true, 2);
+        $this->assertSame(3, $this->cache->getGens(7)['acl'], 'the sixth attempt settles');
+        $this->mem->casFailures = 6;
+        $this->cache->setGens(7, 4, 2, 0, true, 2);
+        $this->assertNull($this->cache->getGens(7), 'unsettled → removed: the next request asks the DB');
+        $this->assertContains('remove a:7', $this->mem->log);
+        $this->cache->setGens(7, 2, 2, 0, true, 2);
+        $this->mem->casFailures = 6;
+        $this->cache->raiseMinRev(7, 5);
+        $this->assertNull($this->cache->getGens(7));
+    }
+
+    public function testRaiseMinRevWritesOnlyMinRev(): void {
+        $this->cache->raiseMinRev(7, 5);
+        $this->assertNull($this->mem->get('a:7'), 'a missing key stays missing');
+        $this->mem->set('a:7', [1, 2], 30);
+        $this->cache->raiseMinRev(7, 5);
+        $this->assertSame([1, 2], $this->mem->get('a:7'), 'another shape is left alone');
+        $this->mem->remove('a:7');
+        $this->cache->setGens(7, 3, 4, 10, true, 5);
+        $this->mem->now += 100;
+        $this->cache->raiseMinRev(7, 20);
+        $this->assertSame([3, 4, 20, 1, 5], $this->mem->get('a:7'));
+        $this->assertSame(120, $this->mem->ttl('a:7'));
+        $this->mem->now += 10;
+        $this->mem->log = [];
+        $this->cache->raiseMinRev(7, 15);
+        $this->assertSame(['get a:7'], $this->mem->log, 'never lowered, only read');
+        $this->assertSame([3, 4, 20, 1, 5], $this->mem->get('a:7'));
+        $this->assertSame(110, $this->mem->ttl('a:7'));
+    }
+
     public function testGrantValidOnlyWithMatchingAcl(): void {
         $this->cache->setGrant(7, 'alice', 2, 'edit', 'l');
         $this->assertSame(['acl' => 2, 'role' => 'edit', 'origin' => 'l'], $this->cache->getGrant(7, 'alice'));

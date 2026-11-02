@@ -6,7 +6,8 @@
  * Structural guards of the scene (SPEC-M0 §6.3, WP-S "Fertig in Phase 1"):
  * - neither the model nor the scene imports Vue (no Konva object and no model
  *   ends up in reactivity)
- * - Konva only through deep imports: konva/lib/Core (Group, Shape) + Rect/Text/Line;
+ * - Konva only through deep imports: konva/lib/Core (Group, Shape) + Rect/Text/Line
+ *   (job 200: konva/lib/Canvas, a part of Core, in the renderer for the vector export);
  *   the model never imports Konva
  * - (M1) every node shape (new ctx.Rect|Text|Shape|Line) is built with
  *   ...SHAPE_BASE; the renderer's ctx carries exactly Group, Rect, Text,
@@ -45,9 +46,12 @@ describe('imports', () => {
 	test('Konva only via konva/lib/Core and the Rect/Text/Line shapes; not in the model', () => {
 		for (const p of sceneFiles) {
 			for (const m of read(p).matchAll(/from\s+'(konva[^']*)'/g)) {
-				assert.match(m[1], /^konva\/lib\/(Core|shapes\/(Rect|Text|Line))$/, `${rel(p)}: ${m[1]}`)
+				// job 200: konva/lib/Canvas (a part of Core) for the SceneCanvas of the vector export, in the renderer only
+				const canvas = m[1] === 'konva/lib/Canvas' && p.endsWith('KonvaRenderer.js')
+				assert.ok(canvas || /^konva\/lib\/(Core|shapes\/(Rect|Text|Line))$/.test(m[1]), `${rel(p)}: ${m[1]}`)
 			}
 		}
+		assert.match(read(join(ROOT, 'node_modules/konva/lib/_CoreInternals.js')), /import \{ Canvas \} from "\.\/Canvas\.js"/, 'Canvas.js is part of Core')
 		for (const p of modelFiles) {
 			assert.doesNotMatch(read(p), /from\s+'konva/, rel(p))
 		}
@@ -145,11 +149,13 @@ describe('Konva usage', () => {
 		assert.match(read(join(ROOT, 'src/scene/nodes/common.js')), /SHAPE_BASE = Object\.freeze\(\{ listening: false, perfectDrawEnabled: false \}\)/)
 	})
 
-	test('the builder context is {Group, Rect, Text, Shape, Line, shadows}', () => {
+	test('the builder context is {Group, Rect, Text, Shape, Line, shadows, measureCell, measureNode, measureTitle, tags}', () => {
 		const m = code.match(/this\.#ctx = \{([^}]*)\}/)
 		assert.ok(m, 'ctx assignment')
 		const keys = m[1].split(',').map((x) => x.trim().split(':')[0].trim())
-		assert.deepEqual(keys, ['Group', 'Rect', 'Text', 'Shape', 'Line', 'shadows'])
+		// job 173: measureCell, the renderer's text measurement of a table cell; job 191: tags, the board's tag map;
+		// job 195: measureNode, the text size of a mind map node; job 243: measureTitle, the width of a frame title (its tab)
+		assert.deepEqual(keys, ['Group', 'Rect', 'Text', 'Shape', 'Line', 'shadows', 'measureCell', 'measureNode', 'measureTitle', 'tags'])
 	})
 
 	test('transform preview: the activeGroup gets exactly one setAttrs per call; no other node transform API', () => {
@@ -165,8 +171,28 @@ describe('Konva usage', () => {
 		// the culling keeps only the list of entries in view at LOD 2 (no node moves)
 		const cull = code.slice(code.indexOf('#cull() {'), code.indexOf('#clearUi() {'))
 		assert.match(cull, /if \(this\.#lod === 2\) \{\s+this\.#coarse\.hits = hits\s+return\s+\}/)
+		// job 178: the one bitmap is the image export's, drawn on demand from a detached group (renderImage)
+		const image = code.slice(code.indexOf('async renderImage(job) {'), code.indexOf('#exportRoute(id, it) {'))
+		assert.equal([...code.matchAll(/toCanvas\(/g)].length, 1, 'one toCanvas')
+		assert.match(image, /canvas = root\.toCanvas\(\{ x: 0, y: 0, width: job\.width, height: job\.height, pixelRatio: 1 \}\)/, 'inside renderImage, at pixel ratio 1')
+		assert.match(image, /root\?\.destroy\(\)[\s\S]*canvas\.width = 0\s+canvas\.height = 0/, 'the group destroyed, the bitmap emptied')
+		// job 200: the vector export draws no bitmap; only the PDF's text runs WinAnsi cannot encode are small
+		// canvases of their own (exportRasterText), read and emptied at once
+		const raster = code.slice(code.indexOf('function exportRasterText('), code.indexOf('export function snapGuideDashOffset('))
+		assert.match(raster, /finally \{\s+canvas\.width = 0\s+canvas\.height = 0\s+\}/)
+		// job 203: and the PDF's pictures of own shapes (exportRasterImage), the same way
+		const pictures = code.slice(code.indexOf('function exportRasterImage('), code.indexOf('function exportRasterText('))
+		assert.match(pictures, /finally \{\s+canvas\.width = 0\s+canvas\.height = 0\s+\}/)
+		assert.equal([...code.matchAll(/getImageData\(/g)].length, 2, 'two getImageData, in exportRasterText and exportRasterImage')
+		assert.ok(raster.includes('getImageData(') && pictures.includes('getImageData('))
+		// job 203: drawImage only for the decoded pictures of own shapes: the shape node, the coarse painting and the PDF
+		const drawsPictures = { 'KonvaRenderer.js': 1, 'shape.js': 1, 'coarse.js': 2 }
 		for (const p of [...sceneFiles, ...modelFiles]) {
-			assert.doesNotMatch(stripComments(read(p)), /\.cache\(|toImage|toCanvas|toDataURL|createImageBitmap|drawImage/, rel(p))
+			const c = stripComments(read(p))
+			const name = p.split('/').pop()
+			const allowed = drawsPictures[name] ?? 0
+			assert.equal([...c.matchAll(/\.drawImage\(/g)].length, allowed, rel(p) + ': drawImage calls')
+			assert.doesNotMatch(p.endsWith('KonvaRenderer.js') ? c.replace('root.toCanvas(', '') : c, /\.cache\(|toImage|toCanvas|toDataURL|createImageBitmap/, rel(p))
 		}
 		const coarse = stripComments(read(join(ROOT, 'src/scene/nodes/coarse.js')))
 		assert.doesNotMatch(coarse, /new ctx\.(Rect|Text|Line)\(/, 'boxes are fillRect, titles fillText: no node per item')

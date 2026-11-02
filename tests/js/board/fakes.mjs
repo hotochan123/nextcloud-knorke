@@ -12,6 +12,7 @@ import { routeConnector } from '../../../src/model/connectors.js'
 import { typeInfo, layerRank } from '../../../src/model/registry.js'
 import { applyPatch } from '../../../src/model/paths.js'
 import { cmpBytes, isValidKey } from '../../../src/model/zorder.js'
+import { mindmapLayout, nodeAtLayout } from '../../../src/model/mindmap.js'
 
 export const ID = (n) => '01JA' + String(n).padStart(22, '0')
 
@@ -250,6 +251,18 @@ export class FakeModel {
 		return best
 	}
 
+	/** (job 278) SceneModel.boundsOf without rotation and without connector routes: the union of the abs boxes of known non-connector items. */
+	boundsOf(ids) {
+		let b = null
+		for (const id of ids) {
+			const it = this.items.get(id)
+			if (!it || it.t === 'connector') continue
+			const a = this.abs(id)
+			b = b === null ? { x0: a.x, y0: a.y, x1: a.x + a.w, y1: a.y + a.h } : { x0: Math.min(b.x0, a.x), y0: Math.min(b.y0, a.y), x1: Math.max(b.x1, a.x + a.w), y1: Math.max(b.y1, a.y + a.h) }
+		}
+		return b === null ? null : { x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 }
+	}
+
 	allBounds() {
 		return null
 	}
@@ -316,6 +329,8 @@ export class FakeScene {
 		this.grid = opts.grid === true
 		// snapping to the shown grid (M2, R12, job 019): the option of the session, then setGridSnap
 		this.gridSnap = opts.gridSnap === true
+		// the mouse wheel (job 154): the option of the session as given, then setWheel
+		this.wheel = opts.wheel
 		FakeScene.last = this
 	}
 
@@ -336,6 +351,10 @@ export class FakeScene {
 	screenToWorld(x, y) { return { x, y } }
 	worldToScreen(x, y) { return { x: x + 1, y: y + 2 } }
 	itemScreenRect(id) { return this.model.has(id) ? { x: 10, y: 20, w: 30, h: 40 } : null }
+	/** (job 136) recorded only; the camera of panIntoView is the real scene's (tests/js/scene/neighbour.test.mjs). */
+	panIntoView(id) { this.log('panIntoView', id); return false }
+	/** (job 143) recorded only; the camera of revealTitle is the real scene's (tests/js/scene/titleHint.test.mjs); (job 193) with bottom. */
+	revealTitle(id, top, bottom) { this.log('revealTitle', id, top, bottom); return false }
 	update(summary) { this.log('update', summary) }
 	reset() { this.log('reset') }
 	setTool(t, opts = null) { this.tool = t; this.toolOpts = { ...(this.toolOpts ?? {}), [t]: opts }; this.log('setTool', t, opts) }
@@ -346,17 +365,61 @@ export class FakeScene {
 	focusCanvas() { this.log('focusCanvas') }
 	handles() { return this.handleList ?? [] }
 	getSelection() { return [...this.selection] }
-	setSelection(ids) { this.selection = [...ids]; this.log('setSelection', [...ids]) }
+	/** (job 190) as the real scene: a change of the selection ends the offer of locked items */
+	setSelection(ids) {
+		if (ids.length !== this.selection.length || ids.some((id, i) => id !== this.selection[i])) this.lockedOffer = null
+		this.selection = [...ids]
+		this.log('setSelection', [...ids])
+	}
+	/** (job 190) the offer of locked items: the scene's own input sets it (tests: offer()), the session reads it */
+	getLockedOffer() { return this.lockedOffer ? [...this.lockedOffer] : [] }
+	/** (job 190) recorded; null or [] ends it; true when it changed (no echo, like the real facade) */
+	setLockedOffer(ids) {
+		const next = Array.isArray(ids) && ids.length > 0 ? [...ids] : null
+		this.log('setLockedOffer', next)
+		const changed = JSON.stringify(next) !== JSON.stringify(this.lockedOffer ?? null)
+		this.lockedOffer = next
+		return changed
+	}
+	/** (job 190) test helper: the scene's own input offers ids (a plain marquee, Ctrl/⌘+A) and reports it */
+	offer(ids) {
+		this.lockedOffer = ids.length > 0 ? [...ids] : null
+		this.callbacks.onLockedOffer?.([...ids])
+	}
 	setViewOnly(v) { this.viewOnly = v; this.log('setViewOnly', v) }
 	setGrid(on) { this.grid = on === true; this.log('setGrid', on) }
 	getGrid() { return this.grid }
 	setGridSnap(on) { this.gridSnap = on === true; this.log('setGridSnap', on) }
 	getGridSnap() { return this.gridSnap }
+	setWheel(stage) { this.wheel = stage; this.log('setWheel', stage) }
+	getWheel() { return this.wheel }
+	/** (job 172) the session's part of the reaction rule, recorded */
+	setReactions(cfg) { this.reactions = { ...cfg }; this.log('setReactions', { ...cfg }) }
 	setRemoteSampler(fn) { this.sampler = fn }
 	presenceChanged() { this.presenceChangedCount++ }
 	isActive(id) { return this.active.has(id) }
 	openTextEditor(id, opts = {}) { this.log('openTextEditor', id, opts) }
-	setEditorNotice(id, notice) { this.log('setEditorNotice', id, notice) }
+	/** (job 195) like the real scene: the focus of the one selected mind map, reported with onNodeFocus */
+	focusNode(id, key) {
+		this.log('focusNode', id, key)
+		this.focus = key === null ? null : { id, key }
+		this.callbacks.onNodeFocus?.(key === null ? null : id, key)
+		return true
+	}
+	/** (job 195) the box of a node: its layout with estimateNodeSize (the session's comment bubbles) */
+	nodeBox(id, key) {
+		const a = this.model.abs(id)
+		const n = a ? mindmapLayout(this.model.get(id)).byKey.get(key) : null
+		return n ? { x: a.x + n.x, y: a.y + n.y, w: n.w, h: n.h, r: 0 } : null
+	}
+	/** (job 195) the node under a world point (estimateNodeSize) */
+	nodeAt(id, w) {
+		const a = this.model.abs(id)
+		const l = a ? mindmapLayout(this.model.get(id)) : null
+		return l ? nodeAtLayout(l, w.x - a.x, w.y - a.y, 4)?.key ?? null : null
+	}
+	/** (job 173) a third argument, the cell of a table, is logged too */
+	setEditorNotice(id, notice, ...cell) { this.log('setEditorNotice', id, notice, ...cell) }
 	/**
 	 * §6.3 flushEditor(): when the test set `dirty` ({id, value, before, path}),
 	 * an open editor holds text that was not emitted yet: emit it as an
@@ -373,6 +436,25 @@ export class FakeScene {
 		return true
 	}
 	stats() { return { items: this.model.size, cssTransform: null } }
+	/**
+	 * (job 178) §6.3 exportImage(job): every job recorded; resolves with
+	 * `exportResult(job)` when the test set one, else with a small PNG Blob.
+	 */
+	exportImage(job) {
+		this.log('exportImage', job)
+		return Promise.resolve(this.exportResult ? this.exportResult(job) : new Blob(['png'], { type: 'image/png' }))
+	}
+	/**
+	 * (job 200) exportVector(job): every job recorded; resolves with
+	 * `vectorResult(job)` when the test set one, else with a small file of
+	 * the job's format (width, height: the frame; scale 1).
+	 */
+	exportVector(job) {
+		this.log('exportVector', job)
+		if (this.vectorResult) return Promise.resolve(this.vectorResult(job))
+		const type = job.format === 'svg' ? 'image/svg+xml;charset=utf-8' : 'application/pdf'
+		return Promise.resolve({ blob: new Blob([job.format], { type }), width: job.frame.w, height: job.frame.h, scale: 1 })
+	}
 }
 
 /**

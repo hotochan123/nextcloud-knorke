@@ -65,7 +65,8 @@ test('U14 board list: each row is a plain list item; title and meta are a real l
 	assert.equal(findAll(a, (e) => e.tag === 'NcActions').length, 0, 'no actions inside the link')
 	assert.equal(findAll(a, (e) => e.tag === 'button' || /^NcAction/.test(e.tag)).length, 0, 'nothing interactive inside the link')
 	assert.equal(findAll(li, (e) => e.tag === 'NcActions').length, 1, 'actions sit next to the link')
-	assert.ok(findAll(a, (e) => (e.props.find((p) => p.name === 'class')?.value?.content ?? '').includes('knorke-list__meta')).length === 1, 'meta inside the link')
+	// job 232: the time and (boards not of one's own) owner, origin and access, both inside the link
+	assert.equal(findAll(a, (e) => (e.props.find((p) => p.name === 'class')?.value?.content ?? '').includes('knorke-list__meta')).length, 2, 'meta inside the link')
 })
 
 test('U14 top bar: the owner\'s rename trigger is a button named "Rename board: {title}" inside the heading; no focusable heading', () => {
@@ -91,27 +92,58 @@ test('U14 top bar: the owner\'s rename trigger is a button named "Rename board: 
  * @param {string} name attribute (static or bound)
  * @return {boolean}
  */
+/**
+ * (Job 230) The toggles of the context bar: the keys of TOGGLES in ContextBar.vue, in their order.
+ *
+ * @return {string[]}
+ */
+function barToggles() {
+	const src = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
+	const block = src.match(/const TOGGLES = computed\(\(\) => \(\{\n([\s\S]*?)\n\}\)\)/)[1]
+	return [...block.matchAll(/^\t(?:'([a-z-]+)'|([a-z]+)): \{ panel: '([a-z-]+)'/gm)].map((m) => m[1] ?? m[2])
+}
+
 function has(el, name) {
 	return prop(el, name) !== undefined
 }
 
-test('M1 toolbar: every button is named; tools are toggle buttons (pressed) with [data-knorke-tool]; the shape kinds have a named menu', () => {
+test('M1 toolbar: every button is named; tools are toggle buttons (pressed) with [data-knorke-tool]; (job 229) the variants and "More tools" are named dialogs of stateful tiles; undo and redo named in their island', () => {
 	const ast = template('src/components/Toolbar.vue')
-	const buttons = findAll(ast, (e) => e.tag === 'NcButton')
-	assert.ok(buttons.length >= 3)
+	const all = findAll(ast, (e) => e.tag === 'NcButton')
+	assert.equal(all.length, 2, 'one v-for button for all tools of the bar, (job 268) one for "Create with AI"')
+	const ai = all.find((b) => prop(b, 'data-knorke-tool')?.value?.content === 'ai')
+	assert.ok(ai && has(ai, 'aria-label') && has(ai, 'title') && prop(ai, 'aria-haspopup')?.value?.content === 'dialog', 'job 268: the AI button is named and opens a dialog')
+	const buttons = all.filter((b) => b !== ai)
+	const on = (b, ev) => b.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === ev)
 	for (const b of buttons) {
 		assert.ok(has(b, 'aria-label'), 'NcButton without aria-label')
-		assert.ok(b.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click'), 'click carries the event')
+		assert.ok(on(b, 'click'), 'click carries the event')
+		assert.ok(has(b, 'data-knorke-tool') && has(b, 'pressed') && has(b, 'aria-haspopup') && has(b, 'aria-expanded'))
+		assert.ok(on(b, 'pointerdown') && on(b, 'contextmenu'), 'long press and right-click')
 	}
-	const tools = buttons.filter((b) => has(b, 'data-knorke-tool'))
-	assert.equal(tools.length, 1, 'one v-for button for all tools')
-	assert.ok(has(tools[0], 'pressed'))
-	const opts = template('src/components/ToolOptions.vue')
-	const menu = findAll(opts, (e) => e.tag === 'NcActions')[0]
-	assert.ok(has(menu, 'aria-label') && has(menu, 'data-knorke-tool-options'))
-	const radios = findAll(opts, (e) => e.tag === 'NcActionRadio')
-	assert.equal(radios.length, 1)
-	assert.ok(has(radios[0], 'data-knorke-tool-option'))
+	const more = findAll(ast, (e) => has(e, 'data-knorke-more-tools'))[0]
+	assert.equal(prop(more, 'role').value.content, 'dialog')
+	assert.ok(has(more, 'aria-label'))
+	const tiles = findAll(more, (e) => e.tag === 'button')
+	assert.equal(tiles.length, 1)
+	assert.equal(prop(tiles[0], 'type')?.value?.content, 'button')
+	assert.ok(has(tiles[0], 'aria-pressed') && has(tiles[0], 'data-knorke-tool'))
+	const vars = template('src/components/ToolVariants.vue')
+	const root = vars.children.find((c) => c.type === 1)
+	assert.equal(prop(root, 'role').value.content, 'dialog')
+	assert.ok(has(root, 'aria-label') && has(root, 'data-knorke-tool-variants'))
+	// job 226: every value with its picture; job 229: tiles, aria-pressed for the current one
+	const opts = findAll(vars, (e) => e.tag === 'button')
+	assert.equal(opts.length, 1)
+	assert.equal(prop(opts[0], 'type')?.value?.content, 'button')
+	assert.ok(has(opts[0], 'aria-pressed') && has(opts[0], 'data-knorke-tool-option'))
+	const undo = template('src/components/UndoBar.vue')
+	const group = undo.children.find((c) => c.type === 1)
+	assert.equal(prop(group, 'role').value.content, 'group')
+	assert.ok(has(group, 'aria-label'))
+	const ur = findAll(undo, (e) => e.tag === 'NcButton')
+	assert.equal(ur.length, 2)
+	for (const b of ur) assert.ok(has(b, 'aria-label') && has(b, 'disabled') && on(b, 'click'))
 })
 
 test('M1 context bar: a named toolbar; every button named and stateful (aria-pressed), section toggles with aria-expanded/aria-controls; style hooks on every style button', () => {
@@ -121,28 +153,42 @@ test('M1 context bar: a named toolbar; every button named and stateful (aria-pre
 	assert.ok(has(root, 'aria-label'))
 	for (const b of findAll(ast, (e) => e.tag === 'button')) {
 		assert.equal(prop(b, 'type')?.value?.content, 'button')
-		assert.ok(has(b, 'aria-pressed'), 'native style button without aria-pressed')
 		assert.ok(has(b, 'aria-label') || b.children.some((c) => c.type === 5 || c.type === 2), 'native button without a name')
+		if (prop(b, 'data-knorke-action')?.value?.content === 'filter' || has(b, 'data-knorke-filter') || has(b, 'data-knorke-filter-tag')) {
+			// job 144: the count button and the entries of its panel are commands, named by their text (job 230: also by tag)
+			continue
+		}
+		if (prop(b, 'role')?.value?.content === 'tab') {
+			// job 230: the tabs of the colour panel: named by their text, the state in aria-selected
+			assert.ok(has(b, 'aria-selected') && has(b, 'data-knorke-tab'), 'a tab with its state and hook')
+			continue
+		}
+		assert.ok(has(b, 'aria-pressed'), 'native style button without aria-pressed')
 		assert.ok(has(b, 'data-knorke-style') && has(b, 'data-knorke-value'), 'style hook')
 	}
 	const nc = findAll(ast, (e) => e.tag === 'NcButton')
 	for (const b of nc) {
 		assert.ok(has(b, 'aria-label'), 'NcButton without aria-label')
 	}
-	const panelActions = ['arrange', 'align']
-	const toggles = nc.filter((b) => has(b, 'data-knorke-section') || panelActions.includes(prop(b, 'data-knorke-action')?.value?.content))
-	assert.deepEqual(toggles.map((b) => prop(b, 'data-knorke-section')?.value?.content ?? prop(b, 'data-knorke-action').value.content), ['fill', 'border', 'text', 'kind', 'route', 'caps', 'arrange', 'align'])
-	for (const b of toggles) {
-		assert.ok(has(b, 'aria-expanded') && has(b, 'aria-controls'))
+	// job 230: one NcButton for every toggle (TOGGLES), with its hook, its state and its panel
+	assert.deepEqual(barToggles(), ['align', 'color', 'kind', 'route', 'caps', 'header', 'mm-node', 'mm-layout'])
+	const toggles = nc.filter((b) => b.props.some((p) => p.type === 7 && p.name === 'else-if' && p.exp?.content === 'TOGGLES[item]'))
+	assert.equal(toggles.length, 1)
+	for (const a of ['aria-expanded', 'aria-controls', 'pressed', 'aria-label', 'title']) {
+		assert.ok(has(toggles[0], a), 'toggle without ' + a)
 	}
-	for (const a of ['arrange', 'align', 'copy', 'cut', 'duplicate', 'connect', 'label']) {
-		assert.equal(nc.filter((b) => prop(b, 'data-knorke-action')?.value?.content === a).length, 1, a)
-	}
+	assert.equal(toggles[0].props.find((p) => p.type === 7 && p.name === 'bind' && !p.arg)?.exp?.content, '{ [TOGGLES[item].hook]: item }')
+	assert.equal(nc.filter((b) => prop(b, 'data-knorke-action')?.value?.content === 'label').length, 1, 'label')
+	// job 230: copy, cut, duplicate, connect, arrange … are entries of "…" (NcActionButton, one per name of moreGroups)
+	// job 279: the links' menu of "Open link" has its own entries (data-knorke-link)
+	const more = findAll(ast, (e) => e.tag === 'NcActionButton' && !has(e, 'data-knorke-link'))
+	assert.equal(more.length, 1)
+	assert.equal(prop(more[0], 'data-knorke-action').exp.content, 'name')
+	assert.equal(more[0].props.find((p) => p.type === 7 && p.name === 'for').exp.content, 'name in mg')
+	const menu = findAll(ast, (e) => e.tag === 'NcActions' && prop(e, 'data-knorke-action')?.value?.content !== 'open-link')
+	assert.equal(menu.length, 1)
+	assert.ok(has(menu[0], 'aria-label') && has(menu[0], 'title'), '"…" is named')
 	assert.equal(nc.filter((b) => /paste/.test(prop(b, 'data-knorke-action')?.value?.content ?? '')).length, 0, 'no paste button')
-	// round 1b (§6.8, §6.12): "Connect" only with selection v2 canConnect, emitting connect with the event
-	const connect = nc.find((b) => prop(b, 'data-knorke-action')?.value?.content === 'connect')
-	assert.match(connect.props.find((p) => p.type === 7 && p.name === 'if')?.exp?.content ?? '', /selection.canConnect/)
-	assert.ok(connect.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click'))
 	// every connector style button carries its hook (route, start/end tip)
 	const styled = nc.filter((b) => has(b, 'data-knorke-style')).map((b) => prop(b, 'data-knorke-style'))
 	const paths = styled.map((p) => p.value?.content ?? p.exp?.content)
@@ -156,18 +202,13 @@ test('M1 context bar: a named toolbar; every button named and stateful (aria-pre
 test('M2 align (AK9): one named toggle [data-knorke-action=align] (v-if sections.itemAlign, aria-expanded, aria-controls); its panel holds the six commands of ALIGN_EDGES as named NcButtons that emit align(edge, event); the board view wires @align', () => {
 	const ast = template('src/components/ContextBar.vue')
 	const nc = findAll(ast, (e) => e.tag === 'NcButton')
-	const toggle = nc.filter((b) => prop(b, 'data-knorke-action')?.value?.content === 'align')
-	assert.equal(toggle.length, 1)
-	const tb = toggle[0]
-	for (const a of ['aria-label', 'title', 'aria-expanded', 'aria-controls', 'pressed']) {
-		assert.ok(has(tb, a), 'toggle without ' + a)
-	}
+	// job 230: the toggle is the TOGGLES entry align (contextbar.js barGroups shows it with sections.itemAlign)
+	const src0 = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
 	// 018 AK1: a name apart from the text alignment
-	assert.equal(prop(tb, 'aria-label').exp.content, "t('knorke', 'Align items')")
-	assert.equal(prop(tb, 'title').exp.content, "t('knorke', 'Align items')")
+	assert.match(src0, /\talign: \{ panel: 'align', hook: 'data-knorke-action', label: t\('knorke', 'Align items'\), icon: icons\.alignItemsLeft \},/)
+	const tb = nc.find((b) => b.props.some((p) => p.type === 7 && p.name === 'else-if' && p.exp?.content === 'TOGGLES[item]'))
 	assert.equal(prop(tb, 'aria-controls').exp.content, 'panelId')
-	assert.equal(tb.props.find((p) => p.type === 7 && p.name === 'if')?.exp?.content, 'sections.itemAlign')
-	assert.match(tb.props.find((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click')?.exp?.content ?? '', /toggle\('align'\)/)
+	assert.match(tb.props.find((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click')?.exp?.content ?? '', /toggle\(TOGGLES\[item\]\.panel\)/)
 	// the commands: one v-for NcButton per edge, in rows over ITEM_ALIGN_ROWS (= ALIGN_EDGES in two rows)
 	const cmds = nc.filter((b) => has(b, 'data-knorke-align'))
 	assert.equal(cmds.length, 1, 'one v-for button for every edge')
@@ -179,7 +220,7 @@ test('M2 align (AK9): one named toggle [data-knorke-action=align] (v-if sections
 	assert.equal(prop(cb, 'variant').value.content, 'tertiary')
 	assert.equal(prop(cb, 'pressed'), undefined, 'commands, not states')
 	assert.match(cb.props.find((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click')?.exp?.content ?? '', /\$emit\('align', edge, e\)/)
-	const rows = findAll(ast, (e) => findAll(e, (c) => c === cb).length > 0 && e.props.some((p) => p.type === 7 && p.name === 'for'))
+	const rows = findAll(ast, (e) => findAll(e, (c) => c === cb).length > 0 && e.props.some((p) => p.type === 7 && p.name === 'for' && /ITEM_ALIGN_ROWS/.test(p.exp?.content ?? '')))
 	assert.equal(rows.length, 1)
 	assert.equal(rows[0].props.find((p) => p.type === 7 && p.name === 'for').exp.content, '(row, i) in ITEM_ALIGN_ROWS')
 	assert.equal(prop(rows[0], 'class').value.content, 'knorke-contextbar__row')
@@ -195,29 +236,22 @@ test('M2 align (AK9): one named toggle [data-knorke-action=align] (v-if sections
 	assert.match(on.exp.content, /act\(e, \(s\) => s\.align\(edge\)\)/)
 })
 
-test('018 AK6: the panel element is the next element after the toggle [data-knorke-action=align] (the last panel toggle) and comes before "Copy"; the count stays the last child of the bar', () => {
+test('018 AK6, job 230: the open panel follows the element that opened it (PANEL_AT: its toggle, the chip for \'filter\', "…" for \'arrange\'): one element after the item chain inside the loop of the groups, with id, role group and name', () => {
 	const ast = template('src/components/ContextBar.vue')
-	const root = ast.children.find((c) => c.type === 1)
-	const kids = root.children.filter((c) => c.type === 1)
-	const action = (el) => prop(el, 'data-knorke-action')?.value?.content
-	const align = kids.findIndex((c) => c.tag === 'NcButton' && action(c) === 'align')
-	const copy = kids.findIndex((c) => c.tag === 'NcButton' && action(c) === 'copy')
-	const panel = kids.findIndex((c) => has(c, 'data-knorke-panel'))
-	assert.ok(align >= 0 && copy >= 0 && panel >= 0, 'toggle, panel and Copy are children of the bar root')
-	assert.equal(panel, align + 1, 'the panel follows the toggle "Align items" directly')
-	assert.equal(copy, panel + 1, 'and stands right before "Copy"')
-	// every panel toggle comes before the panel (one Tab from "Align items" or "Arrange" leads into it)
-	const toggles = kids.map((c, i) => [c, i]).filter(([c]) => has(c, 'aria-controls'))
-	assert.equal(toggles.length, 8)
-	assert.ok(toggles.every(([, i]) => i < panel))
-	assert.equal(kids.findIndex((c) => c.tag === 'NcButton' && action(c) === 'arrange'), align - 1, '"Arrange" right before "Align items" (never shown together)')
-	// the panel itself: unchanged attributes, the count is the last child
-	assert.equal(prop(kids[panel], 'id').exp.content, 'panelId')
-	assert.equal(prop(kids[panel], 'class').value.content, 'knorke-contextbar__panel')
-	assert.equal(prop(kids[panel], 'role').value.content, 'group')
-	assert.equal(prop(kids[panel], 'aria-label').exp.content, 'panelLabel')
-	assert.equal(kids[panel].props.find((p) => p.type === 7 && p.name === 'if')?.exp?.content, 'panel')
-	assert.equal(prop(kids.at(-1), 'class')?.value?.content, 'knorke-contextbar__count')
+	const panels = findAll(ast, (e) => has(e, 'data-knorke-panel'))
+	assert.equal(panels.length, 1, 'one panel element')
+	const panel = panels[0]
+	assert.equal(panel.props.find((p) => p.type === 7 && p.name === 'if')?.exp?.content, 'panel !== null && PANEL_AT[panel] === item')
+	// inside the loop over the items of a group, after the chain of the items (v-if / v-else-if)
+	const loop = findAll(ast, (e) => e.children?.includes(panel))[0]
+	assert.equal(loop.props.find((p) => p.type === 7 && p.name === 'for')?.exp?.content, 'item in g')
+	const kids = loop.children.filter((c) => c.type === 1)
+	assert.equal(kids.at(-1), panel, 'the last element of the item: right after the one that opened it')
+	assert.equal(prop(panel, 'id').exp.content, 'panelId')
+	assert.equal(prop(panel, 'role').value.content, 'group')
+	assert.equal(prop(panel, 'aria-label').exp.content, 'panelLabel')
+	const src = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
+	assert.match(src, /const PANEL_AT = Object\.freeze\(\{\n\tcolor: 'color', kind: 'kind', route: 'route', caps: 'caps', header: 'header', 'mm-node': 'mm-node', 'mm-layout': 'mm-layout',\n\talign: 'align', filter: 'chip', arrange: 'more',\n\}\)/)
 })
 
 test('M2 distribute (AK9): one v-for NcButton [data-knorke-distribute] over DISTRIBUTE_AXES, named, a command (no pressed) emitting distribute(axis, event), in a row of its own (v-if sections.distribute) inside the align panel; no toggle of its own; the board view wires @distribute', () => {
@@ -244,8 +278,7 @@ test('M2 distribute (AK9): one v-for NcButton [data-knorke-distribute] over DIST
 	assert.ok(branch[0].children.includes(row), 'a row of the align panel')
 	assert.ok(branch[0].children.indexOf(row) > branch[0].children.findIndex((c) => c.type === 1 && findAll(c, (x) => has(x, 'data-knorke-align')).length > 0), 'after the align rows')
 	// no toggle of its own: the panel toggles stay the same
-	const toggles = nc.filter((b) => has(b, 'data-knorke-section') || ['arrange', 'align'].includes(prop(b, 'data-knorke-action')?.value?.content))
-	assert.deepEqual(toggles.map((b) => prop(b, 'data-knorke-section')?.value?.content ?? prop(b, 'data-knorke-action').value.content), ['fill', 'border', 'text', 'kind', 'route', 'caps', 'arrange', 'align'])
+	assert.deepEqual(barToggles(), ['align', 'color', 'kind', 'route', 'caps', 'header', 'mm-node', 'mm-layout'], 'job 230: the toggles of the bar')
 	assert.ok(!nc.some((b) => /distribute/.test(prop(b, 'data-knorke-action')?.value?.content ?? '')))
 	const src = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
 	assert.match(src, /defineEmits\(\[[^\]]*'distribute'/)
@@ -289,8 +322,7 @@ test('M2 tidy up (AK8): one named NcButton [data-knorke-action=tidy], a command 
 	const distributeRow = kids.findIndex((c) => findAll(c, (x) => has(x, 'data-knorke-distribute')).length > 0)
 	assert.ok(distributeRow >= 0 && kids.indexOf(row) > distributeRow, 'after the distribute row')
 	// no toggle of its own: the panel toggles stay the same
-	const toggles = nc.filter((b) => has(b, 'data-knorke-section') || ['arrange', 'align'].includes(prop(b, 'data-knorke-action')?.value?.content))
-	assert.deepEqual(toggles.map((b) => prop(b, 'data-knorke-section')?.value?.content ?? prop(b, 'data-knorke-action').value.content), ['fill', 'border', 'text', 'kind', 'route', 'caps', 'arrange', 'align'])
+	assert.deepEqual(barToggles(), ['align', 'color', 'kind', 'route', 'caps', 'header', 'mm-node', 'mm-layout'], 'job 230: the toggles of the bar')
 	const src = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
 	assert.match(src, /defineEmits\(\[[^\]]*'tidy'/)
 	// the board view runs the command (refocus after a pointer click)
@@ -327,7 +359,8 @@ test('M1 board view: the canvas host is focusable and named; the paste catcher i
 test('M1 1b toolbar: every tool of TOOLS is offered (the connector tool is no longer hidden), each with an icon of its own; the board view wires connect and label', () => {
 	const src = readFileSync(new URL('../../../src/components/Toolbar.vue', import.meta.url), 'utf8')
 	assert.doesNotMatch(src, /HIDDEN_TOOLS|\.filter\(/, 'no tool is filtered out')
-	const icons = src.match(/const ICONS = Object\.freeze\(\{([\s\S]*?)\}\)/)[1]
+	// job 229: the icons live in components/toolbar.js
+	const icons = readFileSync(new URL('../../../src/components/toolbar.js', import.meta.url), 'utf8').match(/const TOOL_ICONS = Object\.freeze\(\{([\s\S]*?)\}\)/)[1]
 	for (const id of ['select', 'hand', 'sticky', 'shape', 'text', 'connector', 'frame']) {
 		assert.match(icons, new RegExp(`\\b${id}: icons\\.`), id)
 	}
@@ -443,35 +476,49 @@ test('M1 stage 3 presence bar: participants are buttons with aria-pressed and a 
 	assert.match(readFileSync(new URL('../../../src/components/PresenceBar.vue', import.meta.url), 'utf8'), /t\('knorke', 'People on tablets or voting don\\'t appear here\.'\)/)
 })
 
-test('M1 stage 3 vote bar: a named region at the bottom ([data-knorke-bar=vote]), every button named; the switch is an action button (R17 K5); "+5 min" only with endsAt (R16 SRV-07); a polite live region', () => {
-	const ast = template('src/components/VoteBar.vue')
+test('M1 stage 3 vote bar (job 233: the vote segment of the session bar): a named region at the bottom ([data-knorke-bar=session], the vote segment [data-knorke-bar=vote]), every button named; the switch is an action button (R17 K5); "+5 min" only with endsAt (R16 SRV-07); a polite live region', () => {
+	const ast = template('src/components/SessionBar.vue')
 	const root = ast.children.find((c) => c.type === 1)
 	assert.equal(val(root, 'role'), 'region')
 	assert.ok(has(root, 'aria-label'))
-	assert.equal(val(root, 'data-knorke-bar'), 'vote')
-	assert.ok(has(root, 'data-knorke-vote-bar') && has(root, 'data-knorke-vote-state') && has(root, 'data-knorke-vote-left'))
-	for (const b of findAll(ast, (e) => e.tag === 'NcButton' || e.tag === 'button')) {
+	assert.equal(val(root, 'data-knorke-bar'), 'session')
+	assert.ok(has(root, 'data-knorke-chrome'))
+	// the vote segment: wide a fixed hook, narrow the two lines while a vote is there
+	const wide = hooked(ast, 'data-knorke-bar', 'vote')
+	assert.equal(wide.length, 1)
+	assert.ok(has(wide[0], 'data-knorke-vote-bar') && has(wide[0], 'data-knorke-vote-state') && has(wide[0], 'data-knorke-vote-left'))
+	const lines = findAll(ast, (e) => /hasVote \? 'vote' : null/.test(val(e, 'data-knorke-bar') ?? ''))
+	assert.equal(lines.length, 1, 'narrow: the lines carry the vote hooks')
+	assert.ok(has(lines[0], 'data-knorke-vote-bar') && has(lines[0], 'data-knorke-vote-state') && has(lines[0], 'data-knorke-vote-left'))
+	for (const b of findAll(ast, (e) => e.tag === 'NcButton' || e.tag === 'button' || e.tag === 'NcActions')) {
 		assert.ok(named(b), 'named button')
 	}
 	// R17 K5 (§6.8, §6.12): the state is conveyed one way only: the label names
 	// the action ("Edit" in mode vote, "Vote" in mode edit), no aria-pressed
 	const sw = hooked(ast, 'data-knorke-action', 'vote-mode')
-	assert.equal(sw.length, 1)
-	assert.equal(sw[0].tag, 'button')
-	assert.equal(has(sw[0], 'aria-pressed'), false, 'no aria-pressed next to a flipping label')
-	assert.equal(has(sw[0], 'aria-label'), false, 'named by its visible text')
-	const label = sw[0].children.filter((c) => c.type === 5).map((c) => c.content.content).join(' ')
-	assert.match(label, /votes\.mode === 'vote' \? t\('knorke', 'Edit'\) : t\('knorke', 'Vote'\)/, 'the action label: "Edit" in mode vote, "Vote" in mode edit')
-	const extend = hooked(ast, 'data-knorke-action', 'vote-extend')[0]
-	assert.match(val(extend, 'if') ?? extend.props.find((p) => p.name === 'if')?.exp?.content, /endsAt !== null/)
-	assert.equal(hooked(ast, 'data-knorke-bar', 'list').length, 2, '"List" while open, "Results" after the close')
+	assert.equal(sw.length, 2, 'wide and narrow')
+	for (const x of sw) {
+		assert.equal(x.tag, 'button')
+		assert.equal(has(x, 'aria-pressed'), false, 'no aria-pressed next to a flipping label')
+		assert.equal(has(x, 'aria-label'), false, 'named by its visible text')
+		const label = x.children.filter((c) => c.type === 5).map((c) => c.content.content).join(' ')
+		assert.match(label, /votes\.mode === 'vote' \? t\('knorke', 'Edit'\) : t\('knorke', 'Vote'\)/, 'the action label: "Edit" in mode vote, "Vote" in mode edit')
+	}
+	const extend = hooked(ast, 'data-knorke-action', 'vote-extend')
+	assert.equal(extend.length, 2, 'wide a button, narrow an entry of "⋯"')
+	for (const x of extend) assert.match(val(x, 'if') ?? x.props.find((p) => p.name === 'if')?.exp?.content, /endsAt !== null/)
+	assert.equal(hooked(ast, 'data-knorke-bar', 'list').length, 4, '"List" while open, "Results" after the close, wide and narrow')
 	for (const l of hooked(ast, 'data-knorke-bar', 'list')) {
 		assert.equal(val(l, 'data-knorke-action'), 'vote-panel')
 		assert.ok(has(l, 'aria-expanded'))
 	}
 	assert.equal(findAll(ast, (e) => val(e, 'aria-live') === 'polite').length, 1)
-	assert.equal(hooked(ast, 'data-knorke-action', 'vote-end').length, 1)
-	assert.match(readFileSync(new URL('../../../src/components/VoteBar.vue', import.meta.url), 'utf8'), /End voting now\? Votes can\\'t be changed afterwards\./, '"End voting" asks first')
+	assert.equal(hooked(ast, 'data-knorke-action', 'vote-end').length, 2)
+	// "End" of the bar and "End voting" of the menu ask the same question (the board view)
+	const view = readFileSync(new URL('../../../src/views/BoardView.vue', import.meta.url), 'utf8')
+	assert.match(view, /End voting now\? Votes can\\'t be changed afterwards\./, '"End voting" asks first')
+	assert.match(view, /@end="askVoteEnd"/)
+	assert.match(view, /@vote-end="askVoteEnd"/)
 })
 
 test('M1 stage 3 vote panel and stepper: named dialog/group, ± buttons named (≥ 44 px classes), counts spoken with "Vote for …", close button named', () => {
@@ -507,8 +554,9 @@ test('M1 stage 3 vote panel and stepper: named dialog/group, ± buttons named (�
 
 test('M1 stage 3 vote setup: every field labelled, the switch is input[type=checkbox] role=switch, area and types are fieldsets with legends, the counter is live', () => {
 	const ast = template('src/components/VoteSetupDialog.vue')
-	assert.equal(hooked(ast, 'data-knorke-dialog', 'vote-setup').length, 1)
-	for (const name of ['vote-per', 'vote-minutes']) {
+	// job 233: the same dialog edits a running session ([data-knorke-dialog=vote-edit], "Add minutes")
+	assert.equal(findAll(ast, (e) => val(e, 'data-knorke-dialog') === "editing ? 'vote-edit' : 'vote-setup'").length, 1)
+	for (const name of ['vote-per', 'vote-minutes', 'vote-add']) {
 		const input = hooked(ast, 'data-knorke-field', name)[0]
 		assert.equal(input.tag, 'input')
 		assert.equal(val(input, 'type'), 'number')
@@ -574,10 +622,23 @@ test('M1 stage 3 follow and moderation: banners are status strips ([data-knorke-
 	assert.equal(btn.tag, 'button')
 	assert.ok(named(btn))
 	const css = readFileSync(new URL('../../../src/styles/knorke.css', import.meta.url), 'utf8')
-	assert.match(css, /button\.knorke-followchip,\s*button\.knorke-banner__dismiss \{\s*min-height: var\(--knorke-touch\) !important;/, 'the chip is a ≥ 44 px target')
+	assert.match(css, /button\.knorke-followchip \{\s*min-height: var\(--knorke-touch\) !important;/, 'the chip is a ≥ 44 px target')
+	// job 228: every notice but the comment pick ends with its named close button
+	for (const f of ['src/components/FollowBanner.vue', 'src/components/FollowChip.vue', 'src/components/ConnectionBanner.vue']) {
+		const ast = template(f)
+		for (const root of ast.children.filter((c) => c.type === 1)) {
+			assert.equal(findAll(root, (e) => e.tag === 'NoticeClose').length, 1, f + ' ' + val(root, 'class'))
+		}
+	}
+	const nc = template('src/components/NoticeClose.vue')
+	const close = findAll(nc, (e) => e.tag === 'NcButton')[0]
+	assert.ok(has(close, 'aria-label') && has(close, 'title') && has(close, 'data-knorke-action'), 'named, with its hook')
+	assert.match(readFileSync(new URL('../../../src/components/NoticeClose.vue', import.meta.url), 'utf8'), /action: \{ type: String, default: 'notice-close' \}/)
+	const chip = template('src/components/TagFilterChip.vue')
+	assert.equal(val(findAll(chip, (e) => e.tag === 'NoticeClose')[0], 'action'), 'tag-filter-clear', 'the tag filter: its × clears the filter')
 	const mm = template('src/components/ModerationMenu.vue')
 	const mroot = mm.children.find((c) => c.type === 1)
-	assert.match(val(mroot, 'data-knorke-menu'), /'overflow' : 'moderation'/)
+	assert.match(val(mroot, 'data-knorke-menu'), /'overflow' : board \? 'board' : 'moderation'/, 'job 178: the board menu too')
 	const actions = findAll(mm, (e) => e.tag === 'NcActions')[0]
 	assert.ok(has(actions, 'aria-label') && has(actions, 'force-menu'), 'always a menu trigger (aria-haspopup)')
 	for (const a of ['share', 'vote-setup', 'timer-open', 'summon', 'summon-end']) {
@@ -585,38 +646,45 @@ test('M1 stage 3 follow and moderation: banners are status strips ([data-knorke-
 	}
 	const top = template('src/components/TopBar.vue')
 	assert.equal(val(top.children.find((c) => c.type === 1), 'data-knorke-bar'), 'top')
+	// job 229: the frames are a level of the zoom menu (NcActions: a menu button with aria-haspopup)
 	const zoom = template('src/components/ZoomControls.vue')
-	const frames = hooked(zoom, 'data-knorke-action', 'frames')[0]
-	assert.ok(has(frames, 'aria-label') && has(frames, 'aria-expanded') && has(frames, 'aria-controls'))
-	const fl = template('src/components/FrameList.vue')
-	assert.ok(findAll(fl, (e) => has(e, 'data-knorke-frame-list')).length === 1)
-	const item = findAll(fl, (e) => has(e, 'data-knorke-frame'))[0]
-	assert.equal(item.tag, 'button')
-	assert.equal(val(item, 'type'), 'button')
+	const zmenu = findAll(zoom, (e) => e.tag === 'NcActions')[0]
+	assert.ok(has(zmenu, 'menu-name') && has(zmenu, 'force-menu'))
+	const frames = hooked(zoom, 'data-knorke-submenu', 'frames')[0]
+	assert.equal(frames.tag, 'NcActionButton')
+	assert.ok(has(frames, 'is-menu'))
+	const item = findAll(zoom, (e) => has(e, 'data-knorke-frame'))[0]
+	assert.equal(item.tag, 'NcActionButton')
+	assert.equal(findAll(zoom, (e) => has(e, 'data-knorke-frame-list')).length, 1, 'the line "no frames yet"')
 })
 
-test('M1 stage 3 board view: "Time\'s up" is a strip with a button (click closes it); the strips and the context bar share the top stack; the vote bar and panel are wired', () => {
+test('M1 stage 3 board view: "Time\'s up" is a strip with its close button (job 228); the strips and the context bar share the top stack; the vote bar and panel are wired', () => {
 	const ast = template('src/views/BoardView.vue')
 	const tu = hooked(ast, 'data-knorke-banner', 'time_up')[0]
 	assert.equal(val(tu, 'data-knorke-bar'), 'banner')
 	assert.equal(val(tu, 'role'), 'status')
-	assert.equal(findAll(tu, (e) => e.tag === 'button').length, 1)
+	assert.equal(findAll(tu, (e) => e.tag === 'NoticeClose').length, 1)
+	assert.ok(findAll(tu, (e) => e.tag === 'NoticeClose')[0].props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'close' && p.exp?.content === 'closeNotice'))
 	const stack = findAll(ast, (e) => val(e, 'class') === 'knorke-topstack')[0]
 	assert.equal(findAll(stack, (e) => e.tag === 'ContextBar').length, 1)
 	assert.equal(findAll(stack, (e) => e.tag === 'ConnectionBanner').length, 1)
 	const banners = findAll(stack, (e) => val(e, 'class') === 'knorke-banners')[0]
 	assert.equal(val(banners, 'aria-live'), 'polite')
-	for (const tag of ['VoteBar', 'VotePanel', 'VoteStepper', 'VoteSetupDialog', 'TimerDialog', 'FollowBanner', 'FollowChip']) {
+	for (const tag of ['SessionBar', 'VotePanel', 'VoteStepper', 'TimerDialog', 'FollowBanner', 'FollowChip']) {
 		assert.equal(findAll(ast, (e) => e.tag === tag).length, 1, tag)
 	}
+	assert.equal(findAll(ast, (e) => e.tag === 'VoteSetupDialog').length, 2, 'job 233: start and "Edit voting"')
+	assert.equal(findAll(ast, (e) => e.tag === 'VoteBar' || e.tag === 'TimerChip').length, 0, 'job 233: both live in the session bar')
 })
 
-test('M1 stage 3 moderation menu: every entry closes the menu after the click (the entries change with the state)', () => {
+test('M1 stage 3 moderation menu: every action closes the menu after the click (the entries change with the state); job 228: the submenu entries keep it open', () => {
 	const mm = template('src/components/ModerationMenu.vue')
 	const entries = findAll(mm, (e) => e.tag === 'NcActionButton')
-	assert.equal(entries.length, 5)
+	const nav = entries.filter((e) => has(e, 'is-menu') || has(e, 'data-knorke-submenu-back'))
+	assert.equal(nav.length, 3, 'Export/Insert, Legal, the back entry')
+	assert.equal(entries.length - nav.length, 13, 'share, the three moderation entries, (job 272) "Present frames", (job 275) "Private writing …", (job 233) the three of "Running now" and (job 275) "Reveal notes", the board actions before and after the submenus and in a submenu (v-for)')
 	for (const e of entries) {
-		assert.ok(has(e, 'close-after-click'), val(e, 'data-knorke-action'))
+		assert.equal(has(e, 'close-after-click'), !nav.includes(e), val(e, 'data-knorke-action') ?? 'nav')
 	}
 })
 
@@ -663,18 +731,16 @@ test('M1 stage 4 context menu: role=menu root named by aria-label with its hooks
 	assert.ok(named(b), 'the label is the content')
 	const hint = findAll(b, (e) => (val(e, 'class') ?? '') === 'knorke-contextmenu__key')[0]
 	assert.equal(val(hint, 'aria-hidden'), 'true', 'the visible hint is not read twice (aria-keyshortcuts says it)')
-	// the count line of the board menu: no entry (role=menu owns menu items only), read through the root's aria-describedby
-	const counts = findAll(ast, (e) => has(e, 'data-knorke-menu-count'))
-	assert.equal(counts.length, 1)
-	const count = counts[0]
-	assert.notEqual(count.tag, 'button')
-	assert.equal(val(count, 'aria-hidden'), 'true')
-	assert.equal(has(count, 'tabindex'), false, 'never a tab stop')
-	assert.equal(has(count, 'role'), false)
-	assert.ok(!count.props.some((p) => p.type === 7 && p.name === 'on'), 'no handlers')
-	assert.equal(val(count, 'id'), 'knorke-contextmenu-count')
-	assert.match(val(root, 'aria-describedby'), /'knorke-contextmenu-count'/)
-	assert.equal(root.children.filter((c) => c.type === 1).at(-1), count, 'after the entries')
+	// job 230: no count line any more; a separator before the first entry of every group but the first: no entry, no tab stop
+	assert.equal(findAll(ast, (e) => has(e, 'data-knorke-menu-count')).length, 0)
+	assert.equal(has(root, 'aria-describedby'), false)
+	const seps = findAll(ast, (e) => val(e, 'class') === 'knorke-contextmenu__sep')
+	assert.equal(seps.length, 1)
+	assert.equal(seps[0].tag, 'div')
+	assert.equal(val(seps[0], 'role'), 'separator')
+	assert.equal(has(seps[0], 'tabindex'), false, 'never a tab stop')
+	assert.equal(seps[0].props.find((p) => p.type === 7 && p.name === 'if')?.exp?.content, 'e.sep')
+	assert.match(b.props.find((p) => p.type === 7 && p.name === 'bind' && p.arg?.content === 'class')?.exp?.content ?? '', /knorke-contextmenu__item--danger': e\.name === 'delete'/, 'Delete in the error colour')
 	// board view: a sibling of .knorke-canvas inside .knorke-board, never in the scene container
 	const view = template('src/views/BoardView.vue')
 	const board = view.children.find((c) => c.type === 1)
@@ -688,4 +754,54 @@ test('M1 stage 4 context menu: role=menu root named by aria-label with its hooks
 	assert.match(menu.props.find((p) => p.type === 7 && p.name === 'if').exp.content, /uiMode === 'edit'/, 'mode edit only')
 	assert.ok(menu.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'action'))
 	assert.ok(menu.props.some((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'close'))
+})
+
+test('job 143 (AK6): ContextBar has exactly one named "Rename" NcButton (v-if sections.rename, emits rename) right after "Edit label"; the board view wires @rename to renameFrame', () => {
+	const ast = template('src/components/ContextBar.vue')
+	const nc = findAll(ast, (e) => e.tag === 'NcButton')
+	const rename = nc.filter((b) => prop(b, 'data-knorke-action')?.value?.content === 'rename')
+	assert.equal(rename.length, 1)
+	const b = rename[0]
+	assert.equal(prop(b, 'aria-label').exp.content, "t('knorke', 'Rename')")
+	assert.equal(prop(b, 'title').exp.content, "withShortcut(t('knorke', 'Rename'), 'edit-text', apple)")
+	assert.equal(prop(b, 'variant').value.content, 'tertiary')
+	assert.equal(b.props.find((p) => p.type === 7 && p.name === 'else-if')?.exp?.content, "item === 'rename'", 'job 230: an element of contextbar.js barGroups (sections.rename)')
+	assert.match(b.props.find((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'click')?.exp?.content ?? '', /\$emit\('rename', e\)/)
+	const label = nc.find((x) => prop(x, 'data-knorke-action')?.value?.content === 'label')
+	assert.equal(nc.indexOf(b), nc.indexOf(label) + 1, 'at the place of "Edit label"')
+	const src = readFileSync(new URL('../../../src/components/ContextBar.vue', import.meta.url), 'utf8')
+	assert.match(src, /defineEmits\(\[[^\]]*'rename'/)
+	const view = template('src/views/BoardView.vue')
+	const bar = findAll(view, (e) => e.tag === 'ContextBar')[0]
+	const on = bar.props.find((p) => p.type === 7 && p.name === 'on' && p.arg?.content === 'rename')
+	assert.ok(on, 'ContextBar @rename')
+	assert.match(on.exp.content, /session\.renameFrame\(\)/)
+})
+
+test('job 143 review round 1: the board view hands the session ui.viewTop: the TopBar and banners plus room for the context bar (one row wide, two rows narrow)', () => {
+	const src = readFileSync(new URL('../../../src/views/BoardView.vue', import.meta.url), 'utf8')
+	// job 223: ui.viewInsets follows them in the same object
+	assert.match(src, /\n\t\t\tviewTop: \(\) => viewTop\(\),\n\t\t\tviewBottom: \(\) => viewBottom\(\),\n(\t\t\t[^\n]*\n)*\t\t\},\n\t\tdeps:/, 'in the ui object of the session')
+	const fn = src.match(/\nfunction viewTop\(\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
+	assert.match(fn, /\[data-knorke-bar=top\]/)
+	assert.match(fn, /bannersEl\.value/)
+	assert.match(fn, /return chrome \+ \(narrow\.value \? 2 : 1\) \* row \+ EDGE \+ GAP/)
+	assert.match(src, /import \{ EDGE, GAP, barLimits \} from '\.\.\/components\/barPlace\.js'/)
+})
+
+test('job 193 review round 1: the board view hands the session ui.viewBottom: how far the zoom controls, (job 229) the undo island, (job 233) the session bar and the touch tip reach up', () => {
+	const src = readFileSync(new URL('../../../src/views/BoardView.vue', import.meta.url), 'utf8')
+	const fn = src.match(/\nfunction viewBottom\(\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
+	assert.ok(!fn.includes('.knorke-zoom__shortcuts'), 'job 229: the round "?" button is gone')
+	for (const sel of ['.knorke-zoom', '.knorke-undo', '[data-knorke-bar=session]', '.knorke-touchtip']) {
+		assert.ok(fn.includes(sel), sel)
+	}
+	assert.match(fn, /r\.width > 0 && r\.height > 0/, 'only visible ones')
+	assert.match(fn, /b\.bottom - r\.top/, 'from the board\'s bottom edge')
+	// the selectors name the bars the view renders
+	const zoom = readFileSync(new URL('../../../src/components/ZoomControls.vue', import.meta.url), 'utf8')
+	assert.match(zoom, /class="knorke-zoom"/)
+	assert.match(readFileSync(new URL('../../../src/components/UndoBar.vue', import.meta.url), 'utf8'), /class="knorke-undo"/)
+	assert.match(readFileSync(new URL('../../../src/components/SessionBar.vue', import.meta.url), 'utf8'), /data-knorke-bar="session"/)
+	assert.match(readFileSync(new URL('../../../src/components/TouchTip.vue', import.meta.url), 'utf8'), /class="knorke-touchtip"/)
 })

@@ -8,7 +8,15 @@ declare(strict_types=1);
 // Route table of SPEC-M1 §4.1 (routes 1–16 as in SPEC-M0 §4.1, 17–26 new in
 // M1; all 26 frozen from stage 0 on, the actions of 17–26 answer 501 until
 // their stage). Route 27 (M2, privacy notice): the admin setting, appended
-// as the last line so routes 1–26 stay unchanged. Plain controller routes, no
+// as the last line so routes 1–26 stay unchanged; routes 28–34 (factory job
+// 182, template suggestions) follow it the same way, routes 35–43 (factory
+// job 189, comments) follow those, routes 44–45 (factory job 191, tags)
+// after them, routes 46–54 (factory job 203, own shape libraries) after
+// those, routes 55–56 (factory job 219, board list favorites) after them,
+// route 57 (factory job 221, board list sketches) after them, and routes
+// 58–62 (factory job 267, AI: the admin setting and a board's AI tasks)
+// come last. Plain
+// controller routes, no
 // OCS: /sync is the hottest request of the app and the OCS envelope would
 // only add bytes.
 //
@@ -51,5 +59,43 @@ return [
         ['name' => 'moderationApi#summon', 'url' => '/api/v1/boards/{id}/summon', 'verb' => 'POST', 'requirements' => $id],
         ['name' => 'moderationApi#endSummon', 'url' => '/api/v1/boards/{id}/summon', 'verb' => 'DELETE', 'requirements' => $id],
         ['name' => 'settingsApi#update', 'url' => '/api/v1/settings/privacy', 'verb' => 'PUT'],
+        ['name' => 'templateApi#index', 'url' => '/api/v1/templates', 'verb' => 'GET'],
+        ['name' => 'templateApi#create', 'url' => '/api/v1/templates', 'verb' => 'POST'],
+        ['name' => 'templateApi#show', 'url' => '/api/v1/templates/{id}', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'templateApi#update', 'url' => '/api/v1/templates/{id}', 'verb' => 'PATCH', 'requirements' => $id],
+        ['name' => 'templateApi#destroy', 'url' => '/api/v1/templates/{id}', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'templateApi#adopt', 'url' => '/api/v1/templates/{id}/adopt', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'templateApi#review', 'url' => '/api/v1/templates/review', 'verb' => 'GET'],
+        ['name' => 'commentApi#index', 'url' => '/api/v1/boards/{id}/comments', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'commentApi#create', 'url' => '/api/v1/boards/{id}/comments', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'commentApi#update', 'url' => '/api/v1/boards/{id}/comments', 'verb' => 'PATCH', 'requirements' => $id],
+        ['name' => 'commentApi#destroy', 'url' => '/api/v1/boards/{id}/comments', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'commentApi#mentions', 'url' => '/api/v1/boards/{id}/mentions', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'publicComment#index', 'url' => '/pub/v1/boards/{id}/comments', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'publicComment#create', 'url' => '/pub/v1/boards/{id}/comments', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'publicComment#update', 'url' => '/pub/v1/boards/{id}/comments', 'verb' => 'PATCH', 'requirements' => $id],
+        ['name' => 'publicComment#destroy', 'url' => '/pub/v1/boards/{id}/comments', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'tagApi#update', 'url' => '/api/v1/boards/{id}/tags', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'publicTag#update', 'url' => '/pub/v1/boards/{id}/tags', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'shapeLibApi#index', 'url' => '/api/v1/shapelibs', 'verb' => 'GET'],
+        ['name' => 'shapeLibApi#create', 'url' => '/api/v1/shapelibs', 'verb' => 'POST'],
+        ['name' => 'shapeLibApi#show', 'url' => '/api/v1/shapelibs/{id}', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'shapeLibApi#update', 'url' => '/api/v1/shapelibs/{id}', 'verb' => 'PATCH', 'requirements' => $id],
+        ['name' => 'shapeLibApi#destroy', 'url' => '/api/v1/shapelibs/{id}', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'shapeLibApi#suggest', 'url' => '/api/v1/shapelibs/{id}/suggest', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'shapeLibApi#adopt', 'url' => '/api/v1/shapelibs/{id}/adopt', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'shapeLibApi#review', 'url' => '/api/v1/shapelibs/review', 'verb' => 'GET'],
+        ['name' => 'shapeLibApi#withdraw', 'url' => '/api/v1/shapelibs/{id}/suggest', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'boardApi#favorite', 'url' => '/api/v1/boards/{id}/favorite', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'boardApi#opened', 'url' => '/api/v1/boards/{id}/opened', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'boardApi#sketch', 'url' => '/api/v1/boards/{id}/sketch', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'settingsApi#ai', 'url' => '/api/v1/settings/ai', 'verb' => 'PUT'],
+        ['name' => 'aiApi#index', 'url' => '/api/v1/boards/{id}/ai', 'verb' => 'GET', 'requirements' => $id],
+        ['name' => 'aiApi#start', 'url' => '/api/v1/boards/{id}/ai', 'verb' => 'POST', 'requirements' => $id],
+        ['name' => 'aiApi#cancel', 'url' => '/api/v1/boards/{id}/ai', 'verb' => 'DELETE', 'requirements' => $id],
+        ['name' => 'aiApi#allow', 'url' => '/api/v1/boards/{id}/aiswitch', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'moderationApi#moveSummon', 'url' => '/api/v1/boards/{id}/summon', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'moderationApi#slides', 'url' => '/api/v1/boards/{id}/slides', 'verb' => 'PUT', 'requirements' => $id],
+        ['name' => 'moderationApi#privateWriting', 'url' => '/api/v1/boards/{id}/private', 'verb' => 'PUT', 'requirements' => $id],
     ],
 ];

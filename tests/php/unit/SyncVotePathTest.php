@@ -83,6 +83,22 @@ final class SyncVotePathTest extends TestCase {
         $this->assertStringNotContainsString('tally', $this->h->syncRaw(['since' => 0], H::user(), $b));
     }
 
+    public function testStaleBaseThroughSyncJob216(): void {
+        // Two tabs (two clients) of the same account start from the same
+        // state: the second op answers stale, its block names the state.
+        $b = $this->h->board(2);
+        $sid = $this->start($b, ['per' => 5, 'perItem' => 3]);
+        $vic = H::user('vic', Role::Vote);
+        $tab = static fn (string $client, int $seq, int $n, int $base): array => ['client' => $client, 'seq' => $seq, 'ops' => [H::vote($sid, 1, $n) + ['b' => $base]]];
+        $d = $this->h->syncDecoded($tab('tabA', 1, 2, 0), $vic, $b);
+        $this->assertSame([['ok'], ['sid' => $sid, 'mine' => [H::ulid(1) => 2], 'left' => 3]], [$d['acks']['res'], $d['votes']]);
+        $d = $this->h->syncDecoded($tab('tabB', 1, 1, 0), $vic, $b);
+        $this->assertSame([['stale'], ['sid' => $sid, 'mine' => [H::ulid(1) => 2], 'left' => 3]], [$d['acks']['res'], $d['votes']]);
+        $this->assertNull($d['acks']['rev']);
+        $d = $this->h->syncDecoded($tab('tabB', 2, 3, 2), $vic, $b);
+        $this->assertSame([['ok'], ['sid' => $sid, 'mine' => [H::ulid(1) => 3], 'left' => 2]], [$d['acks']['res'], $d['votes']]);
+    }
+
     public function testStep9ForModerators(): void {
         $b = $this->h->board(3);
         $sid = $this->start($b);
@@ -116,6 +132,74 @@ final class SyncVotePathTest extends TestCase {
         $sid2 = $this->start($b);
         $d = $this->h->syncDecoded(['since' => $rev, 'vt' => 2], $owner, $b);
         $this->assertSame(['sid' => $sid2, 'voters' => 0, 'vt' => 0], $d['votes']);
+    }
+
+    public function testLiveTallyOnlyForModeratorsJob149(): void {
+        $b = $this->h->board(4);
+        $sid = $this->start($b, ['live' => true]);
+        $rev = $this->h->rev($b);
+        $owner = H::user();
+        $votesSql = fn (int $from): array => array_values(array_filter(array_slice($this->h->sql->statements, $from), static fn (string $s): bool => str_contains($s, 'knorke_vote')));
+        // No votes yet: vt:<b> = "<sid>:0" matches vt 0 → nothing; without the key the tally is [].
+        $before = count($this->h->sql->statements);
+        $this->assertArrayNotHasKey('votes', $this->h->syncDecoded(['since' => $rev, 'vt' => 0], $owner, $b));
+        $this->assertSame($before, count($this->h->sql->statements), 'step 9 (i): no SQL in a live session either');
+        $this->h->mem->remove('vt:' . $b);
+        $raw = $this->h->syncRaw(['since' => $rev, 'vt' => 0], $owner, $b);
+        $this->assertStringContainsString(',"votes":{"sid":' . $sid . ',"voters":0,"vt":0,"tally":[]}', $raw);
+        // vic: 1 and 2, Gina: 1, ed: 3 → 1:2, 2:1, 3:1 (n descending, then id).
+        $vic = H::user('vic', Role::Vote);
+        $ed = H::user('ed', Role::Edit);
+        $this->h->syncDecoded(['seq' => 1, 'ops' => [H::vote($sid, 2, 1), H::vote($sid, 1, 1)]], $vic, $b);
+        $this->h->syncDecoded(['seq' => 1, 'ops' => [H::vote($sid, 1, 1)]], H::guest(), $b);
+        // A non-moderator with vt and a vote op: {sid, mine, left}, never a tally.
+        $raw = $this->h->syncRaw(['vt' => 0, 'seq' => 1, 'ops' => [H::vote($sid, 3, 1)]], $ed, $b);
+        $this->assertSame(['sid', 'mine', 'left'], array_keys(json_decode($raw, true)['votes']));
+        $this->assertStringNotContainsString('"tally"', $raw);
+        $this->assertStringNotContainsString('"tally"', $this->h->syncRaw(['since' => 0, 'vt' => 0], $vic, $b), 'voter with vt');
+        // The moderator with a vt that differs: {sid, voters, vt, tally}.
+        $before = count($this->h->sql->statements);
+        $d = $this->h->syncDecoded(['since' => $rev, 'vt' => 0], $owner, $b);
+        $this->assertSame(['sid' => $sid, 'voters' => 3, 'vt' => 3, 'tally' => [[H::ulid(1), 2], [H::ulid(2), 1], [H::ulid(3), 1]]], $d['votes']);
+        $this->assertSame(['sid', 'voters', 'vt', 'tally'], array_keys($d['votes']));
+        $liveSql = $votesSql($before);
+        $this->assertCount(3, $liveSql, 'open, voters, tally');
+        $this->assertStringContainsString('GROUP BY', $liveSql[2]);
+        // A facilitator (share with moderate) gets it too; an editor through a share with vt does not.
+        $this->assertSame([[H::ulid(1), 2], [H::ulid(2), 1], [H::ulid(3), 1]], $this->h->syncDecoded(['since' => $rev, 'vt' => 0], H::user('fay', Role::Edit, true), $b)['votes']['tally']);
+        $this->assertArrayNotHasKey('votes', $this->h->syncDecoded(['since' => $rev, 'vt' => 0], $ed, $b));
+        // vt matches: no block and no SQL.
+        $before = count($this->h->sql->statements);
+        $this->assertArrayNotHasKey('votes', $this->h->syncDecoded(['since' => $rev, 'vt' => 3], $owner, $b));
+        $this->assertSame($before, count($this->h->sql->statements));
+        // A deleted item leaves the tally (it counts again with the next seq or a lost vt: key).
+        $this->h->sql->setDeleted($b, H::ulid(3), true);
+        $this->h->mem->remove('vt:' . $b);
+        $d = $this->h->syncDecoded(['since' => $rev, 'vt' => 3], $owner, $b);
+        $this->assertSame(['sid' => $sid, 'voters' => 2, 'vt' => 3, 'tally' => [[H::ulid(1), 2], [H::ulid(2), 1]]], $d['votes']);
+        // Snapshot and join never carry it, for the moderator neither.
+        $snap = fn ($p, ?array $guest = null): string => $this->h->sync->snapshotJson(new AccessResult($p, null, 0), $b, ['id' => $b, 'role' => $p->role->value], $guest, $this->h->now);
+        $this->assertStringContainsString('"votes":{"sid":' . $sid . ',"mine":{},"left":5}', $snap($owner));
+        $this->assertStringNotContainsString('"tally"', $snap($owner));
+        $this->assertStringNotContainsString('"tally"', $snap(H::guest(), ['token' => 'gTok', 'exp' => $this->h->now + 60000]), 'join');
+        // After the end: no tally anywhere (the results in meta are the only sums).
+        $this->h->votes->update(H::user(), $b, 'end', null, $this->h->now);
+        $this->h->mem->remove('vt:' . $b);
+        $raw = $this->h->syncRaw(['since' => 0, 'vt' => 3], $owner, $b);
+        $this->assertStringNotContainsString('"tally"', $raw);
+        $this->assertSame([[H::ulid(1), 2], [H::ulid(2), 1]], json_decode($raw, true)['board']['meta']['vote']['results']);
+        $this->assertStringNotContainsString('"tally"', $snap($owner));
+        // Without live: the block as before, with the same statements (no GROUP BY).
+        $b2 = $this->h->board(2);
+        $sid2 = $this->start($b2);
+        $this->h->syncDecoded(['seq' => 1, 'ops' => [H::vote($sid2, 1, 1)]], $vic, $b2);
+        $before = count($this->h->sql->statements);
+        $d = $this->h->syncDecoded(['since' => $this->h->rev($b2), 'vt' => 0], $owner, $b2);
+        $this->assertSame(['sid' => $sid2, 'voters' => 1, 'vt' => 1], $d['votes']);
+        $plainSql = $votesSql($before);
+        $this->assertCount(2, $plainSql, 'open and voters only');
+        $this->assertSame(array_slice($liveSql, 0, 2), $plainSql, 'the same statements as before, the tally query is the only extra one');
+        $this->assertSame([], array_filter($plainSql, static fn (string $s): bool => str_contains($s, 'GROUP BY')));
     }
 
     public function testStep9ClosesAnExpiredSessionPathB(): void {
@@ -170,6 +254,51 @@ final class SyncVotePathTest extends TestCase {
         // Closed: none.
         $this->h->votes->update(H::user(), $b, 'end', null, $this->h->now);
         $this->assertStringNotContainsString('"votes"', $snap($vic));
+    }
+
+    public function testAccountsOnlyThroughSyncSnapshotAndJoinJob175(): void {
+        $b = $this->h->board(3);
+        $sid = $this->start($b, ['accountsOnly' => true]);
+        $rev = $this->h->rev($b);
+        $snap = fn ($p, ?array $guest = null): string => $this->h->sync->snapshotJson(new AccessResult($p, null, 0), $b, ['id' => $b, 'role' => $p->role->value], $guest, $this->h->now);
+        $guests = ['edit link' => H::guest('gEDIT0000000', Role::Edit), 'vote link' => H::guest('gVOTE0000000', Role::Vote)];
+        // Guests of both links: denied, no row, no seq, no votes block; the board rev stays.
+        foreach ($guests as $what => $g) {
+            $raw = $this->h->syncRaw(['seq' => 1, 'since' => $rev, 'ops' => [H::vote($sid, 1, 1)]], $g, $b);
+            $d = json_decode($raw, true);
+            $this->assertSame(['seq' => 1, 'rev' => null, 'res' => ['denied']], $d['acks'], $what);
+            $this->assertStringNotContainsString('"votes"', $raw, $what);
+            // Snapshot and join of the guest: no votes block while the session is open.
+            $this->assertStringNotContainsString('"votes"', $snap($g), $what . ' snapshot');
+            $this->assertStringNotContainsString('"votes"', $snap($g, ['token' => 'gTok', 'exp' => $this->h->now + 60000]), $what . ' join');
+        }
+        $this->assertSame(0, $this->h->voteRows($sid));
+        $this->assertSame(0, (int)$this->h->session($sid)['seq']);
+        $this->assertSame($rev, $this->h->rev($b));
+        // Accounts vote: owner, share, account through the link; their snapshot carries the block.
+        $n = 0;
+        foreach (['owner' => H::user(), 'share' => H::user('ed', Role::Edit), 'link' => H::user('lin', Role::Vote, false, 'link')] as $what => $acc) {
+            $d = $this->h->syncDecoded(['seq' => 2, 'since' => $rev, 'ops' => [H::vote($sid, 1, 1)]], $acc, $b);
+            $this->assertSame(['ok'], $d['acks']['res'], $what);
+            $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(1) => 1], 'left' => 4], $d['votes'], $what);
+            $this->assertSame(['sid' => $sid, 'mine' => [H::ulid(1) => 1], 'left' => 4], json_decode($snap($acc), true)['votes'], $what . ' snapshot');
+            $this->assertSame(++$n, (int)$this->h->session($sid)['seq']);
+        }
+        // The moderator poll counts only the accounts.
+        $this->h->mem->remove('vt:' . $b);
+        $this->assertSame(['sid' => $sid, 'voters' => 3, 'vt' => 3], $this->h->syncDecoded(['since' => $rev, 'vt' => 0], H::user(), $b)['votes']);
+        // Closed: the same op of a guest gets closed.
+        $this->h->votes->update(H::user(), $b, 'end', null, $this->h->now);
+        $this->assertSame(['closed'], $this->h->syncDecoded(['seq' => 3, 'ops' => [H::vote($sid, 1, 1)]], $guests['vote link'], $b)['acks']['res']);
+        // Without the option guests vote as before (ok, block present, also in snapshot and join).
+        $sid2 = $this->start($b);
+        foreach ($guests as $what => $g) {
+            $d = $this->h->syncDecoded(['seq' => 4, 'ops' => [H::vote($sid2, 2, 1)]], $g, $b);
+            $this->assertSame(['ok'], $d['acks']['res'], $what);
+            $this->assertSame(['sid' => $sid2, 'mine' => [H::ulid(2) => 1], 'left' => 4], $d['votes'], $what);
+            $this->assertStringContainsString('"votes":{"sid":' . $sid2 . ',"mine":{"' . H::ulid(2) . '":1},"left":4}', $snap($g), $what . ' snapshot');
+            $this->assertStringContainsString('"votes":{"sid":' . $sid2, $snap($g, ['token' => 'gTok', 'exp' => $this->h->now + 60000]), $what . ' join');
+        }
     }
 
     public function testPresenceViewportThroughSync(): void {

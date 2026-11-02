@@ -19,6 +19,7 @@ import { AUTO_END_DELAY_MS, BoardSession, MISS_HINT_MS, VT_EVERY_MS, moderationE
 import { debugApi } from '../../../src/board/debug.js'
 import { HttpError } from '../../../src/sync/http.js'
 import { colorFor } from '../../../src/sync/presence.js'
+import { freePart } from '../../../src/scene/Camera.js'
 import { FakeClock } from '../sync/fakeClock.mjs'
 import { FakeModel, FakeScene, ID, frame, memoryStorage, shape, sticky } from './fakes.mjs'
 
@@ -82,9 +83,9 @@ class Stage3Scene extends FakeScene {
  * @param {object} [o] options
  * @return {Promise<object>} harness
  */
-async function open({ me = ALICE, meta = {}, votes = undefined, items = [sticky(A), sticky(B), shape(C)], viewOnly = false, reply = null, api = {}, presence = () => ({}), win = null } = {}) {
+async function open({ me = ALICE, meta = {}, votes = undefined, items = [sticky(A), sticky(B), shape(C)], viewOnly = false, reply = null, api = {}, presence = () => ({}), win = null, mode = 'user' } = {}) {
 	const clock = new FakeClock(10000)
-	const ui = { votes: [], follow: [], modes: [], stepper: [], skew: [] }
+	const ui = { votes: [], follow: [], modes: [], stepper: [], skew: [], slides: [] }
 	const toasts = []
 	const infos = []
 	let rev = 5
@@ -120,12 +121,14 @@ async function open({ me = ALICE, meta = {}, votes = undefined, items = [sticky(
 		startVote: async (id, cfg) => { apiCalls.push(['startVote', id, cfg]); return api.startVote ? api.startVote(cfg) : {} },
 		updateVote: async (id, action, minutes) => { apiCalls.push(['updateVote', id, action, minutes]); return api.updateVote ? api.updateVote(action, minutes) : {} },
 		timer: async (id, action, ms) => { apiCalls.push(['timer', id, action, ms]); return api.timer ? api.timer(action, ms) : {} },
-		summon: async (id, client) => { apiCalls.push(['summon', id, client]); return api.summon ? api.summon(client) : {} },
+		summon: async (id, client, frame) => { apiCalls.push(frame === undefined ? ['summon', id, client] : ['summon', id, client, frame]); return api.summon ? api.summon(client, frame) : {} },
+		moveSummon: async (id, frame) => { apiCalls.push(['moveSummon', id, frame]); return api.moveSummon ? api.moveSummon(frame) : {} },
+		saveSlides: async (id, order) => { apiCalls.push(['saveSlides', id, order]); return api.saveSlides ? api.saveSlides(order) : {} },
 		endSummon: async (id) => { apiCalls.push(['endSummon', id]); return {} },
 	}
 	const s = new BoardSession({
 		container: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
-		mode: 'user',
+		mode,
 		boardId: 7,
 		viewOnly,
 		ui: {
@@ -134,6 +137,7 @@ async function open({ me = ALICE, meta = {}, votes = undefined, items = [sticky(
 			onMode: (m) => ui.modes.push(m),
 			onStepper: (x) => ui.stepper.push(x),
 			onClockSkew: (x) => ui.skew.push(x),
+			onSlides: (x) => ui.slides.push(x),
 		},
 		deps: {
 			SceneModel: FakeModel,
@@ -273,7 +277,7 @@ test('vt (R16 SRV-01): only moderators, only while open, at most every 2 s; a ne
 
 test('votes blocks of a foreign sid are dropped (R16 SRV-03); the snapshot block sets mine and left', async () => {
 	const h = await open({ me: BOB, meta: { vote: voteMeta() }, votes: { sid: 12, mine: { [A]: 1 }, left: 2 } })
-	assert.deepEqual(debugApi(h.s).votes(), { sid: 12, state: 'open', open: true, left: 2, mine: { [A]: 1 }, results: null, voters: null })
+	assert.deepEqual(debugApi(h.s).votes(), { sid: 12, state: 'open', open: true, left: 2, mine: { [A]: 1 }, results: null, voters: null, live: false, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: true })
 	h.s.onVotes({ sid: 11, mine: {}, left: 3 })
 	assert.deepEqual(h.s.voteState.mine, { [A]: 1 })
 	h.s.destroy()
@@ -303,7 +307,7 @@ test('vote ops: a tap toggles (perItem 1), not in the undo stack, urgent only wi
 	assert.equal(h.s.undoStack.canUndo(), false, 'votes are never undo steps')
 	await h.clock.advance(150)
 	const op = h.tr.calls.flatMap((b) => b.ops ?? []).find((o) => o.o === 'vote')
-	assert.deepEqual(op, { o: 'vote', s: 12, id: A, n: 1 })
+	assert.deepEqual(op, { o: 'vote', s: 12, id: A, n: 1, b: 0 }, 'job 216: b = the number the change starts from')
 	h.scene.callbacks.onIntent({ type: 'vote', id: A, rect: null })
 	assert.deepEqual(h.s.voteState.mine, { [A]: 1 }, 'a double tap within 400 ms is ignored')
 	await h.clock.advance(500)
@@ -475,14 +479,14 @@ test('following through the session: participant button, onUserCamera ends it, s
 test('__knorke.votes() shapes (CLI-12) and state().name: no session, open (moderator voters), closed with results', async () => {
 	const h = await open({ me: ALICE })
 	const d = debugApi(h.s)
-	assert.deepEqual(d.votes(), { sid: null, state: null, open: false, left: null, mine: {}, results: null, voters: null })
+	assert.deepEqual(d.votes(), { sid: null, state: null, open: false, left: null, mine: {}, results: null, voters: null, live: false, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: true })
 	assert.equal(d.state().name, 'Alice Adler')
 	h.s.onMeta({ metaRev: 4, meta: { vote: voteMeta() } })
 	h.s.onVotes({ sid: 12, voters: 2, vt: 3 })
-	assert.deepEqual(d.votes(), { sid: 12, state: 'open', open: true, left: 3, mine: {}, results: null, voters: 2 })
+	assert.deepEqual(d.votes(), { sid: 12, state: 'open', open: true, left: 3, mine: {}, results: null, voters: 2, live: false, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: true })
 	h.s.onMeta({ metaRev: 5, meta: { vote: voteMeta({ state: 'closed', results: [[A, 2]], total: 1, voters: 2, closedAt: T0 }) } })
 	const v = d.votes()
-	assert.deepEqual(v, { sid: 12, state: 'closed', open: false, left: null, mine: {}, results: [[A, 2]], voters: 2 })
+	assert.deepEqual(v, { sid: 12, state: 'closed', open: false, left: null, mine: {}, results: [[A, 2]], voters: 2, live: false, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: true })
 	assert.equal(JSON.stringify(JSON.parse(JSON.stringify(v))), JSON.stringify(v), 'JSON-serialisable')
 	assert.equal(lastVotes(h).event, 'closed', 'the panel opens once per sid')
 	h.s.destroy()
@@ -838,7 +842,7 @@ test('R22 P7-10 (CLIENT-3): list and stepper "+" twice 150 ms apart give 2 (two 
 	t.s.destroy()
 })
 
-/** Scene with the real cameraForRect of the facade (SceneManager, container 1280 × 720). */
+/** Scene with the real cameraForRect of the facade (SceneManager, container 1280 × 720; job 223: with insets). */
 class CamScene extends Stage3Scene {
 	constructor(container, model, opts) {
 		super(container, model, opts)
@@ -851,11 +855,12 @@ class CamScene extends Stage3Scene {
 		return { x: c.x, y: c.y, w: this.size.w / c.scale, h: this.size.h / c.scale }
 	}
 
-	cameraForRect(rect, padPx = 0) {
-		const aw = Math.max(1, this.size.w - 2 * padPx)
-		const ah = Math.max(1, this.size.h - 2 * padPx)
+	cameraForRect(rect, padPx = 0, insets = null) {
+		const f = freePart(this.size.w, this.size.h, padPx, insets)
+		const aw = Math.max(1, f.w - 2 * padPx)
+		const ah = Math.max(1, f.h - 2 * padPx)
 		const scale = Math.min(4, Math.max(0.1, Math.min(rect.w > 0 ? aw / rect.w : Infinity, rect.h > 0 ? ah / rect.h : Infinity)))
-		return { x: rect.x + rect.w / 2 - this.size.w / (2 * scale), y: rect.y + rect.h / 2 - this.size.h / (2 * scale), scale }
+		return { x: rect.x + rect.w / 2 - (f.x + f.w / 2) / scale, y: rect.y + rect.h / 2 - (f.y + f.h / 2) / scale, scale }
 	}
 }
 
@@ -947,5 +952,356 @@ test('R22 P7-09 (CLIENT-2): the presenting tab sends {v} while hidden (getHidden
 	const from2 = h.tr.calls.length
 	await h.clock.advance(10000)
 	assert.ok(h.tr.calls.slice(from2).every((b) => b.me === undefined))
+	h.s.destroy()
+})
+
+const liveCfg = { per: 3, perItem: 1, scope: null, types: ['sticky'], live: true }
+
+test('job 149: startVote sends live; liveShown starts false and is set only with mod, live and an open session; sceneVoteState().live and the totals follow it; a new sid resets it', async () => {
+	const answer = { board: { title: 'Board', meta: { vote: voteMeta({ cfg: liveCfg }) }, metaRev: 10 }, now: T0 }
+	const h = await open({ me: ALICE, items: [sticky(A), sticky(B), shape(C)], api: { startVote: () => answer } })
+	assert.equal(h.s.liveShown, false)
+	assert.equal(h.s.setLiveShown(true), false, 'no session')
+	await h.s.startVote({ per: 3, perItem: 1, scope: null, types: ['sticky'], minutes: null, live: true })
+	assert.equal(h.apiCalls[0][2].live, true, 'live goes to route 22')
+	assert.equal(h.s.liveShown, false, 'off at the start')
+	assert.equal(lastVotes(h).live, true)
+	assert.equal(lastVotes(h).liveShown, false)
+	assert.equal(lastScene(h).live, false)
+	// the first tally comes with the next moderator poll
+	h.s.onVotes({ sid: 12, voters: 2, vt: 3, tally: [[A, 2], [B, 1], [ID(99), 4]] })
+	assert.deepEqual(lastVotes(h).tally, [[A, 2], [B, 1]], 'only items the model has')
+	assert.deepEqual([...lastScene(h).badges], [], 'the button is off: no totals on the board')
+	h.s.vote(A, 1)
+	assert.deepEqual([...lastScene(h).badges], [[A, { mine: 1, total: null }]])
+	assert.equal(h.s.setLiveShown(true), true)
+	assert.equal(h.s.liveShown, true)
+	let st = lastScene(h)
+	assert.equal(st.live, true)
+	assert.deepEqual([...st.badges], [[A, { mine: 1, total: 2 }], [B, { mine: 0, total: 1 }]], 'live totals beside mine, the item outside the model left out')
+	assert.equal(lastVotes(h).liveShown, true)
+	assert.deepEqual(debugApi(h.s).votes(), { sid: 12, state: 'open', open: true, left: 2, mine: { [A]: 1 }, results: null, voters: 2, live: true, liveShown: true, tally: [[A, 2], [B, 1]], accountsOnly: false, voteBlocked: false, canVote: true })
+	h.s.onVotes({ sid: 12, voters: 3, vt: 4, tally: [[B, 3], [A, 2]] })
+	assert.deepEqual([...lastScene(h).badges], [[A, { mine: 1, total: 2 }], [B, { mine: 0, total: 3 }]], 'a new tally shows at once')
+	h.s.setLiveShown(false)
+	st = lastScene(h)
+	assert.equal(st.live, false)
+	assert.deepEqual([...st.badges], [[A, { mine: 1, total: null }]], 'off again: only the own votes')
+	// a new sid resets it
+	h.s.setLiveShown(true)
+	h.s.onMeta({ metaRev: 11, meta: { vote: voteMeta({ sid: 13, cfg: liveCfg }) } })
+	assert.equal(h.s.liveShown, false, 'new sid')
+	assert.equal(lastScene(h).live, false)
+	assert.equal(lastVotes(h).tally, null, 'the tally of the old sid is gone')
+	// the close resets it
+	h.s.setLiveShown(true)
+	assert.equal(h.s.liveShown, true)
+	h.s.onMeta({ metaRev: 12, meta: { vote: voteMeta({ sid: 13, cfg: liveCfg, state: 'closed', results: [[A, 1]], total: 1, voters: 1, closedAt: T0 }) } })
+	assert.equal(h.s.liveShown, false, 'closed')
+	assert.equal(h.s.setLiveShown(true), false, 'not while closed')
+	assert.equal(debugApi(h.s).votes().live, true, 'cfg.live stays in the closed meta')
+	assert.equal(debugApi(h.s).votes().tally, null)
+	h.s.destroy()
+})
+
+test('job 149: without the moderation right or without live there is no live count: setLiveShown refuses, tally null; losing mod resets liveShown and drops the tally', async () => {
+	const b = await open({ me: BOB, meta: { vote: voteMeta({ cfg: liveCfg }) } })
+	assert.equal(lastVotes(b).live, true, 'everyone knows the option (the notice)')
+	assert.equal(b.s.setLiveShown(true), false)
+	b.s.onVotes({ sid: 12, mine: {}, left: 3, tally: [[A, 2]] })
+	assert.equal(lastVotes(b).tally, null, 'a non-moderator never keeps a tally')
+	assert.deepEqual(debugApi(b.s).votes(), { sid: 12, state: 'open', open: true, left: 3, mine: {}, results: null, voters: null, live: true, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: true })
+	b.s.destroy()
+	const n = await open({ me: ALICE, meta: { vote: voteMeta() } })
+	assert.equal(lastVotes(n).live, false)
+	assert.equal(n.s.setLiveShown(true), false, 'a session without live')
+	n.s.onVotes({ sid: 12, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.equal(lastVotes(n).tally, null)
+	n.s.destroy()
+	const h = await open({ me: ALICE, meta: { vote: voteMeta({ cfg: liveCfg }) } })
+	h.s.onVotes({ sid: 12, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.equal(h.s.setLiveShown(true), true)
+	assert.deepEqual(lastVotes(h).tally, [[A, 1]])
+	h.s.onRole({ role: 'edit', mod: false })
+	assert.equal(h.s.liveShown, false, 'moderation lost')
+	assert.equal(lastScene(h).live, false)
+	assert.equal(lastVotes(h).tally, null)
+	assert.equal(h.s.voteState.tally, null, 'VoteState dropped it')
+	h.s.onVotes({ sid: 12, mine: {}, left: 3, tally: [[A, 2]] })
+	assert.equal(h.s.voteState.tally, null, 'not taken any more')
+	h.s.destroy()
+})
+
+const GINA_VOTE = { pid: 'pidgina000000001', name: 'Gina', role: 'vote', guest: true, mod: false, source: 'guest' }
+const GINA_EDIT = { pid: 'pidgina000000002', name: 'Gina', role: 'edit', guest: true, mod: false, source: 'guest' }
+const CAROL_LINK = { pid: 'pidcarol00000001', name: 'Carol Clausen', role: 'vote', guest: false, mod: false, source: 'link' }
+const accountsCfg = { per: 3, perItem: 1, scope: null, types: ['sticky'], accountsOnly: true }
+const voteOps = (h) => h.tr.calls.flatMap((b) => (b.ops ?? []).filter((op) => op.o === 'vote'))
+
+test('job 175: startVote sends accountsOnly to route 22; the session view carries accountsOnly', async () => {
+	const answer = { board: { title: 'Board', meta: { vote: voteMeta({ cfg: accountsCfg }) }, metaRev: 10 }, now: T0 }
+	const h = await open({ me: ALICE, api: { startVote: () => answer } })
+	await h.s.startVote({ per: 3, perItem: 1, scope: null, types: ['sticky'], minutes: null, live: false, accountsOnly: true })
+	assert.equal(h.apiCalls[0][2].accountsOnly, true, 'accountsOnly goes to route 22')
+	const v = lastVotes(h)
+	assert.deepEqual([v.accountsOnly, v.voteBlocked, v.canVote], [true, false, true], 'the owner votes')
+	assert.equal(h.s.vote(A, 1), true)
+	h.s.destroy()
+})
+
+test('job 175: a guest in a session with accountsOnly: canVote false, voteBlocked true, vote() queues nothing, mode as without a session, no switch, reactions stay; the end lifts it', async () => {
+	const h = await open({ me: GINA_VOTE, mode: 'guest', meta: { vote: voteMeta({ cfg: accountsCfg }) } })
+	let v = lastVotes(h)
+	assert.deepEqual([v.accountsOnly, v.voteBlocked, v.canVote, v.canSwitch], [true, true, false, false])
+	assert.equal(h.s.voteBlocked, true)
+	assert.equal(h.s.uiMode(), 'view', 'vote link: view (no vote mode)')
+	assert.equal(h.s.vote(A, 1), false)
+	await h.clock.advance(3000)
+	assert.deepEqual(voteOps(h), [], 'no vote op went out')
+	assert.equal(h.s.mayReact(), true, 'reactions unchanged')
+	assert.equal(lastScene(h).markVotable, false, 'no votable rings outside mode vote')
+	const d = debugApi(h.s).votes()
+	assert.deepEqual([d.accountsOnly, d.voteBlocked, d.canVote], [true, true, false], '__knorke.votes()')
+	// the close lifts it: canVote again, voteBlocked false
+	h.s.onMeta({ metaRev: 5, meta: { vote: voteMeta({ cfg: accountsCfg, state: 'closed', results: [[A, 2]], total: 1, voters: 2, closedAt: T0 }) } })
+	v = lastVotes(h)
+	assert.deepEqual([v.voteBlocked, v.canVote], [false, true])
+	assert.equal(h.s.voteBlocked, false)
+	assert.equal(debugApi(h.s).votes().voteBlocked, false)
+	// a new session without the option: the guest votes as before
+	h.s.onMeta({ metaRev: 6, meta: { vote: voteMeta({ sid: 13 }) } })
+	v = lastVotes(h)
+	assert.deepEqual([v.accountsOnly, v.voteBlocked, v.canVote], [false, false, true])
+	assert.equal(h.s.uiMode(), 'vote')
+	assert.equal(h.s.vote(A, 1), true)
+	await h.clock.advance(3000)
+	assert.deepEqual(voteOps(h).map((op) => [op.s, op.id, op.n]), [[13, A, 1]])
+	h.s.destroy()
+})
+
+test('job 175: a guest of the edit link stays in edit on a computer (no switch, no toast at the start) and is in view on touch', async () => {
+	const h = await open({ me: GINA_EDIT, mode: 'guest' })
+	assert.equal(h.s.uiMode(), 'edit')
+	h.s.onMeta({ metaRev: 4, meta: { vote: voteMeta({ cfg: accountsCfg }) } })
+	assert.equal(h.s.uiMode(), 'edit', 'computer: edit')
+	assert.deepEqual(h.scene.callsOf('setMode'), [], 'no switch to vote')
+	assert.deepEqual(h.infos.filter((x) => typeof x === 'string' && x.startsWith('Voting started')), [], 'no "vote mode" toast')
+	const v = lastVotes(h)
+	assert.deepEqual([v.voteBlocked, v.canVote, v.canSwitch, v.mode], [true, false, false, 'edit'])
+	assert.equal(h.s.mayReact(), true)
+	h.s.setPreferVote(true)
+	assert.equal(h.s.uiMode(), 'edit', 'the desktop switch cannot bring vote mode either')
+	h.s.destroy()
+	const t = await open({ me: GINA_EDIT, mode: 'guest', viewOnly: true, meta: { vote: voteMeta({ cfg: accountsCfg }) } })
+	assert.equal(t.s.uiMode(), 'view', 'touch: view')
+	assert.deepEqual([lastVotes(t).voteBlocked, lastVotes(t).canVote, lastVotes(t).canSwitch], [true, false, false])
+	assert.equal(t.s.vote(A, 1), false)
+	t.s.destroy()
+})
+
+test('job 175: an account that came through a link (me.source link) votes in a session with accountsOnly', async () => {
+	const h = await open({ me: CAROL_LINK, meta: { vote: voteMeta({ cfg: accountsCfg }) } })
+	const v = lastVotes(h)
+	assert.deepEqual([v.accountsOnly, v.voteBlocked, v.canVote], [true, false, true])
+	assert.equal(h.s.uiMode(), 'vote')
+	assert.equal(h.s.vote(A, 1), true)
+	await h.clock.advance(1000)
+	assert.deepEqual(voteOps(h).map((op) => [op.s, op.id, op.n]), [[12, A, 1]])
+	assert.deepEqual([debugApi(h.s).votes().voteBlocked, debugApi(h.s).votes().canVote], [false, true])
+	h.s.destroy()
+})
+
+/**
+ * Job 216: a fake server that keeps this person's votes (shared with their
+ * other tab) and answers a vote op with a base b that is not the row
+ * `stale`, with the votes block of the state.
+ *
+ * @param {Record<string, number>} server item id → n of this person (the test changes it as the other tab)
+ * @param {{perItem?: number, per?: number, block?: boolean, lose?: number}} [o] block false: no votes
+ *   block; lose: the request with ops (1-based) whose answer is lost on the network after the server applied it
+ * @return {(b: object) => (object|Error|null)} reply of open()
+ */
+function tabServer(server, { perItem = 5, per = 9, block = true, lose = 0 } = {}) {
+	let calls = 0
+	return (b) => {
+		if (!b.ops) {
+			return null
+		}
+		const res = b.ops.map((op) => {
+			const cur = server[op.id] ?? 0
+			if ('b' in op && op.b !== cur) {
+				return 'stale'
+			}
+			const others = Object.entries(server).reduce((sum, [k, v]) => (k === op.id ? sum : sum + v), 0)
+			if (op.n > cur && (op.n > perItem || others + op.n > per)) {
+				return 'limit'
+			}
+			if (op.n === 0) {
+				delete server[op.id]
+			} else {
+				server[op.id] = op.n
+			}
+			return 'ok'
+		})
+		if (++calls === lose) {
+			return new Error('network')
+		}
+		const mine = { ...server }
+		const left = per - Object.values(mine).reduce((a, n) => a + n, 0)
+		return { rev: b.since, acks: { seq: b.seq, rev: null, res }, ...(block ? { votes: { sid: 12, mine, left } } : {}), presence: {} }
+	}
+}
+
+
+test('job 216 (AK4, AK6): two tabs of one person: the op carries b, a newer op keeps the older b; stale is carried onto the votes block, no vote is lost', async () => {
+	const server = { [A]: 1 }
+	const h = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 9, perItem: 5, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 8 }, reply: tabServer(server) })
+	assert.equal(h.s.vote(A, 2), true)
+	assert.equal(h.s.vote(A, 3), true)
+	assert.deepEqual(h.s.replica.pendingOps().ops, [{ o: 'vote', s: 12, id: A, n: 3, b: 1 }], 'one op: the newer n, the older base')
+	server[A] = 2 // the other tab: +1
+	await h.clock.advance(2000)
+	assert.deepEqual(voteOps(h), [{ o: 'vote', s: 12, id: A, n: 3, b: 1 }, { o: 'vote', s: 12, id: A, n: 4, b: 2 }], 'stale, then +2 on the new state')
+	assert.deepEqual(server, { [A]: 4 }, '1 + 1 (other tab) + 2 (this tab)')
+	assert.deepEqual(h.s.voteState.mine, { [A]: 4 })
+	assert.equal(h.s.voteState.left, 5)
+	assert.deepEqual(h.infos.filter(Array.isArray), [], 'stale says nothing')
+	h.s.destroy()
+})
+
+test('job 216 (AK4): stale without a votes block is dropped (no new op); a recomputed change stops at perItem without a word, only the budget says vote-limit', async () => {
+	const server = { [A]: 1 }
+	const h = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 9, perItem: 2, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 8 }, reply: tabServer(server, { perItem: 2, block: false }) })
+	server[A] = 2
+	h.s.vote(A, 2)
+	await h.clock.advance(2000)
+	assert.equal(voteOps(h).length, 1, 'no block: no second op')
+	assert.deepEqual(h.s.voteState.mine, { [A]: 1 }, 'the server part as last known')
+	h.s.destroy()
+	// round 1 (fresh review): over perItem the recomputed number stops there without a word
+	const server2 = { [A]: 1 }
+	const t = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 9, perItem: 2, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 8 }, reply: tabServer(server2, { perItem: 2 }) })
+	server2[A] = 2 // the other tab used the last vote on A
+	t.s.vote(A, 2)
+	await t.clock.advance(2000)
+	assert.equal(voteOps(t).length, 1, 'over perItem: nothing sent')
+	assert.deepEqual(t.infos.filter(Array.isArray), [], 'no "You have no votes left." while votes are left')
+	assert.deepEqual(t.s.voteState.mine, { [A]: 2 })
+	assert.equal(t.s.voteState.left, 7)
+	assert.deepEqual(server2, { [A]: 2 })
+	t.s.destroy()
+	// perItem 3: the stale +2 lands partly (2 + 2 stops at 3)
+	const server3 = { [A]: 1 }
+	const p = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 9, perItem: 3, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 8 }, reply: tabServer(server3, { perItem: 3 }) })
+	server3[A] = 2
+	p.s.vote(A, 3)
+	await p.clock.advance(2000)
+	assert.deepEqual(voteOps(p).map((op) => [op.n, op.b]), [[3, 1], [3, 2]])
+	assert.deepEqual(server3, { [A]: 3 })
+	assert.deepEqual(p.infos.filter(Array.isArray), [])
+	p.s.destroy()
+	// the budget still says so: the other tab spent the rest
+	const server4 = { [A]: 1 }
+	const q = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 3, perItem: 3, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 2 }, reply: tabServer(server4, { perItem: 3, per: 3 }) })
+	server4[A] = 2
+	server4[B] = 1
+	q.s.vote(A, 2)
+	await q.clock.advance(2000)
+	assert.equal(voteOps(q).length, 1, 'over the budget: nothing sent')
+	assert.deepEqual(q.infos.filter(Array.isArray), [['You have no votes left.', 'vote-limit']])
+	assert.deepEqual(q.s.voteState.mine, { [A]: 2, [B]: 1 })
+	q.s.destroy()
+})
+
+test('job 216 (round 1, fresh review): one vote per item, both tabs tap the same note: the vote stays one, no toast', async () => {
+	const server = {}
+	const h = await open({ me: BOB, meta: { vote: voteMeta() }, votes: { sid: 12, mine: {}, left: 3 }, reply: tabServer(server, { perItem: 1, per: 3 }) })
+	server[A] = 1 // the other tab (or the phone) voted A
+	h.scene.callbacks.onIntent({ type: 'vote', id: A, rect: null })
+	await h.clock.advance(2000)
+	assert.deepEqual(voteOps(h), [{ o: 'vote', s: 12, id: A, n: 1, b: 0 }], 'stale, nothing recomputed')
+	assert.deepEqual(h.s.voteState.mine, { [A]: 1 })
+	assert.equal(h.s.voteState.left, 2)
+	assert.deepEqual(h.infos.filter(Array.isArray), [], 'no toast')
+	assert.deepEqual(server, { [A]: 1 })
+	h.s.destroy()
+})
+
+test('job 216 (AK5): an answer lost after the commit: the repeat comes back stale and is not counted again', async () => {
+	const server = { [A]: 1 }
+	const h = await open({ me: BOB, meta: { vote: voteMeta({ cfg: { per: 9, perItem: 5, scope: null, types: ['sticky'] } }) }, votes: { sid: 12, mine: { [A]: 1 }, left: 8 }, reply: tabServer(server, { lose: 1 }) })
+	h.s.vote(A, 2)
+	await h.clock.advance(30000)
+	assert.deepEqual(voteOps(h), [{ o: 'vote', s: 12, id: A, n: 2, b: 1 }, { o: 'vote', s: 12, id: A, n: 2, b: 1 }], 'the same batch again, nothing recomputed')
+	assert.deepEqual(server, { [A]: 2 })
+	assert.deepEqual(h.s.voteState.mine, { [A]: 2 })
+	h.s.destroy()
+})
+
+test('job 272 AK6: presenting frames: start at the selected frame, the presenter fits it, fast steps send one PUT at a time and the last frame last; End removes the summon', async () => {
+	const F2 = ID('F2')
+	let meta = {}
+	let rev = 20
+	const answer = () => ({ board: { title: 'Board', meta: structuredClone(meta), metaRev: ++rev }, now: T0 })
+	const pending = []
+	const h = await open({
+		items: [frame(F, { x: 0, y: 0 }), frame(F2, { x: 1000, y: 0 }), sticky(A)],
+		api: {
+			summon: (client, f) => { meta = { summon: { pid: ALICE.pid, client, name: 'Alice Adler', seq: 1, at: T0, frame: f } }; return answer() },
+			moveSummon: (f) => new Promise((resolve) => pending.push(() => { meta.summon.frame = f; resolve(answer()) })),
+		},
+	})
+	h.s.selection = [F2]
+	assert.equal(await h.s.startSlides(), true)
+	assert.deepEqual(h.apiCalls.at(-1), ['summon', 7, h.s.client, F2], 'the selected frame first')
+	assert.deepEqual(h.scene.follows.at(-1).cam.rect, h.model.abs(F2))
+	const st = h.ui.slides.at(-1)
+	assert.equal(st.role, 'presenter')
+	assert.deepEqual(st.list.map((x) => x.id), [F, F2], 'reading order')
+	assert.equal(st.current, F2)
+	assert.equal(h.s.slideStep(1), false, 'at the end')
+	assert.equal(h.s.slideStep(-1), true)
+	assert.equal(h.s.slideStep(1), true)
+	assert.equal(h.s.slideStep(-1), true)
+	assert.equal(h.apiCalls.filter((c) => c[0] === 'moveSummon').length, 1, 'one PUT in flight')
+	while (pending.length) {
+		pending.shift()()
+		await h.clock.advance(0)
+	}
+	const moves = h.apiCalls.filter((c) => c[0] === 'moveSummon').map((c) => c[2])
+	assert.deepEqual(moves, [F], 'F2 → F → F2 → F: the newest (F) equals the sent one: no second PUT')
+	assert.equal(meta.summon.frame, F)
+	assert.equal(h.ui.slides.at(-1).current, F)
+	await h.s.endSlides()
+	assert.deepEqual(h.apiCalls.at(-1), ['endSummon', 7])
+	h.s.destroy()
+})
+
+test('job 272: a viewer following a summon with a frame gets the viewer state; "Look around myself" leaves it', async () => {
+	const h = await open({ me: BOB, items: [frame(F), sticky(A)] })
+	h.s.onMeta({ metaRev: 4, meta: { summon: { pid: ALICE.pid, client: 'cAliceTab1', name: 'Alice Adler', seq: 1, at: T0, frame: F } } })
+	const st = h.ui.slides.at(-1)
+	assert.equal(st?.role, 'viewer')
+	assert.deepEqual([st.current, st.index, st.name], [F, 0, 'Alice Adler'])
+	h.s.lookAround()
+	assert.equal(h.ui.slides.at(-1), null)
+	assert.equal(h.s.follower.following, null)
+	h.s.destroy()
+})
+
+test('job 272 round 1: the cover follows the camera the user sees (the one onCamera reports), and the bars\' insets refit the slide', async () => {
+	const h = await open({ me: BOB, items: [frame(F, { x: 100, y: 50, w: 800, h: 600 }), sticky(A)] })
+	const rects = []
+	h.s.ui.onSlideRect = (r) => rects.push(r)
+	h.s.onMeta({ metaRev: 4, meta: { summon: { pid: ALICE.pid, client: 'cAliceTab1', name: 'Alice Adler', seq: 1, at: T0, frame: F } } })
+	assert.equal(h.ui.slides.at(-1)?.role, 'viewer')
+	h.s.onCamera({ x: 50, y: 0, scale: 0.5 })
+	assert.deepEqual(rects.at(-1), { x: 25, y: 25, w: 400, h: 300 }, 'measured with the reported camera, not the confirmed one')
+	const scene = h.scene
+	const calls = []
+	const orig = scene.cameraForRect.bind(scene)
+	scene.cameraForRect = (rect, pad, insets, max) => { calls.push(insets); return orig(rect, pad) }
+	h.s.setSlideInsets({ right: 0, bottom: 72 })
+	assert.deepEqual(calls.at(-1), { bottom: 72 }, 'the follower fits the frame above the bar')
 	h.s.destroy()
 })

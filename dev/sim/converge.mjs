@@ -784,7 +784,7 @@ class SimClient {
 		const ops = [
 			{ o: 'put', id: ulid(), t: 'shape', p: { x: 0, y: 0, w: 100, h: 100, r: 0, z: zKey(rnd.int(0, 1300)), parent: null, data: { kind: 'star' }, style: {} } },
 			{ o: 'put', id: ulid(), t: 'text', p: { x: 0, y: 0, w: 100, h: 30, r: 0, z: zKey(rnd.int(0, 1300)), parent: null, data: { text: 'x' }, style: { fontSize: 401 } } },
-			{ o: 'put', id: ulid(), t: 'pen', p: { x: 0, y: 0, w: 10, h: 10, r: 0, z: zKey(rnd.int(0, 1300)), parent: null } },
+			{ o: 'put', id: ulid(), t: 'brush', p: { x: 0, y: 0, w: 10, h: 10, r: 0, z: zKey(rnd.int(0, 1300)), parent: null } },
 		]
 		if (shape.length) {
 			const [id] = rnd.pick(shape)

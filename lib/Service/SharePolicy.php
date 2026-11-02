@@ -212,6 +212,16 @@ class SharePolicy {
     }
 
     /**
+     * Does Nextcloud restrict whom users may find (factory job 249, the @
+     * list of comments)? Enumeration off, limited to groups or to phone
+     * contacts, or sharing only with group members.
+     */
+    public function searchRestricted(): bool {
+        $m = $this->manager();
+        return !$m->allowEnumeration() || $m->limitEnumerationToGroups() || $m->limitEnumerationToPhone() || $m->shareWithGroupMembersOnly();
+    }
+
+    /**
      * Team support for this user (SPEC-M1 §4.13.1): Nextcloud has Circles
      * (ITeamManager::hasTeamSupport) and the app is enabled for the user.
      */

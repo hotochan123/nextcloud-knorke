@@ -95,7 +95,7 @@ export function routeConnector(a, b, route) {
 			points = [x0, y0, x0, my, x1, my, x1, y1]
 		}
 	} else if (route === 'curved') {
-		const d = Math.max(40, 0.4 * Math.hypot(x1 - x0, y1 - y0))
+		const d = curveHandle(Math.hypot(x1 - x0, y1 - y0))
 		const na = NORMALS[sa]
 		const nb = NORMALS[sb]
 		kind = 'bezier'
@@ -267,4 +267,15 @@ export function sampleBezier(p, steps = 16) {
  */
 export function shapePolygon(kind, w, h) {
 	return Array.isArray(shapeOf(kind).outline) ? outlinePoints(kind, w, h) : null
+}
+
+/**
+ * (Job 261, design round 3 V6) Length of the handles of a curved connector
+ * whose ends lie `dist` apart: 60 % of it, at least 60 (40 % and 40 until 0.4.0).
+ *
+ * @param {number} dist distance of the two ends
+ * @return {number}
+ */
+export function curveHandle(dist) {
+	return Math.max(60, 0.6 * dist)
 }

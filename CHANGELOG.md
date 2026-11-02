@@ -10,6 +10,55 @@ All notable changes to Knorke are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] – 2026-11-03
+
+First release in the Nextcloud App Store. Updating from 0.3.0 runs one
+database migration (a new table for templates); existing boards keep every
+item and take the new look.
+
+### Added
+- New look throughout: two islands instead of the top bar, a compact tool
+  bar, one context bar in a fixed order with a colour panel, a session bar
+  for timer, vote and presenting, a board list of cards with pictures, new
+  notes, shapes, connectors, frames with a title tab, and a new app icon.
+- Markdown in notes, shapes, text items and table cells: bold, italic,
+  strikethrough, code, lists and links, with B, I, S and a list button while
+  writing.
+- Diagrams: mind maps, org charts and trees; swimlanes with lanes, columns
+  and groups; tables; a shapes panel with flowchart, BPMN 2.0 and symbol
+  libraries; own shape libraries from SVG and draw.io; elbow connectors that
+  run around items; export as BPMN.
+- AI through Nextcloud's own AI provider (optional, switchable per board and
+  for the whole instance): summaries and clustering of notes, and mind maps,
+  org charts, trees, flowcharts and workshops from a prompt.
+- Workshops: private writing with a reveal, frames as slides, comments,
+  emoji reactions, tags, a laser pointer, a live vote count for facilitators
+  and votes for signed-in accounts only.
+- Templates: built-in templates, "New board" with a template, and templates
+  suggested by users and adopted by administrators.
+- Pen, highlighter and eraser; note pads; a frame around a selection; a
+  board as an outline; search on the board; favorites in the board list.
+- Export as PNG, SVG, PDF and CSV, a board as a `.knorke` file, CSV import
+  and pasting cells from spreadsheets.
+- Boards in link previews, the Smart Picker and a team's resources.
+
+### Changed
+- The administration page "Knorke" has collapsible sections and one save
+  bar.
+- Zoom up to 1000 %, the mouse wheel zooms, right-drag and the pen's side
+  button pan.
+- Undo keeps other people's changes, also for tags.
+- Boards open faster.
+
+### Fixed
+- Many fixes, among them lost votes in two tabs, text cut off in notes and
+  shapes, and the BPMN export with a pool and a loose shape.
+
+### Security
+- Boards of disabled accounts are closed like their files, presence data is
+  limited in size, and accounts deleted while the app was off are cleaned up
+  completely.
+
 ## [0.3.0] – 2026-10-23
 
 **Needs one `occ upgrade`:** new database columns for grouping and locking.

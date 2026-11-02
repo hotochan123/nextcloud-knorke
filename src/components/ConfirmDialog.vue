@@ -5,7 +5,7 @@
 <template>
 	<NcDialog :name="name"
 		:message="message"
-		size="small"
+		:size="size"
 		is-form
 		:no-close="busy"
 		class="knorke-dialog"
@@ -49,6 +49,8 @@ const props = defineProps({
 	busy: { type: Boolean, default: false },
 	confirmDisabled: { type: Boolean, default: false },
 	hideCancel: { type: Boolean, default: false },
+	/** (job 232) NcDialog size: "New board" with its template grid is wider */
+	size: { type: String, default: 'small' },
 })
 
 const emit = defineEmits(['confirm', 'cancel'])

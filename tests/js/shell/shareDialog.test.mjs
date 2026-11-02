@@ -349,11 +349,12 @@ test('R14-12 (stage 3, FEATURES.voting): a board-list row with access vote says 
 		],
 	}))
 	const rows = Object.fromEntries([...html.matchAll(/<li [^>]*data-knorke-board="(\d+)"[^>]*data-knorke-board-access="([a-z]+)"[^>]*>([\s\S]*?)<\/li>/g)]
-		.map(([, id, access, inner]) => [id, { access, meta: inner.match(/knorke-list__meta">([\s\S]*?)<\/span>/)?.[1].replace(/<!--[[\]]?-->/g, '') ?? '' }]))
+		// job 232: owner, origin and access in the card's second muted line
+		.map(([, id, access, inner]) => [id, { access, meta: inner.match(/knorke-list__origin">([\s\S]*?)<\/span>/)?.[1].replace(/<!--[[\]]?-->/g, '') ?? '' }]))
 	assert.equal(rows[2].access, 'vote', '[data-knorke-board-access=vote] stays')
-	assert.match(rows[2].meta, /Shared with you · Can vote · /)
+	assert.equal(rows[2].meta, 'by Bob · Shared with you · Can vote')
 	assert.equal(rows[3].access, 'vote')
-	assert.match(rows[3].meta, /Joined through a link · Can vote · /)
+	assert.equal(rows[3].meta, 'by Bob · Joined through a link · Can vote')
 	assert.match(rows[4].meta, /Can facilitate/)
 	assert.equal(rows[4].access, 'moderate')
 	assert.match(rows[5].meta, /Can edit/)
@@ -419,4 +420,134 @@ test('job 079 AK8: the search option shows the hint when its appAccess is false;
 	const updates = emitted.filter(([name]) => name === 'update:shares')
 	assert.equal(updates.length, 1)
 	assert.deepEqual(updates[0][1], [{ kind: 'user', id: 'carol', name: 'Carol', role: 'edit', available: true, appAccess: false }])
+})
+
+// ---- job 248: hints on removal ---------------------------------------------------
+
+const URL_VOTE = 'http://knorke-dev-c-nc/index.php/apps/knorke/p/Zb3dEf6hIj9kLm2nOp5qRs8t'
+const LINK = (url) => ({ url, password: false, expiresOn: null })
+const BOB_MOD = { kind: 'user', id: 'bob', name: 'Bob', role: 'moderate', available: true }
+const STAFF_MOD = { kind: 'group', id: 'staff', name: 'Staff', role: 'moderate', available: true }
+
+/**
+ * @param {object[]} shares saved rows
+ * @param {object} [over] ownerAnswer options
+ * @return {object} owner's answer of route 19/20 with these rows
+ */
+const withShares = (shares, over = {}) => ({ ...ownerAnswer({ policy: {}, ...over }), shares })
+
+/**
+ * @param {object} b ShareDialog bindings
+ * @return {Promise<void>} route 19 with Bob and Staff as facilitators and both links active
+ */
+async function loadedWithModerators(b, links = { edit: LINK(URL_EDIT), vote: LINK(URL_VOTE) }) {
+	answers.push(withShares([BOB_MOD, STAFF_MOD], { links }))
+	await b.load()
+}
+
+test('job 248 AK6: a row with viaLink says "Also in through a link" ([data-knorke-note=via-link]); removing it shows the hint until it is back', async () => {
+	const stored = [
+		{ kind: 'user', id: 'bob', name: 'Bob', role: 'edit', available: true, viaLink: true },
+		{ kind: 'user', id: 'carol', name: 'Carol', role: 'edit', available: true },
+	]
+	const render = (shares) => renderToString(createSSRApp(SharePeople, { boardId: BOARD, shares, stored, policy: PEOPLE_POLICY, loaded: true, busy: false, error: null }))
+	let html = await render(stored)
+	const rows = Object.fromEntries([...html.matchAll(/<li ([^>]*data-knorke-share-item="([^"]+)"[^>]*)>([\s\S]*?)<\/li>/g)].map(([, , key, inner]) => [key, inner]))
+	assert.match(rows['user:bob'], /data-knorke-note="via-link"[^>]*>\s*Also in through a link\s*</)
+	assert.doesNotMatch(rows['user:carol'], /data-knorke-note="via-link"/)
+	assert.doesNotMatch(html, /data-knorke-note="via-link-removed"/, 'nothing removed yet')
+	html = await render([stored[1]])
+	const hints = [...html.matchAll(/<p[^>]*data-knorke-note="via-link-removed"[^>]*>([\s\S]*?)<\/p>/g)]
+	assert.equal(hints.length, 1)
+	assert.equal(hints[0][1].trim(), 'Bob stays on the board through a link. Renew the links to take that access away too.')
+	assert.match(hints[0][0], /role="status"/)
+	html = await render([stored[1]].concat([{ ...stored[0], viaLink: undefined }]))
+	assert.doesNotMatch(html, /data-knorke-note="via-link-removed"/, 'back in the draft')
+	html = await render([stored[0]])
+	assert.doesNotMatch(html, /data-knorke-note="via-link-removed"/, 'removing a row without viaLink says nothing')
+})
+
+test('job 248 AK6: removing a facilitator and saving asks "Renew links?"; yes renews every active link (rotate), the People tab stays', async () => {
+	const { b, emitted } = dialog({ linkPolicy: null })
+	await loadedWithModerators(b)
+	b.tab.value = 'people'
+	b.onDraft([STAFF_MOD])
+	answers.push(withShares([STAFF_MOD], { links: { edit: LINK(URL_EDIT), vote: LINK(URL_VOTE) } }))
+	await b.saveShares()
+	assert.equal(calls[1].method, 'PUT')
+	assert.deepEqual(b.confirm.value, { kind: 'renew' })
+	assert.equal(b.question.value.name, 'Renew links?')
+	assert.equal(b.question.value.confirm, 'Renew links')
+	const NEW_EDIT = URL_EDIT.replace('Ab3d', 'Nn3d')
+	const NEW_VOTE = URL_VOTE.replace('Zb3d', 'Nv3d')
+	answers.push({ link: LINK(NEW_EDIT) }, { link: LINK(NEW_VOTE) })
+	await b.onConfirm()
+	const posts = calls.slice(2)
+	assert.deepEqual(posts.map((c) => [c.method, typeof c.body === 'string' ? JSON.parse(c.body) : c.body]), [['POST', { rotate: true }], ['POST', { rotate: true }]])
+	assert.ok(posts[1].url.includes('vote'), 'edit first, then vote: ' + posts.map((c) => c.url).join(' '))
+	assert.ok(!posts[0].url.includes('vote'))
+	assert.equal(b.confirm.value, null)
+	assert.equal(b.tab.value, 'people')
+	assert.deepEqual([b.links.value.edit.url, b.links.value.vote.url], [NEW_EDIT, NEW_VOTE])
+	assert.deepEqual(linksEmits(emitted).at(-1), { links: { edit: LINK(NEW_EDIT), vote: LINK(NEW_VOTE) } }, 'the board view gets the new links')
+})
+
+test('job 248 AK6: downgrading a group facilitator asks too; cancel changes nothing', async () => {
+	const { b } = dialog({ linkPolicy: null })
+	await loadedWithModerators(b, { edit: LINK(URL_EDIT), vote: null })
+	b.onDraft([BOB_MOD, { ...STAFF_MOD, role: 'edit' }])
+	answers.push(withShares([BOB_MOD, { ...STAFF_MOD, role: 'edit' }], { links: { edit: LINK(URL_EDIT), vote: null } }))
+	await b.saveShares()
+	assert.deepEqual(b.confirm.value, { kind: 'renew' })
+	b.confirm.value = null // ConfirmDialog's cancel
+	assert.equal(calls.length, 2, 'no link request')
+	assert.equal(b.links.value.edit.url, URL_EDIT)
+})
+
+test('job 248 AK6: no question without an active link, with links not allowed, without a lost facilitator, or when the PUT fails', async () => {
+	// no active link
+	let { b } = dialog({ linkPolicy: null })
+	await loadedWithModerators(b, { edit: null, vote: null })
+	b.onDraft([STAFF_MOD])
+	answers.push(withShares([STAFF_MOD]))
+	await b.saveShares()
+	assert.equal(b.confirm.value, null, 'no link')
+	// links not allowed for the owner
+	;({ b } = dialog({ linkPolicy: null, linksAllowed: false }))
+	answers.push(withShares([BOB_MOD], { links: { edit: LINK(URL_EDIT), vote: null }, linksAllowed: false }))
+	await b.load()
+	b.onDraft([])
+	answers.push(withShares([], { links: { edit: LINK(URL_EDIT), vote: null }, linksAllowed: false }))
+	await b.saveShares()
+	assert.equal(b.confirm.value, null, 'links not allowed')
+	// a new facilitator, another row removed
+	;({ b } = dialog({ linkPolicy: null }))
+	const carol = { kind: 'user', id: 'carol', name: 'Carol', role: 'edit', available: true }
+	answers.push(withShares([carol], { links: { edit: LINK(URL_EDIT), vote: null } }))
+	await b.load()
+	b.onDraft([BOB_MOD])
+	answers.push(withShares([BOB_MOD], { links: { edit: LINK(URL_EDIT), vote: null } }))
+	await b.saveShares()
+	assert.equal(b.confirm.value, null, 'no facilitator lost')
+	// the PUT fails
+	;({ b } = dialog({ linkPolicy: null }))
+	await loadedWithModerators(b)
+	b.onDraft([])
+	answers.push(err(400, 'bad_request'))
+	await b.saveShares()
+	assert.equal(b.confirm.value, null, 'PUT failed')
+})
+
+test('job 248: yes with two links — the first renewal hits 403 links_disabled, the second is not tried, the view turns disabled', async () => {
+	const { b } = dialog({ linkPolicy: null })
+	await loadedWithModerators(b)
+	b.onDraft([])
+	answers.push(withShares([], { links: { edit: LINK(URL_EDIT), vote: LINK(URL_VOTE) } }))
+	await b.saveShares()
+	assert.deepEqual(b.confirm.value, { kind: 'renew' })
+	answers.push(err(403, 'links_disabled'))
+	await b.onConfirm()
+	assert.equal(calls.length, 3, 'one POST only')
+	assert.equal(b.linksAllowed.value, false)
+	assert.equal(b.confirm.value, null)
 })

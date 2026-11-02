@@ -40,12 +40,16 @@ use OCP\IDBConnection;
  * remove of a locked item with `itemlocked` (also a moderator's: unlock
  * first, visibly) and an unlock of a foreign lock without the moderation
  * right; the lock op ('o' => 'lock') sets the principal as locker (never
- * the value sent) or clears all three columns. Derived writes (rules 6, 14,
- * 15) never ask authorize() and move locked items too; authorizeRef() lets
- * a locked frame be a parent and a locked item a connector end. The change
- * row carries the path `lock` as true or null, never the locker.
- * clearLocker() empties locked_by and locked_name of a deleted account (the
- * lock stays: "locked, locker unknown", only moderators unlock).
+ * the value sent) or unlocks: `locked` becomes 0 and locked_by/locked_name
+ * stay as the remembered lock (job 152, `kept` of the working copy; never
+ * sent). A restore (the undo of a foreign unlock) brings back only that
+ * remembered lock (restoreAllowed). A remove and a revive clear all three
+ * columns. Derived writes (rules 6, 14, 15) never ask authorize() and move
+ * locked items too; authorizeRef() lets a locked frame be a parent and a
+ * locked item a connector end. The change row carries the path `lock` as
+ * true or null, never the locker. clearLocker() empties locked_by and
+ * locked_name of a deleted account, also of a remembered lock (`locked`
+ * stays: "locked, locker unknown", only moderators unlock).
  *
  * Groups (M2, SPEC-M1 §1.2 "(R20) Gruppieren"): the working copy carries
  * `group` (column group_id, null or a ULID, OpValidator::isGroupId), set by
@@ -60,6 +64,11 @@ use OCP\IDBConnection;
  * merged into its one change row. Groups that only gain members are never
  * counted (a group may be built over several requests). A tombstone keeps
  * its group_id (never sent, never counted; a revive writes the put's).
+ *
+ * Reactions (job 172, Reactions): the normalized op 'react' (OpValidator)
+ * writes data.react.<key> of a living sticky note like a patch
+ * (applyReaction), also on a locked note and past someone else's text
+ * lease; it is never derived and never touches another item.
  *
  * Read path sync() (protocol 2, SPEC-M1 §4.13.8): the epoch check, presence
  * first (so a lease take-over counts for the ops of the same request), then
@@ -87,6 +96,10 @@ class SyncService {
     private const JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR;
     /** Containers are walked upwards at most this far (cycle guard, §4.7 rule 6). */
     private const MAX_ANCESTORS = 8;
+
+    /** (job 275) The board of the running writeBatch and its meta.private (false = not read yet); null outside a batch. */
+    private ?int $batchBoard = null;
+    private array|false|null $batchPrivate = false;
 
     public function __construct(
         private ItemStore $items,
@@ -143,6 +156,9 @@ class SyncService {
             [$rev, $res, $derived] = $this->atomic(fn (): array => $this->writeBatch($p, $board, $client, $norm, $nowMs, $presence), $this->db);
         } catch (NothingWritten $n) {
             return [$n->observedRev, $n->res, 0];
+        } finally {
+            $this->batchBoard = null;
+            $this->batchPrivate = false;
         }
         // After COMMIT, never before: a poller would look for rows it cannot see yet.
         if (!$this->devSkipBump()) {
@@ -163,7 +179,7 @@ class SyncService {
      * Locked items (M2, R20), on the working copy's `lock`, so a lock or
      * unlock earlier in the same batch counts:
      *  - lock op, lock: always allowed (a second lock is a no-op, the first
-     *    locker stays)
+     *    locker stays); a restore too (job 152: writeBatch decides)
      *  - lock op, unlock: allowed when the item is not locked (no-op), the
      *    lock is the principal's own (locked_by = $p->id) or $p may
      *    moderate; else `itemlocked`
@@ -176,10 +192,34 @@ class SyncService {
      *    (VoteService passes them here) never see the lock
      * A gone item ($cur null) is left to the state machine (`gone`).
      *
+     * Private writing (job 275), inside a batch only (meta.private read once
+     * under the board lock, and only when one of these ops meets a stored
+     * row): patch, remove, lock and react of a note hidden from $p
+     * (PrivateWriting::hides on the stored row) → `denied`, for every role,
+     * except a patch of its placement and size only that keeps it hidden
+     * (PrivateWriting::placementStaysHidden, job 286: lane, column and frame
+     * operations carry covered children along; the lock check below runs);
+     * remove of the frame of private writing → `denied` (its notes would
+     * lose their parent and show). Derived writes never come here.
+     *
      * @return string|null null = allowed, otherwise the result code (e.g. 'denied', 'itemlocked')
      */
     protected function authorize(Principal $p, array $op, ?array $cur, ?array $row): ?string {
         $o = $op['o'] ?? null;
+        if ($cur !== null && $row !== null && $this->batchBoard !== null && in_array($o, ['patch', 'remove', 'lock', 'react'], true)
+            && (($row['type'] === 'sticky' && (string)($row['created_by'] ?? '') !== $p->id) || ($o === 'remove' && $row['type'] === 'frame'))) {
+            if ($this->batchPrivate === false) {
+                $this->batchPrivate = $this->privateState($this->batchBoard);
+            }
+            $priv = $this->batchPrivate;
+            if (PrivateWriting::hides($priv, $p->id, $row)
+                && !($o === 'patch' && PrivateWriting::placementStaysHidden($priv, $p->id, $row, $op['p'] ?? []))) {
+                return 'denied';
+            }
+            if ($o === 'remove' && $priv !== null && ($priv['frame'] ?? null) === ($op['id'] ?? null)) {
+                return 'denied';
+            }
+        }
         if ($cur === null || !in_array($o, ['patch', 'remove', 'lock'], true)) {
             return null;
         }
@@ -223,6 +263,8 @@ class SyncService {
         // 1) FIRST statement: board row lock + new rev.
         $head = $this->items->lockAndBumpRev($board, $nowMs) ?? throw new HttpError(404, 'not_found');
         $rev = $head['rev'];
+        $this->batchBoard = $board;
+        $this->batchPrivate = false;
 
         // 2) Rows of all touched ids and of all referenced ids — parents and
         //    connector ends (SPEC-M1 §4.13.2 step 6) — in one query,
@@ -266,20 +308,38 @@ class SyncService {
                 $res[$i] = $deny;
                 continue;
             }
+            if ($n['o'] === 'react') {
+                $res[$i] = $this->applyReaction($work, $id, $n, $bytes, $maxBytes);
+                continue;
+            }
             if ($n['o'] === 'lock') {
                 // Lock or unlock (M2, R20): only the lock changes. The locker
                 // is the principal, never the value sent; locking a locked
-                // item and unlocking an unlocked one are no-ops (`ok`).
+                // item and unlocking an unlocked one are no-ops (`ok`). An
+                // unlock remembers the lifted lock in `kept`, a lock
+                // replaces it (job 152).
                 if (!in_array($state, self::LIVE, true)) {
                     $res[$i] = 'gone';
                     continue;
                 }
                 $was = $work[$id]['cur']['lock'] ?? null;
-                if ($n['on'] && $was === null) {
+                if ($n['restore'] ?? false) {
+                    // Restore (job 152): a free item gets its remembered lock
+                    // back when the expected pid and the right fit; otherwise
+                    // (locked meanwhile, nothing or someone else remembered,
+                    // no right) `ok` without effect, never the principal.
+                    if ($was === null && $this->restoreAllowed($p, $board, $work[$id]['kept'] ?? null, $n['by'])) {
+                        $work[$id]['cur']['lock'] = $work[$id]['kept'];
+                        $work[$id]['kept'] = null;
+                        $work[$id]['paths']['lock'] = true;
+                    }
+                } elseif ($n['on'] && $was === null) {
                     $work[$id]['cur']['lock'] = ['by' => $p->id, 'name' => $this->lockerName($p)];
+                    $work[$id]['kept'] = null;
                     $work[$id]['paths']['lock'] = true;
                 } elseif (!$n['on'] && $was !== null) {
                     $work[$id]['cur']['lock'] = null;
+                    $work[$id]['kept'] = $was;
                     $work[$id]['paths']['lock'] = true;
                 }
                 $res[$i] = 'ok';
@@ -306,6 +366,22 @@ class SyncService {
                     $res[$i] = $item;
                     continue;
                 }
+                // Job 173: a table (also a revived one) has the form of Tables::check
+                if ($item['t'] === 'table' && !Tables::check($item['data'])) {
+                    $res[$i] = 'bad';
+                    continue;
+                }
+                // Job 195: a mind map (also a revived one) has the form of Mindmaps::check
+                if ($item['t'] === 'mindmap' && !Mindmaps::check($item['data'])) {
+                    $res[$i] = 'bad';
+                    continue;
+                }
+                // Job 199: a frame with lanes (also a revived one) has data.lanes of the form of Lanes::check;
+                // job 208: and data.cols of the form of Lanes::checkCols; job 225: and their groups (Lanes::checkFrame)
+                if ($item['t'] === 'frame' && !Lanes::checkFrame($item['data'])) {
+                    $res[$i] = 'bad';
+                    continue;
+                }
                 if ($live + 1 > $max) {
                     $res[$i] = 'limit';
                     continue;
@@ -318,6 +394,8 @@ class SyncService {
                 $live++;
                 $bytes += $size;
                 $work[$id]['cur'] = $item;
+                // A new or revived item remembers no lock (reviveItem clears the columns, job 152).
+                $work[$id]['kept'] = null;
                 $work[$id]['size'] = $size;
                 $work[$id]['state'] = $state === 'none' ? 'new' : 'revived';
                 $res[$i] = 'ok';
@@ -358,6 +436,63 @@ class SyncService {
                 $before = $cur;
                 foreach ($patch as $path => $v) {
                     $cur = PathOps::setPath($cur, (string)$path, $v);
+                }
+                if ($cur['t'] === 'table') {
+                    // Job 173: the stored result keeps the form of a table (paths in any
+                    // depth below data.cols/rows/cells, whole subtrees from undo and the
+                    // replica), and the text of a cell that still exists afterwards is
+                    // locked while another pid holds the lease of that cell (e, ec).
+                    // Deleting a row or column with its cells passes a foreign lease.
+                    if (!Tables::check($cur['data'])) {
+                        $res[$i] = 'bad';
+                        continue;
+                    }
+                    $cells = Tables::changedCells($before['data'], $cur['data']);
+                    if ($cells !== [] && $presence !== null && !$leaseFresh) {
+                        $leaseMs = max($nowMs, $this->clockMs());
+                        $presence = $this->presence->read($board, $leaseMs);
+                        $leaseFresh = true;
+                    }
+                    foreach ($cells as $cell) {
+                        $holder = PresenceStore::leaseHolder($presence, $id, $leaseMs, $cell);
+                        if ($holder !== null && $holder !== $p->pid) {
+                            $res[$i] = 'locked';
+                            continue 2;
+                        }
+                    }
+                }
+                if ($cur['t'] === 'mindmap') {
+                    // Job 195: the stored result keeps the form of a mind map (paths in any
+                    // depth below data.nodes and data.texts, whole subtrees from undo and the
+                    // replica: a cycle or a child below a node just deleted is bad), and the
+                    // text of a node that still exists afterwards is locked while another pid
+                    // holds the lease of that node (e, ec). Deleting a branch with its texts
+                    // passes a foreign lease.
+                    if (!Mindmaps::check($cur['data'])) {
+                        $res[$i] = 'bad';
+                        continue;
+                    }
+                    $texts = Mindmaps::changedTexts($before['data'], $cur['data']);
+                    if ($texts !== [] && $presence !== null && !$leaseFresh) {
+                        $leaseMs = max($nowMs, $this->clockMs());
+                        $presence = $this->presence->read($board, $leaseMs);
+                        $leaseFresh = true;
+                    }
+                    foreach ($texts as $node) {
+                        $holder = PresenceStore::leaseHolder($presence, $id, $leaseMs, $node);
+                        if ($holder !== null && $holder !== $p->pid) {
+                            $res[$i] = 'locked';
+                            continue 2;
+                        }
+                    }
+                }
+                // Job 199: a frame whose result has data.lanes keeps their form (paths in
+                // any depth below data.lanes, whole lanes from undo and the replica); job 208:
+                // the same for data.cols (a whole map, null); job 225: and for data.lgroups and
+                // data.cgroups, whose keys a lane's (column's) g names
+                if ($cur['t'] === 'frame' && is_array($cur['data'] ?? null) && !Lanes::checkFrame($cur['data'])) {
+                    $res[$i] = 'bad';
+                    continue;
                 }
                 $roots = self::payloadRoots($patch);
                 if ($roots !== []) {
@@ -556,16 +691,94 @@ class SyncService {
     }
 
     /**
-     * The columns of a working copy's lock: locked 1 and the locker, or all
-     * three NULL.
+     * A reaction op under the lock (job 172, Reactions): a note that does not
+     * live is `gone`, another type than sticky `bad`; a lock and someone
+     * else's text lease never stop it (authorize() leaves 'react' alone).
+     * The same emoji again (or taking back what is not there) is `ok`
+     * without effect. Otherwise data.react.<key> becomes {e, n} (n written
+     * by the server) or goes; a result beyond MAX_ITEM_BYTES or the value
+     * rules of a put (fitsShape: at most 100 reactions, so an undo of a
+     * delete can bring the note back) or a growth beyond the board byte
+     * budget is `limit`. Written like a patch: data column, one change row
+     * with the path data.react.<key>, the rev of the batch.
+     *
+     * @param array<string, array> $work working copies (changed in place)
+     * @param array{o: string, id: string, key: string, e: ?string, n: string} $n normalized reaction op
+     * @param int $bytes running byte total of the batch (changed in place)
+     * @return string result code
+     */
+    private function applyReaction(array &$work, string $id, array $n, int &$bytes, int $maxBytes): string {
+        if (!in_array($work[$id]['state'], self::LIVE, true)) {
+            return 'gone';
+        }
+        $cur = $work[$id]['cur'];
+        if ($cur['t'] !== 'sticky') {
+            return 'bad';
+        }
+        $path = Reactions::PREFIX . $n['key'];
+        $was = PathOps::getPath($cur, $path);
+        $wasE = PathOps::isMap($was) ? ($was['e'] ?? null) : null;
+        if ($n['e'] === null ? $was === null : $wasE === $n['e']) {
+            return 'ok';
+        }
+        $next = PathOps::setPath($cur, $path, $n['e'] === null ? null : ['e' => $n['e'], 'n' => $n['n']]);
+        $size = ItemRegistry::bytes($next);
+        if ($size > Limits::MAX_ITEM_BYTES || !ItemRegistry::fitsShape($next, ['data'])) {
+            return 'limit';
+        }
+        $grow = $size - self::size($work[$id]);
+        if ($grow > 0 && $bytes + $grow > $maxBytes) {
+            return 'limit';
+        }
+        $bytes += $grow;
+        $work[$id]['size'] = $size;
+        $work[$id]['cur'] = $next;
+        $work[$id]['paths'][$path] = true;
+        return 'ok';
+    }
+
+    /**
+     * May $p bring back the remembered lock $kept (job 152)? Something is
+     * remembered; the expected pid $by names its locker (Access::derivePid of
+     * locked_by; null only for a locker that is unknown already, and a known
+     * locker never matches null); and $p is that locker or may moderate (the
+     * right to lift the lock). The system secret is read only to compare a
+     * known locker.
+     *
+     * @param array{by: ?string, name: ?string}|null $kept
+     */
+    private function restoreAllowed(Principal $p, int $board, ?array $kept, ?string $by): bool {
+        if ($kept === null) {
+            return false;
+        }
+        $locker = $kept['by'] ?? null;
+        if ($locker === null) {
+            return $by === null && $p->canModerate();
+        }
+        if ($by === null || ($locker !== $p->id && !$p->canModerate())) {
+            return false;
+        }
+        return Access::derivePid($this->config->getSystemValueString('secret'), $board, $locker) === $by;
+    }
+
+    /**
+     * The columns of a working copy's lock: locked 1 and the locker; without
+     * a lock but with a remembered one (job 152, `kept`) locked 0 and that
+     * locker, so an unlock leaves locked_by and locked_name standing; else all
+     * three NULL (never locked, removed, revived).
      *
      * @param array{by: ?string, name: ?string}|null $lock
+     * @param array{by: ?string, name: ?string}|null $kept
      * @return array{locked: ?int, locked_by: ?string, locked_name: ?string}
      */
-    private static function lockCols(?array $lock): array {
-        return $lock === null
-            ? ['locked' => null, 'locked_by' => null, 'locked_name' => null]
-            : ['locked' => 1, 'locked_by' => $lock['by'] ?? null, 'locked_name' => $lock['name'] ?? null];
+    private static function lockCols(?array $lock, ?array $kept = null): array {
+        if ($lock !== null) {
+            return ['locked' => 1, 'locked_by' => $lock['by'] ?? null, 'locked_name' => $lock['name'] ?? null];
+        }
+        if ($kept !== null) {
+            return ['locked' => 0, 'locked_by' => $kept['by'] ?? null, 'locked_name' => $kept['name'] ?? null];
+        }
+        return ['locked' => null, 'locked_by' => null, 'locked_name' => null];
     }
 
     /**
@@ -584,11 +797,12 @@ class SyncService {
      * Empties the locker of every lock of a principal (M2, R20; account
      * deletion and occ knorke:orphans): locked_by and locked_name become
      * NULL, `locked` stays 1 ("locked, locker unknown": only moderators
-     * unlock). Board by board in ascending order, each in ONE short
-     * transaction: lockAndBumpRev first, then the rows of that board get the
-     * new rev (open clients receive them through itemsSince); no change rows
-     * (the log is never replayed, and so no uid enters it anew); bumpRev only
-     * after COMMIT. A board whose rows are gone meanwhile is rolled back (no
+     * unlock); a remembered lock (job 152, `locked` 0) is emptied too, so a
+     * restore with that account's pid finds nobody. Board by board in
+     * ascending order, each in ONE short transaction: lockAndBumpRev first,
+     * then the rows of that board get the new rev (open clients receive them
+     * through itemsSince); no change rows (the log is never replayed, and so
+     * no uid enters it anew); bumpRev only after COMMIT. A board whose rows are gone meanwhile is rolled back (no
      * rev jump).
      *
      * @param string $principalId u:<uid> or g:<gid>
@@ -625,12 +839,29 @@ class SyncService {
         }
         $row = $rows[$id] ?? null;
         if ($row === null) {
-            $work[$id] = ['state' => 'none', 'start' => 'none', 'cur' => null, 'orig' => null, 'paths' => []];
+            $work[$id] = ['state' => 'none', 'start' => 'none', 'cur' => null, 'orig' => null, 'paths' => [], 'kept' => null];
             return;
         }
         $item = self::fromRow($row);
         $state = (int)$row['deleted'] === 1 ? 'gone' : 'live';
-        $work[$id] = ['state' => $state, 'start' => $state, 'cur' => $item, 'orig' => $item, 'paths' => []];
+        $work[$id] = ['state' => $state, 'start' => $state, 'cur' => $item, 'orig' => $item, 'paths' => [], 'kept' => self::keptOf($row)];
+    }
+
+    /**
+     * The remembered lock of a stored row (job 152): {by, name} while
+     * `locked` is 0 (each null when NULL or ''; both null: an unknown locker
+     * was lifted), else null (locked, never locked, removed, revived, or a
+     * partial row without the lock columns). Never sent.
+     *
+     * @return array{by: ?string, name: ?string}|null
+     */
+    private static function keptOf(array $r): ?array {
+        if (!isset($r['locked']) || (int)$r['locked'] !== 0) {
+            return null;
+        }
+        $by = (string)($r['locked_by'] ?? '');
+        $name = (string)($r['locked_name'] ?? '');
+        return ['by' => $by === '' ? null : $by, 'name' => $name === '' ? null : $name];
     }
 
     /**
@@ -1098,8 +1329,11 @@ class SyncService {
      * connector's data comes with its derived start_item/end_item (SPEC-M1
      * §4.13.2 step 17). A child shifted by keep writes its whole placement
      * group (rule 15): parent stays in the change row although unchanged.
-     * The lock (M2, R20) writes locked, locked_by and locked_name; its
-     * change-row value is true (locked) or null (unlocked), never the locker.
+     * The lock (M2, R20) writes locked, locked_by and locked_name (an unlock:
+     * locked 0 and the remembered locker, job 152); its change-row value is
+     * true (locked) or null (unlocked), never the locker. Only a changed lock
+     * writes: [lock X, unlock X] in one batch leaves the row (and what it
+     * remembers) as it was.
      * The group (M2, R20 Gruppieren) writes group_id, in the change row as
      * the id or null.
      *
@@ -1118,7 +1352,7 @@ class SyncService {
             }
             if ($path === 'lock') {
                 $eff['lock'] = $new === null ? null : true;
-                $cols += self::lockCols($new);
+                $cols += self::lockCols($new, $w['kept'] ?? null);
                 continue;
             }
             $eff[$path] = $new;
@@ -1159,7 +1393,8 @@ class SyncService {
      * Working copy of a stored row. group (M2, R20 Gruppieren): null for a
      * NULL or '' group_id, else the stored id. lock: null while `locked` is
      * NULL or 0, else {by: locked_by, name: locked_name} (each null when
-     * NULL or ''); a partial row (liveChildren, groupMembers: no lock
+     * NULL or ''; the remembered lock of a row with `locked` 0 is keptOf's,
+     * job 152); a partial row (liveChildren, groupMembers: no lock
      * columns) counts as unlocked and is never written beyond its placement
      * and its group.
      */
@@ -1228,8 +1463,9 @@ class SyncService {
      *     step 1b while the session of the vote ops is open after the batch
      *     (mine an object, {} when empty); (b) for canModerate() with `vt`:
      *     (i) vt:<board> present and its seq equal to `vt` → nothing, no
-     *     query; (ii) else VoteService::progress → {sid, voters, vt}. Both
-     *     name the same sid (when they would not, the fresher (b) wins).
+     *     query; (ii) else VoteService::progress → {sid, voters, vt}, with
+     *     `tally` when the session has live (job 149). Both name the same
+     *     sid (when they would not, the fresher (b) wins).
      *
      * The fast path (rev == since, no ops) stays without app SQL: step 7
      * does not run, `now` costs nothing, step 9 (i) is one cache read.
@@ -1380,6 +1616,10 @@ class SyncService {
             $removed = [];
             $n = 0;
             $pidOf = $this->pidOf($board);
+            // (job 275) meta.private is read AFTER the page, and only for a page with a
+            // live note: a start between the page and this read cannot concern a
+            // row of the page (its notes were all written before that start).
+            $priv = false;
             foreach (array_keys($rows) as $k) {
                 $row = $rows[$k];
                 unset($rows[$k]);
@@ -1388,7 +1628,12 @@ class SyncService {
                     continue;
                 }
                 $json .= $n++ === 0 ? ',"items":[' : ',';
-                $json .= ItemStore::itemJson($row, $pidOf);
+                if ($row['type'] === 'sticky' && $priv === false) {
+                    $priv = $this->privateState($board);
+                }
+                $json .= $priv !== false && PrivateWriting::hides($priv, $p->id, $row)
+                    ? PrivateWriting::coveredJson($row, $pidOf)
+                    : ItemStore::itemJson($row, $pidOf);
             }
             unset($row);
             if ($n > 0) {
@@ -1498,7 +1743,15 @@ class SyncService {
         // Appended one item at a time while the rows stream in: peak ≤ about
         // 2 × the answer (string growth), not rows + fragments + implode.
         $first = true;
-        foreach ($this->items->snapshotItems($board, $this->pidOf($board)) as $item) {
+        // (job 275) A note of someone else is covered when meta.private (as this
+        // snapshot hands it out) hides it, and also when its rev is above the
+        // snapshot rev: it may have been written after a start during this
+        // stream, and the next sync (since = rev) sends it again anyway.
+        $priv = PrivateWriting::state(MetaService::decode($meta['meta']));
+        $who = $p->id;
+        $cover = static fn (array $r): bool => PrivateWriting::hides($priv, $who, $r)
+            || ((string)$r['type'] === 'sticky' && (int)$r['rev'] > $rev && (string)($r['created_by'] ?? '') !== $who);
+        foreach ($this->items->snapshotItems($board, $this->pidOf($board), $cover) as $item) {
             if (!$first) {
                 $json .= ',';
             }
@@ -1516,7 +1769,9 @@ class SyncService {
     /**
      * The `votes` block of a sync answer (SPEC-M1 §4.5 R16, §4.13.8 step 9)
      * or null when neither (a) nor (b) delivers. Keys in the order sid,
-     * mine, left, voters, vt; `mine` is a JSON object, {} when empty.
+     * mine, left, voters, vt, tally; `mine` is a JSON object, {} when empty;
+     * `tally` ([[id, n], …], [] when empty) comes only with (b) of a session
+     * with live (job 149), so only for canModerate().
      *
      * @param array{res: list<string>, sid: ?int, mine: ?array, left: ?int}|null $voted step 1b
      */
@@ -1538,6 +1793,9 @@ class SyncService {
                     $block['sid'] = $prog['sid'];
                     $block['voters'] = $prog['voters'];
                     $block['vt'] = $prog['vt'];
+                    if (array_key_exists('tally', $prog)) {
+                        $block['tally'] = $prog['tally'];
+                    }
                 }
             }
         }
@@ -1551,13 +1809,18 @@ class SyncService {
         if (array_key_exists('voters', $block)) {
             $out .= ',"voters":' . (int)$block['voters'] . ',"vt":' . (int)$block['vt'];
         }
+        if (array_key_exists('tally', $block)) {
+            $out .= ',"tally":' . json_encode(array_values($block['tally']), self::JSON_FLAGS | JSON_INVALID_UTF8_SUBSTITUTE);
+        }
         return $out . '}';
     }
 
     /**
      * `,"votes":{sid, mine, left}` of snapshot and join (SPEC-M1 §4.4, R16)
      * or '': only while meta.vote is open (no query otherwise) and only for
-     * a principal that may vote; mine counts live items, {} when empty.
+     * a principal that may vote; mine counts live items, {} when empty. A
+     * guest gets '' while the session in the DB has accountsOnly (job 175,
+     * VoteService::mine).
      */
     private function snapshotVotes(Principal $p, int $board, ?string $storedMeta): string {
         if (!$p->role->canVote()) {
@@ -1567,11 +1830,17 @@ class SyncService {
         if (!is_array($vote) || ($vote['state'] ?? null) !== 'open') {
             return '';
         }
-        $mine = $this->votes->mine($board, $p->pid);
+        $mine = $this->votes->mine($board, $p->pid, $p->isGuest);
         if ($mine === null) {
             return '';
         }
         return ',"votes":{"sid":' . $mine['sid'] . ',"mine":' . self::object($mine['mine']) . ',"left":' . $mine['left'] . '}';
+    }
+
+    /** (job 275) meta.private as stored now (PrivateWriting::state), null when off. */
+    private function privateState(int $board): ?array {
+        $m = $this->boards->meta($board) ?? throw new HttpError(404, 'not_found');
+        return PrivateWriting::state(MetaService::decode($m['meta']));
     }
 
     /** `board` of the slow sync path: {"title", "meta", "metaRev"} as stored now. */

@@ -106,6 +106,21 @@ class BoardStore {
      * @param list<string> $teamIds
      * @return list<array>
      */
+    /**
+     * The share rows whose recipient is byte for byte one of $recipients
+     * (job 251): `recipient IN (…)` follows the database collation (MySQL
+     * finds "Bob" for "bob"), ShareService::applies compares strictly, so
+     * the board list keeps only what the access check grants.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @param list<string> $recipients
+     * @return list<array<string, mixed>>
+     */
+    public static function exactRecipients(array $rows, array $recipients): array {
+        $want = array_fill_keys(array_map('strval', $recipients), true);
+        return array_values(array_filter($rows, static fn (array $r): bool => is_string($r['recipient'] ?? null) && isset($want[$r['recipient']])));
+    }
+
     public function listForUser(string $uid, array $gids, array $teamIds, int $nowMs): array {
         $out = [];
         foreach ($this->rows(
@@ -123,10 +138,11 @@ class BoardStore {
             $recipients = array_values(array_unique(array_map('strval', $recipients)));
             foreach (array_chunk($recipients, ShareStore::CHUNK) as $chunk) {
                 $marks = implode(', ', array_fill(0, count($chunk), '?'));
-                foreach ($this->rows(
-                    'SELECT board_id, role FROM *PREFIX*knorke_shares WHERE kind = ? AND recipient IN (' . $marks . ') ORDER BY board_id, id',
+                $rows = $this->rows(
+                    'SELECT board_id, recipient, role FROM *PREFIX*knorke_shares WHERE kind = ? AND recipient IN (' . $marks . ') ORDER BY board_id, id',
                     [$kind, ...$chunk], [self::STR, ...array_fill(0, count($chunk), self::STR)],
-                ) as $r) {
+                );
+                foreach (self::exactRecipients($rows, $chunk) as $r) {
                     $shared[(int)$r['board_id']][] = (string)$r['role'];
                 }
             }
@@ -491,6 +507,28 @@ class BoardStore {
             $this->exec('DELETE FROM *PREFIX*knorke_members WHERE user_id = ?', [$uid], [self::STR]);
         }
         return $ids;
+    }
+
+    /**
+     * The valid memberships of a board (factory job 189, the @ list of the
+     * comments): a membership through a link counts only while that link is
+     * neither revoked nor expired at $nowMs, like findBoardForUser; link
+     * NULL (M0) always. Whether link memberships count under Nextcloud's
+     * link policy decides the caller (`link` true). ORDER BY user_id.
+     *
+     * @return list<array{uid: string, link: bool}>
+     */
+    public function validMembers(int $board, int $nowMs): array {
+        return array_map(
+            static fn (array $r): array => ['uid' => (string)$r['user_id'], 'link' => $r['link_id'] !== null],
+            $this->rows(
+                'SELECT m.user_id, m.link_id FROM *PREFIX*knorke_members m'
+                . ' LEFT JOIN *PREFIX*knorke_links l ON l.id = m.link_id AND l.board_id = m.board_id'
+                . ' WHERE m.board_id = ? AND (m.link_id IS NULL OR (l.id IS NOT NULL AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > ?)))'
+                . ' ORDER BY m.user_id',
+                [$board, $nowMs], [self::INT, self::INT],
+            ),
+        );
     }
 
     /**

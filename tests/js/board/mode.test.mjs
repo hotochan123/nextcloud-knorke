@@ -94,6 +94,16 @@ test('bannerFor: votingEnabled defaults to FEATURES.voting (stage 3: true → de
 	assert.equal(bannerFor('vote', false, { votingEnabled: false }), 'view_role')
 })
 
+test('job 175 bannerFor: voteBlocked turns rule 4 into viewonly; nothing else changes (no vote_ready during the session)', () => {
+	assert.equal(bannerFor('edit', true, { sessionOpen: true, voteBlocked: true }), 'viewonly')
+	assert.equal(bannerFor('edit', true, { sessionOpen: true }), 'device_vote')
+	assert.equal(bannerFor('edit', true, { sessionOpen: true, voteBlocked: false }), 'device_vote')
+	assert.equal(bannerFor('edit', false, { sessionOpen: true, voteBlocked: true }), null, 'a computer: no banner')
+	assert.equal(bannerFor('vote', false, { sessionOpen: true, voteBlocked: true }), null, 'vote role: no vote_ready while the session runs')
+	assert.equal(bannerFor('vote', true, { sessionOpen: true, voteBlocked: true }), null)
+	assert.equal(bannerFor('view', true, { sessionOpen: true, voteBlocked: true }), 'view_role')
+})
+
 test('role banner texts (§6.11): view_role, vote_ready, device_vote, viewonly; anything else none', () => {
 	assert.deepEqual(roleBannerFor('view_role'), { kind: 'view_role', text: 'View only' })
 	assert.deepEqual(roleBannerFor('vote_ready'), { kind: 'vote_ready', text: 'You can vote here when voting starts.' })
@@ -148,9 +158,10 @@ test('shell wiring (R13, stage 3): ConnectionBanner shows exactly the one role b
 	assert.equal((cb.slice(0, cb.indexOf('<script')).match(/data-knorke-banner=/g) ?? []).length, 2, 'the status banner and the one role banner')
 	assert.equal((cb.slice(0, cb.indexOf('<script')).match(/data-knorke-bar="banner"/g) ?? []).length, 2, 'both are banner strips (R16 (5))')
 	const view = read('src/views/BoardView.vue')
-	assert.match(view, /roleBannerFor\(me\.value\.role, deviceViewOnly, \{ sessionOpen: !!votes\.value\?\.open, votingEnabled: FEATURES\.voting \}\)/)
+	assert.match(view, /roleBannerFor\(me\.value\.role, deviceViewOnly, \{ sessionOpen: !!votes\.value\?\.open, votingEnabled: FEATURES\.voting, voteBlocked: !!votes\.value\?\.voteBlocked \}\)/)
 	assert.match(view, /:role-banner="roleBanner"/)
 	assert.match(view, /<Toolbar v-if="ready && uiMode === 'edit' && !frozen"/)
-	assert.match(view, /<ContextBar v-if="ready && uiMode === 'edit' && !frozen && selection\.count > 0"/)
+	// job 190: also without a selection while locked items are offered
+	assert.match(view, /<ContextBar v-if="ready && uiMode === 'edit' && !frozen && \(selection\.count > 0 \|\| selection\.lockedOffer > 0\)"/)
 	assert.match(view, /onMode: \(x\) => \{ uiMode\.value = x \}/)
 })

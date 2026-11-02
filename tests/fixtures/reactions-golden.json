@@ -1,0 +1,206 @@
+{
+	"comment": "Golden cases of the emoji check of reactions (factory job 172): src/model/reactions.js isEmoji and lib/Service/Reactions.php isEmoji give the same verdict; for every valid case native is the emoji as text (toHex(native) === e, fromHex(e) === native). Non-string cases are tested in the code.",
+	"emoji": [
+		{
+			"e": "1f44d",
+			"valid": true,
+			"native": "👍",
+			"note": "thumbs up (quick row)"
+		},
+		{
+			"e": "2764-fe0f",
+			"valid": true,
+			"native": "❤️",
+			"note": "red heart (quick row)"
+		},
+		{
+			"e": "1f602",
+			"valid": true,
+			"native": "😂",
+			"note": "tears of joy (quick row)"
+		},
+		{
+			"e": "1f389",
+			"valid": true,
+			"native": "🎉",
+			"note": "party popper (quick row)"
+		},
+		{
+			"e": "1f914",
+			"valid": true,
+			"native": "🤔",
+			"note": "thinking (quick row)"
+		},
+		{
+			"e": "1f440",
+			"valid": true,
+			"native": "👀",
+			"note": "eyes (quick row)"
+		},
+		{
+			"e": "1f680",
+			"valid": true,
+			"native": "🚀",
+			"note": "rocket"
+		},
+		{
+			"e": "1f468-200d-1f469-200d-1f467-200d-1f466",
+			"valid": true,
+			"native": "👨‍👩‍👧‍👦",
+			"note": "family: man, woman, girl, boy (ZWJ, 7 code points)"
+		},
+		{
+			"e": "1f3f4-e0067-e0062-e0065-e006e-e0067-e007f",
+			"valid": true,
+			"native": "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+			"note": "flag England (tag sequence)"
+		},
+		{
+			"e": "31-fe0f-20e3",
+			"valid": true,
+			"native": "1️⃣",
+			"note": "keycap 1"
+		},
+		{
+			"e": "23-20e3",
+			"valid": true,
+			"native": "#⃣",
+			"note": "keycap # without FE0F"
+		},
+		{
+			"e": "1f1e9-1f1ea",
+			"valid": true,
+			"native": "🇩🇪",
+			"note": "flag Germany (regional indicators)"
+		},
+		{
+			"e": "a9-fe0f",
+			"valid": true,
+			"native": "©️",
+			"note": "copyright sign"
+		},
+		{
+			"e": "1f44d-1f3fd",
+			"valid": true,
+			"native": "👍🏽",
+			"note": "thumbs up, medium skin tone"
+		},
+		{
+			"e": "1faf0",
+			"valid": true,
+			"native": "🫰",
+			"note": "last block U+1FA70–U+1FAFF"
+		},
+		{
+			"e": "1f9d1-1f3fb-200d-2764-fe0f-200d-1f48b-200d-1f9d1-1f3fc",
+			"valid": true,
+			"native": "🧑🏻‍❤️‍💋‍🧑🏼",
+			"note": "kiss, 10 code points"
+		},
+		{
+			"e": "",
+			"valid": false,
+			"note": "empty"
+		},
+		{
+			"e": "41",
+			"valid": false,
+			"note": "letter A"
+		},
+		{
+			"e": "1F44D",
+			"valid": false,
+			"note": "upper case"
+		},
+		{
+			"e": "01f44d",
+			"valid": false,
+			"note": "leading zero"
+		},
+		{
+			"e": "d83d",
+			"valid": false,
+			"note": "lone surrogate"
+		},
+		{
+			"e": "202e",
+			"valid": false,
+			"note": "right-to-left override"
+		},
+		{
+			"e": "4e00",
+			"valid": false,
+			"note": "CJK ideograph"
+		},
+		{
+			"e": "1f44d-1f44d-1f44d-1f44d-1f44d-1f44d-1f44d-1f44d-1f44d-1f44d-1f44d",
+			"valid": false,
+			"note": "11 code points"
+		},
+		{
+			"e": "31",
+			"valid": false,
+			"note": "digit 1 without keycap"
+		},
+		{
+			"e": "1f44d-31-20e3",
+			"valid": false,
+			"note": "digit not first"
+		},
+		{
+			"e": "31-fe0f",
+			"valid": false,
+			"note": "keycap base without 20e3"
+		},
+		{
+			"e": "1f44d-",
+			"valid": false,
+			"note": "trailing dash"
+		},
+		{
+			"e": "-1f44d",
+			"valid": false,
+			"note": "leading dash"
+		},
+		{
+			"e": "1f44d--1f44d",
+			"valid": false,
+			"note": "empty part"
+		},
+		{
+			"e": "1fb00",
+			"valid": false,
+			"note": "above U+1FAFF"
+		},
+		{
+			"e": "e0080",
+			"valid": false,
+			"note": "above the tag block"
+		},
+		{
+			"e": "0",
+			"valid": false,
+			"note": "zero"
+		},
+		{
+			"e": "1f44dz",
+			"valid": false,
+			"note": "not hex"
+		},
+		{
+			"e": " 1f44d",
+			"valid": false,
+			"note": "blank"
+		},
+		{
+			"e": "1234567",
+			"valid": false,
+			"note": "more than six hex digits"
+		},
+		{
+			"e": "20",
+			"valid": false,
+			"note": "space"
+		}
+	]
+}

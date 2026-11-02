@@ -37,7 +37,7 @@ function phone() {
 test('a layout that holds has no problem; contained pairs (timer in top, list in vote) are skipped', () => {
 	assert.deepEqual(checkBars(phone()), [])
 	assert.deepEqual(checkBars(phone(), { panelOpenAtStart: true }), [])
-	assert.deepEqual([...BAR_NAMES].sort(), ['banner', 'list', 'timer', 'top', 'vote'])
+	assert.deepEqual([...BAR_NAMES].sort(), ['banner', 'list', 'session', 'timer', 'top', 'vote'])
 })
 
 test('an overlap over 0.5 px between unrelated bars is found, 0.5 px is not', () => {

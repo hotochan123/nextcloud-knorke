@@ -27,7 +27,7 @@ import { join } from 'node:path'
 import { WHEEL_END_MS } from '../../../src/scene/GestureController.js'
 import { SceneManager } from '../../../src/scene/SceneManager.js'
 import { SceneModel } from '../../../src/model/SceneModel.js'
-import { MAX_SCALE } from '../../../src/model/tokens.js'
+import { MAX_SCALE, ZOOM_TO_MAX_SCALE } from '../../../src/model/tokens.js'
 import { PALETTE, colorFor } from '../../../src/sync/presence.js'
 import { dispatch } from './fakeDom.mjs'
 import { callsOf, note, setStubVoteDrawn, setupScene } from './sceneHarness.mjs'
@@ -77,7 +77,7 @@ const voteState = (o = {}) => ({
  * @param {boolean} markVotable markVotable of the state
  * @return {object} the expected stats().voteState
  */
-const drawnNone = (scope, markVotable) => ({ scope, markVotable, rings: 0, badges: 0, totals: 0, outline: null })
+const drawnNone = (scope, markVotable, live = false) => ({ scope, markVotable, live, rings: 0, badges: 0, totals: 0, outline: null })
 
 /** One frame 100 ms later: the camera is applied and a throttled onCamera is out. */
 const settle = () => h.frame(100)
@@ -242,7 +242,7 @@ describe('setVoteState (SceneVoteState, §6.3, values R16)', () => {
 describe('stats().voteState (§6.3, §6.7, R16)', () => {
 	test('null without a SceneVoteState, else exactly {scope, markVotable, rings, badges, totals, outline}; counters 0 and outline null while nothing is drawn', () => {
 		h = setup([note(A), note(B, { x: 300 })])
-		const keys = ['badges', 'markVotable', 'outline', 'rings', 'scope', 'totals']
+		const keys = ['badges', 'live', 'markVotable', 'outline', 'rings', 'scope', 'totals']
 		assert.equal(h.scene.stats().voteState, null)
 		h.scene.setMode('vote')
 		h.scene.setVoteState(voteState({
@@ -275,8 +275,8 @@ describe('stats().voteState counts what the renderer drew (CLI-03)', () => {
 		h.scene.setVoteState(voteState({ scope: F }))
 		setStubVoteDrawn({ rings: 3, badges: 2, totals: 1, outline: F })
 		const v = h.scene.stats().voteState
-		assert.deepEqual(Object.keys(v), ['scope', 'markVotable', 'rings', 'badges', 'totals', 'outline'])
-		assert.deepEqual(v, { scope: F, markVotable: true, rings: 3, badges: 2, totals: 1, outline: F })
+		assert.deepEqual(Object.keys(v), ['scope', 'markVotable', 'live', 'rings', 'badges', 'totals', 'outline'])
+		assert.deepEqual(v, { scope: F, markVotable: true, live: false, rings: 3, badges: 2, totals: 1, outline: F })
 		setStubVoteDrawn({ rings: 0, badges: 0, totals: 0, outline: null, extra: 9 })
 		assert.deepEqual(h.scene.stats().voteState, drawnNone(F, true), 'only the four counters')
 		setStubVoteDrawn(null)
@@ -287,6 +287,23 @@ describe('stats().voteState counts what the renderer drew (CLI-03)', () => {
 		h.scene.setVoteState(voteState())
 		h.scene.destroy()
 		assert.deepEqual(h.scene.stats().voteState, drawnNone(null, true), 'after destroy nothing is drawn')
+	})
+
+	test('job 149: SceneVoteState.live is optional (missing = false), a boolean, anything else a TypeError (the old state stays); stats().voteState.live and the renderer follow it', () => {
+		h = setup()
+		h.scene.setVoteState(voteState({ scope: F }))
+		assert.equal(h.scene.stats().voteState.live, false, 'missing → false')
+		assert.equal(callsOf('setVoteBadges').at(-1)[0].live, false)
+		h.scene.setVoteState(voteState({ live: true }))
+		assert.deepEqual(h.scene.stats().voteState, drawnNone(null, true, true))
+		assert.equal(callsOf('setVoteBadges').at(-1)[0].live, true, 'the renderer paints the totals hollow')
+		for (const [label, value] of [['a string', 'x'], ['a number', 1], ['null', null], ['an object', {}], ['a Boolean object', Object(true)]]) {
+			assert.throws(() => h.scene.setVoteState(voteState({ scope: F, live: value })), (e) => e instanceof TypeError && e.message.includes('live'), label)
+			assert.deepEqual(h.scene.stats().voteState, drawnNone(null, true, true), `${label}: previous state kept`)
+		}
+		h.scene.setVoteState(voteState({ live: false }))
+		assert.equal(h.scene.stats().voteState.live, false)
+		assert.equal(callsOf('setVoteBadges').at(-1)[0].live, false)
 	})
 
 	test('setVoteState hands the renderer the badges, a boolean votable (=== true only, S-13), markVotable, scope and color', () => {
@@ -582,7 +599,24 @@ describe('cameraForRect (§6.3, since 1a; unchanged in stage 3)', () => {
 		assert.ok(Math.abs((wide.x - cw.x) * cw.scale - 100) < 1e-9, 'horizontal margin = padPx')
 		assert.ok(Math.abs((wide.y - cw.y) * cw.scale - 250) < 1e-9, 'vertical: centred')
 		assert.deepEqual(h.scene.cameraForRect(rect), h.scene.cameraForRect(rect, 0))
-		assert.equal(h.scene.cameraForRect({ x: 0, y: 0, w: 50, h: 40 }, 0).scale, MAX_SCALE, 'clamped only by MAX_SCALE')
+		assert.equal(h.scene.cameraForRect({ x: 0, y: 0, w: 50, h: 40 }, 0).scale, ZOOM_TO_MAX_SCALE, 'job 238: clamped by ZOOM_TO_MAX_SCALE')
+	})
+
+	test('job 238 AK2: maxScale: 400 % by default, up to 1000 % with MAX_SCALE, never beyond it; not a finite number > 0 counts as 400 %', () => {
+		h = setup()
+		const small = { x: 0, y: 0, w: 50, h: 40 }
+		assert.equal(ZOOM_TO_MAX_SCALE, 4)
+		assert.equal(h.scene.cameraForRect(small, 0).scale, 4, 'min(1000 / 50, 800 / 40) = 20 asks for more')
+		const c = h.scene.cameraForRect(small, 0, null, MAX_SCALE)
+		assert.equal(c.scale, 10)
+		assert.ok(Math.abs(c.x + 500 / 10 - 25) < 1e-9 && Math.abs(c.y + 400 / 10 - 20) < 1e-9, 'centred')
+		assert.equal(h.scene.cameraForRect(small, 0, null, 100).scale, MAX_SCALE, 'never above MAX_SCALE')
+		assert.equal(h.scene.cameraForRect(small, 0, null, 2).scale, 2)
+		for (const m of [NaN, 0, -1, Infinity, '10', null]) {
+			assert.deepEqual(h.scene.cameraForRect(small, 0, null, m), h.scene.cameraForRect(small, 0), String(m))
+		}
+		const big = { x: 0, y: 0, w: 5000, h: 4000 }
+		assert.deepEqual(h.scene.cameraForRect(big, 0, null, MAX_SCALE), h.scene.cameraForRect(big, 0), 'below 400 % nothing changes')
 	})
 
 	test('followTo(cameraForRect(view, 0)) shows the leader\'s view whole and centred (§6.5.6)', async () => {
@@ -600,7 +634,7 @@ describe('stage-3 types in the JSDoc (frozen in phase 0, §6.3)', () => {
 	const src = readFileSync(join(ROOT, 'src/scene/SceneManager.js'), 'utf8')
 
 	test('SceneVoteState typedef matches §6.3 (R16: with color)', () => {
-		assert.match(src, /@typedef \{\{votable:\(id:string\) => boolean, scope:\(string\|null\),\s*\n\s*\*\s*badges:Map<string, \{mine:number, total:\(number\|null\)\}>,\s*\n\s*\*\s*markVotable:boolean, color:string\}\} SceneVoteState/)
+		assert.match(src, /@typedef \{\{votable:\(id:string\) => boolean, scope:\(string\|null\),\s*\n\s*\*\s*badges:Map<string, \{mine:number, total:\(number\|null\)\}>,\s*\n\s*\*\s*markVotable:boolean, color:string, live\?:boolean\}\} SceneVoteState/)
 		assert.match(readFileSync(join(ROOT, 'src/scene/index.js'), 'utf8'), /@typedef \{import\('\.\/SceneManager\.js'\)\.SceneVoteState\} SceneVoteState/)
 	})
 

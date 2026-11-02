@@ -17,7 +17,6 @@ use OCA\Knorke\Service\Compactor;
 use OCA\Knorke\Service\Epoch;
 use OCA\Knorke\Service\FastCache;
 use OCA\Knorke\Service\Limits;
-use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\Principal;
 use OCA\Knorke\Service\Role;
 use OCA\Knorke\Service\SyncRequest;
@@ -63,7 +62,7 @@ final class CleanupIntegrationTest extends IntegrationCase {
                 return $this->cCap ?? parent::changesCap();
             }
         };
-        return new Compactor($this->items, $boards ?? $this->boards, $cache ?? $this->cache, Server::get(LinkPolicy::class), $limits, $this->db, Server::get(IAppConfig::class));
+        return new Compactor($this->items, $boards ?? $this->boards, $cache ?? $this->cache, $limits, $this->db, Server::get(IAppConfig::class));
     }
 
     /** $count item rows from rev $fromRev on, $perRev per rev, multi-row INSERTs of 500. */
@@ -212,7 +211,9 @@ final class CleanupIntegrationTest extends IntegrationCase {
         $this->itemRows($b, 4001, 10, 1, false, $now - 40 * self::DAY, 20000);
         $this->itemRows($b, 4050, 5, 1, true, $now - 1000, 30000);
         $this->db->executeStatement('UPDATE *PREFIX*knorke_boards SET item_count = 10, item_bytes = 40 WHERE id = ?', [$b]);
-        // Block windows: the lock is held from lockBoard's return to setGens
+        // A reader seeded a: (the cleanup raises minRev only in a stored value).
+        $this->cache->seedGens($b, 1, 1, 0, true, 1);
+        // Block windows: the lock is held from lockBoard's return to raiseMinRev
         // (called after COMMIT); min_rev as each block found it. Right after
         // the lock is taken, the second process is told to ask for it too.
         $events = new \ArrayObject();
@@ -238,9 +239,9 @@ final class CleanupIntegrationTest extends IntegrationCase {
                 parent::__construct($f, $e);
             }
 
-            public function setGens(int $b, int $acl, int $link, int $minRev, bool $links, int $voteLink): void {
+            public function raiseMinRev(int $b, int $minRev): void {
                 $this->events[] = ['gens', microtime(true), $minRev];
-                parent::setGens($b, $acl, $link, $minRev, $links, $voteLink);
+                parent::raiseMinRev($b, $minRev);
             }
         };
         try {
@@ -254,7 +255,7 @@ final class CleanupIntegrationTest extends IntegrationCase {
         $locks = array_values(array_filter($events->getArrayCopy(), static fn (array $e): bool => $e[0] === 'lock'));
         $gens = array_values(array_filter($events->getArrayCopy(), static fn (array $e): bool => $e[0] === 'gens'));
         $this->assertSame([0, 1667, 3334, 4000], array_column($locks, 2), 'min_rev monotonic: X = 1667, 3334, 4000 (the fourth lock finds nothing)');
-        $this->assertSame([1667, 3334, 4000], array_column($gens, 2), 'setGens after every block');
+        $this->assertSame([1667, 3334, 4000], array_column($gens, 2), 'raiseMinRev after every block');
         $this->assertSame([10, 5, 4000], [
             $this->one('SELECT COUNT(*) FROM *PREFIX*knorke_items WHERE board_id = ? AND deleted = 0', [$b]),
             $this->tombstones($b),

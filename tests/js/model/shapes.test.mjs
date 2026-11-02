@@ -9,23 +9,30 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { ELLIPSE_SEGMENTS, SHAPES, outlinePoints, shapeOf } from '../../../src/model/shapes.js'
+import { BASIC_KINDS, ELLIPSE_SEGMENTS, SHAPES, outlinePoints, shapeOf } from '../../../src/model/shapes.js'
 import { ENUMS } from '../../../src/model/registry.js'
 import { distToPolyline } from '../../../src/model/geometry.js'
 
 const SIDES = [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]]
 
 describe('shapes', () => {
-	test('SHAPES is the table of §6.2', () => {
-		assert.deepEqual(SHAPES, {
-			rect: { hit: 'box', outline: null, radius: 0, text: [0, 0, 1, 1], anchors: SIDES },
-			roundRect: { hit: 'box', outline: null, radius: 0.15, text: [0, 0, 1, 1], anchors: SIDES },
-			ellipse: { hit: 'ellipse', outline: 'ellipse', text: [0.146, 0.146, 0.707, 0.707], anchors: SIDES },
-			diamond: { hit: 'polygon', outline: [0.5, 0, 1, 0.5, 0.5, 1, 0, 0.5], text: [0.25, 0.25, 0.5, 0.5], anchors: SIDES },
-			triangle: { hit: 'polygon', outline: [0.5, 0, 1, 1, 0, 1], text: [0.25, 0.5, 0.5, 0.45], anchors: [[0.5, 0], [0.75, 0.5], [0.5, 1], [0.25, 0.5]] },
+	test('SHAPES is the table of §6.2 (the six of M1; job 201 adds more after them; job 260: design round 3, F4)', () => {
+		assert.deepEqual(Object.fromEntries(BASIC_KINDS.map((k) => [k, SHAPES[k]])), {
+			// rect and roundRect take the registry default size 200 × 120
+			rect: { hit: 'box', outline: null, corner: 4, pad: 12, text: [0, 0, 1, 1], anchors: SIDES },
+			roundRect: { hit: 'box', outline: null, corner: 16, pad: 12, text: [0, 0, 1, 1], anchors: SIDES },
+			ellipse: { hit: 'ellipse', outline: 'ellipse', pad: 8, text: [0.08, 0.23, 0.84, 0.54], anchors: SIDES, create: { w: 160, h: 160 } },
+			diamond: {
+				hit: 'polygon', outline: [0.5, 0, 1, 0.5, 0.5, 1, 0, 0.5], corner: 4, pad: 4, text: [0.21, 0.31, 0.58, 0.38], anchors: SIDES,
+				create: { w: 160, h: 160 },
+			},
+			triangle: {
+				hit: 'polygon', outline: [0.5, 0, 1, 1, 0, 1], corner: 4, pad: 4, text: [0.21, 0.6, 0.58, 0.4],
+				anchors: [[0.5, 0], [0.75, 0.5], [0.5, 1], [0.25, 0.5]], create: { w: 160, h: 140 },
+			},
 			arrowRight: {
-				hit: 'polygon', outline: [0, 0.25, 0.65, 0.25, 0.65, 0, 1, 0.5, 0.65, 1, 0.65, 0.75, 0, 0.75],
-				text: [0, 0.25, 0.65, 0.5], anchors: [[0.5, 0.25], [1, 0.5], [0.5, 0.75], [0, 0.5]],
+				hit: 'polygon', outline: [0, 0.25, 0.65, 0.25, 0.65, 0, 1, 0.5, 0.65, 1, 0.65, 0.75, 0, 0.75], corner: 4, pad: 12,
+				text: [0, 0.25, 0.65, 0.5], anchors: [[0.5, 0.25], [1, 0.5], [0.5, 0.75], [0, 0.5]], create: { w: 200, h: 100 },
 			},
 		})
 	})
@@ -36,7 +43,7 @@ describe('shapes', () => {
 
 	test('shapeOf: entry or rect for unknown kinds (own keys only)', () => {
 		for (const k of ENUMS.shapeKinds) assert.equal(shapeOf(k), SHAPES[k])
-		for (const k of ['hexagon', 'Rect', '', null, undefined, 3, 'constructor', '__proto__', 'toString']) assert.equal(shapeOf(k), SHAPES.rect, String(k))
+		for (const k of ['heptagon', 'Rect', '', null, undefined, 3, 'constructor', '__proto__', 'toString']) assert.equal(shapeOf(k), SHAPES.rect, String(k))
 	})
 
 	test('text boxes lie inside the unit box; hit modes are box, ellipse or polygon', () => {
@@ -85,6 +92,6 @@ describe('shapes', () => {
 	test('frozen', () => {
 		assert.throws(() => { SHAPES.rect.radius = 1 }, TypeError)
 		assert.throws(() => { SHAPES.triangle.anchors[0][0] = 1 }, TypeError)
-		assert.throws(() => { SHAPES.hexagon = {} }, TypeError)
+		assert.throws(() => { SHAPES.heptagon = {} }, TypeError)
 	})
 })

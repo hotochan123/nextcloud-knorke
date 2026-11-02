@@ -36,8 +36,10 @@
 				:password-error="passwordError"
 				:password-code="passwordCode"
 				:link-role="linkRole"
+				:accounts-only-vote="accountsOnlyVote"
 				:privacy="privacy"
-				@join="onName" />
+				@join="onName"
+				@signin="onSignIn" />
 			<BoardView v-if="phase === 'board'"
 				:key="viewKey"
 				mode="guest"
@@ -82,6 +84,8 @@
  * - linkInfo {role, password} of the page: a link with password shows the
  *   password field in the name dialog from the start; the password goes
  *   with the join and is never stored (only kept in memory for this join).
+ *   (Job 184) linkInfo.accountsOnlyVote (links without a password only):
+ *   the dialog's accounts-only note with "Sign in" (signInUrl, same tab).
  * - A join answering password_required / password_wrong / the lock-out
  *   (429 slow_down reason 'password', never repeated) comes back to the
  *   name phase with the hint at the password field (join.js).
@@ -109,18 +113,22 @@
  * tab is a new session. Without usable sessionStorage the card shows on
  * every open.
  */
-import { inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import GuestNameDialog from './components/GuestNameDialog.vue'
 import LegalLinks from './components/LegalLinks.vue'
 import { guestJoinOutcome } from './components/join.js'
 import { guestInfoDue, markGuestSeen } from './components/privacy.js'
+import { useTheme } from './components/theme.js'
 import { FEATURES } from './util/features.js'
 import { t } from './util/l10n.js'
+import { signInUrl } from './util/routes.js'
 import { getJson, keys, removeItem, webStorage } from './util/storage.js'
 import BoardView from './views/BoardView.vue'
 
 const state = inject('knorke-state', {})
+// job 226: the menus' container and the dark mark on <body>
+useTheme()
 const boardId = Number.isInteger(state.boardId) ? state.boardId : null
 const linkToken = typeof state.linkToken === 'string' ? state.linkToken : null
 const nameMax = state.limits?.nameMax || 40
@@ -133,10 +141,14 @@ const features = FEATURES.voting ? 'voting' : ''
 const stored = boardId !== null ? getJson('local', keys.guest(boardId)) : null
 const hasStored = !!(stored && typeof stored.token === 'string' && stored.token !== '')
 
-/** @return {'revoked'|'expired'|'invalid'|'name'|'board'} first phase from the initial state */
+/** @return {'revoked'|'expired'|'disabled'|'invalid'|'name'|'board'} first phase from the initial state */
 function initialPhase() {
 	if (state.linkState === 'revoked') {
 		return 'revoked'
+	}
+	// Job 245: links not allowed for the owner (also a disabled owner)
+	if (state.linkState === 'disabled') {
+		return 'disabled'
 	}
 	if (state.linkState === 'expired') {
 		return 'expired'
@@ -171,6 +183,19 @@ const passwordCode = ref('')
 const viewKey = ref(0)
 /** New dialog instance per name phase (it keeps the typed password otherwise). */
 const nameKey = ref(0)
+/**
+ * (Job 184) A vote for accounts only runs (linkInfo.accountsOnlyVote, the
+ * state when the page loaded): the name dialog says so and offers "Sign in".
+ * Never next to the password field.
+ */
+const accountsOnlyVote = computed(() => linkInfo?.accountsOnlyVote === true && !needsPassword.value)
+
+/** (Job 184) "Sign in" in the name dialog: the Nextcloud login in this tab, back to /p/<token>. */
+function onSignIn() {
+	if (linkToken !== null) {
+		window.location.assign(signInUrl(linkToken))
+	}
+}
 
 const privacyStorage = webStorage()
 /** A returning guest gets the privacy info card in the board view (once per tab session). */

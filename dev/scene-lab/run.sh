@@ -52,7 +52,8 @@
 #                         gates always run in Chromium, "ipad" checks Chromium and WebKit
 #   KNORKE_LAB_WEBKIT_SKIA  measure with webkit only: cpu (default, Playwright's launcher forces
 #                         CPU painting) or gpu (run.mjs --webkit-skia)
-#   KNORKE_BENCH_HTML     spike bench for "ipad" (default ../knorke-spike/engine/dist/bench-standalone.html)
+#   KNORKE_BENCH_HTML     spike bench for "ipad" (default ../knorke-spike/engine/dist/bench-standalone.html),
+#                         or none: a package without the bench (lab, session server and sheet only)
 #   KNORKE_LAB_LABEL      gates/measure/ipad (not dist): run label ^[a-z0-9-]{1,24}$ appended to the
 #                         report names (gates-cpu-r1static.md, ipad-check-r1static.md), passed to
 #                         run.mjs or ipad/check.mjs as --label; an invalid one dies before the lock
@@ -152,13 +153,20 @@ fi
 
 if [ "$MODE" = ipad ]; then
 	BENCH="${KNORKE_BENCH_HTML:-$ROOT/../knorke-spike/engine/dist/bench-standalone.html}"
-	[ -f "$BENCH" ] || die "spike bench missing: $BENCH (KNORKE_BENCH_HTML)"
-	BENCH="$(readlink -f "$BENCH")"
+	# KNORKE_BENCH_HTML=none: a package with the lab only (factory job 280: the spike
+	# bench is gone from the host; a device measurement of the lab needs no bench)
+	if [ "$BENCH" != none ]; then
+		[ -f "$BENCH" ] || die "spike bench missing: $BENCH (KNORKE_BENCH_HTML, or none for a package without it)"
+		BENCH="$(readlink -f "$BENCH")"
+	fi
 	PKG="$OUT/ipad-ra"
 	rm -rf -- "${PKG:?}" "${OUT:?}/ipad-ra.tar.gz"
-	mkdir -p "$PKG/lab" "$PKG/bench"
+	mkdir -p "$PKG/lab"
 	cp -R "$HERE/dist/." "$PKG/lab/"
-	cp "$BENCH" "$PKG/bench/bench-standalone.html"
+	if [ "$BENCH" != none ]; then
+		mkdir -p "$PKG/bench"
+		cp "$BENCH" "$PKG/bench/bench-standalone.html"
+	fi
 	cp "$HERE/ipad/serve.mjs" "$HERE/ipad/index.html" "$HERE/ipad/ANLEITUNG-R-A.md" "$PKG/"
 	# session server for the Tower (node out/ipad-ra/session.mjs <lan-ip> <port>) and its pages
 	cp "$HERE/ipad/session.mjs" "$HERE/ipad/session-start.html" "$HERE/ipad/session-send.html" "$PKG/"

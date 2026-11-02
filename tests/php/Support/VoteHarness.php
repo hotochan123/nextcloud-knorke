@@ -97,7 +97,7 @@ final class VoteHarness {
             },
         ]);
         $this->votes = new VoteService($this->store, $this->boards, $this->meta, $this->cache, $this->db, $logger);
-        $this->moderation = new ModerationService($this->meta);
+        $this->moderation = new ModerationService($this->meta, $this->items);
         $appConfig = Fake::of(IAppConfig::class, [
             'getValueInt' => fn (string $app, string $key, int $default = 0, ?bool $lazy = false): int => $default,
         ]);

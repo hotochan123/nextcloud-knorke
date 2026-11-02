@@ -26,7 +26,9 @@
  * Compaction in the queue (port of the poll spike's enqueue, plus R2):
  *   put + patch            → patch folded into the put (setPath on p)
  *   remove of an unsent put → both dropped
- *   patch + patch          → mergePatch (ancestor/descendant aware)
+ *   patch + patch          → mergePatch (ancestor/descendant aware), (job
+ *                            173) only while the result keeps at most
+ *                            MAX_PATCH_PATHS paths; else appended behind
  *   patch/put + remove     → remove
  *   remove + put(revive)   → ONE patch = diffPatch(state before the remove,
  *                            state of the put); nothing when equal. Without
@@ -52,7 +54,8 @@
  * Vote ops (SPEC-M1 §6.4, §4.6; behebt Befund F1): {o:'vote', s, id, n} sets
  * MY number of votes on item `id` in session `s`. Their queue key is
  * `vote:<s>:<id>` (never the item id), a newer vote op on the same key
- * replaces the queued one (set semantics, the last one wins), and they never
+ * replaces the queued one (set semantics, the last one wins; job 216: it
+ * keeps the older base b), and they never
  * act on visible()/allIds()/pendingIds(): votes are no item state. They ride
  * in takeBatch() like every other op; an acked vote op is done at once (votes
  * have no rev). Any other op kind is a programming error: dropped with a
@@ -77,6 +80,16 @@
  * (the order decides on the server: a remove after a lock is itemlocked). A
  * lock patch after a queued remove is dropped like every patch.
  *
+ * Reaction patches (job 172, model/reactions.js isReactionPatch): the one
+ * path data.react.p<pid> must reach the server alone (every other patch on
+ * data.react is bad). Like a lock patch it stays an op of its own: never
+ * folded into a queued put, never merged with another patch, and a later
+ * op on the same id is appended behind it. A newer reaction patch on the
+ * same note replaces the last queued one of that note (the last value
+ * wins) unless that one is behind the compaction barrier; after a queued
+ * remove it is dropped like every patch. diffPatch and mergePatch never
+ * put data.react… beside other paths.
+ *
  * Result codes (ack): 'ok' → waiting (item ops) or done (vote ops);
  * 'busy' (SPEC-M1 §4.6, stage 4 on the server) → NOT dropped: when every op
  * of the answer is busy (the server applied nothing) the batch stays in
@@ -87,10 +100,14 @@
  * every other code → reported in `failed` and dropped.
  */
 import { applyPatch, diffPatch, itemFromPut, setPath } from '../model/paths.js'
+import { isReactPath, isReactionPatch } from '../model/reactions.js'
 import { typeInfo } from '../model/registry.js'
 
 /** Most ops per request (Limits::MAX_OPS). */
 export const MAX_OPS = 200
+
+/** Most paths of one patch (Limits::MAX_PATCH_PATHS; job 173: a merged patch never exceeds it). */
+export const MAX_PATCH_PATHS = 50
 
 /** Result code of the write budget (SPEC-M1 §4.6): nothing was applied, repeat later. */
 export const BUSY = 'busy'
@@ -140,7 +157,10 @@ function isMap(v) {
  * path k of the newer patch: if the older one has an ancestor path a of k, k
  * is set inside a's value; otherwise all descendant paths of k are dropped
  * from the older patch and k is appended. The placement group stays complete
- * because both patches carry it whole or not at all.
+ * because both patches carry it whole or not at all. (job 172) A merge of a
+ * patch with other paths never carries data.react…: those paths are
+ * dropped then (enqueue never hands a reaction patch in; two patches of
+ * reaction paths only stay as they are).
  *
  * @param {Record<string, unknown>} older earlier patch
  * @param {Record<string, unknown>} newer later patch
@@ -148,10 +168,17 @@ function isMap(v) {
  */
 export function mergePatch(older, newer) {
 	const out = {}
+	const keys = [...Object.keys(older), ...Object.keys(newer)]
+	const mixed = keys.some(isReactPath) && keys.some((k) => !isReactPath(k))
 	for (const k of Object.keys(older)) {
-		out[k] = clone(older[k])
+		if (!(mixed && isReactPath(k))) {
+			out[k] = clone(older[k])
+		}
 	}
 	for (const k of Object.keys(newer)) {
+		if (mixed && isReactPath(k)) {
+			continue
+		}
 		const value = newer[k]
 		const ancestor = Object.keys(out).find((a) => k.startsWith(a + '.'))
 		if (ancestor !== undefined) {
@@ -260,6 +287,8 @@ export class Replica {
 		/** @type {Array<{op: object, rev: number}>} */
 		this.waiting = []
 		this.nextSeq = 1
+		/** (Job 216) Op objects that went out without an answer to them (they may be applied already). */
+		this.maybeApplied = new WeakSet()
 	}
 
 	/**
@@ -349,8 +378,23 @@ export class Replica {
 		const last = idx >= 0 ? this.queue[idx] : null
 		if (isVoteOp(op)) {
 			if (last && !last.maybeSent) {
-				// set semantics: the newer vote op on the same session and item wins
-				this.queue[idx] = { op, urgent: last.urgent || urgent }
+				// set semantics: the newer vote op on the same session and item wins;
+				// (job 216) it keeps the older base, so n − b stays the sum of both changes
+				const merged = 'b' in last.op && 'b' in op ? { ...op, b: last.op.b } : op
+				this.queue[idx] = { op: merged, urgent: last.urgent || urgent }
+				return
+			}
+			this.queue.push({ op, urgent })
+			return
+		}
+		if (isReactionPatch(op)) {
+			// a reaction patch stays one op of its own; a newer one replaces the last queued one (see above)
+			if (last && last.op.o === 'remove') {
+				return
+			}
+			const j = this.lastReaction(op)
+			if (j >= 0) {
+				this.queue[j] = { op, urgent: this.queue[j].urgent || urgent }
 				return
 			}
 			this.queue.push({ op, urgent })
@@ -366,8 +410,8 @@ export class Replica {
 			this.queue.push({ op, urgent })
 			return
 		}
-		if (isLockPatch(op) || (last && isLockPatch(last.op))) {
-			// a lock patch stays one op of its own, and nothing merges into it (see above)
+		if (isLockPatch(op) || (last && (isLockPatch(last.op) || isReactionPatch(last.op)))) {
+			// a lock or reaction patch stays one op of its own, and nothing merges into it (see above)
 			if (op.o === 'patch' && (!isMap(op.p) || (last && last.op.o === 'remove'))) {
 				return
 			}
@@ -410,8 +454,14 @@ export class Replica {
 				return
 			}
 			if (last && last.op.o === 'patch') {
-				last.op.p = mergePatch(last.op.p, op.p)
-				last.urgent = last.urgent || urgent
+				const merged = mergePatch(last.op.p, op.p)
+				if (Object.keys(merged).length <= MAX_PATCH_PATHS) {
+					last.op.p = merged
+					last.urgent = last.urgent || urgent
+					return
+				}
+				// job 173: the server refuses a patch beyond MAX_PATCH_PATHS: the newer one goes behind
+				this.queue.push({ op, urgent })
 				return
 			}
 			if (last && last.op.o === 'remove') {
@@ -455,6 +505,10 @@ export class Replica {
 				n++
 			}
 		}
+		// (job 216) the flush may carry the in-flight and held ops too
+		for (const op of sent ?? [...this.held, ...(this.inflight ? this.inflight.ops : []), ...this.queue.map((e) => e.op)]) {
+			this.maybeApplied.add(op)
+		}
 		return n
 	}
 
@@ -467,6 +521,26 @@ export class Replica {
 			if (keyOf(this.queue[i].op) === key) {
 				return i
 			}
+		}
+		return -1
+	}
+
+	/**
+	 * (job 172) The queued reaction patch a newer one replaces: the last
+	 * queued reaction patch on the same note, when it has the same path and
+	 * lies before the compaction barrier's reach (not maybeSent).
+	 *
+	 * @param {object} op reaction patch
+	 * @return {number} its queue index, -1 when none may be replaced
+	 */
+	lastReaction(op) {
+		const path = Object.keys(op.p)[0]
+		for (let i = this.queue.length - 1; i >= 0; i--) {
+			const e = this.queue[i]
+			if (e.op.id !== op.id || !isReactionPatch(e.op)) {
+				continue
+			}
+			return !e.maybeSent && Object.keys(e.op.p)[0] === path ? i : -1
 		}
 		return -1
 	}
@@ -629,6 +703,8 @@ export class Replica {
 		if (!this.inflight || this.inflight.ops.length !== 1) {
 			return false
 		}
+		// a 500 can come after the commit (job 216: maybe applied)
+		this.maybeApplied.add(this.inflight.ops[0])
 		this.held.push(this.inflight.ops[0])
 		this.inflight = null
 		return true
@@ -767,7 +843,8 @@ export class Replica {
 	 * Server answer for the in-flight batch.
 	 *
 	 * @param {{seq: number, rev: number|null, res: string[]}} acks acks of the answer
-	 * @return {{ids: Set<string>, failed: Array<{op: object, code: string}>, busy: boolean}}
+	 * @return {{ids: Set<string>, failed: Array<{op: object, code: string, maybeApplied?: boolean}>, busy: boolean}}
+	 *   maybeApplied (vote ops, job 216): the op went out before without an answer to it
 	 *   busy: every op came back 'busy', the batch stays in flight (same seq)
 	 */
 	ack(acks) {
@@ -796,6 +873,9 @@ export class Replica {
 				}
 			} else if (code === BUSY) {
 				again.push(op)
+			} else if (isVoteOp(op)) {
+				// job 216: a stale vote op that may have been applied before is never recomputed
+				failed.push({ op, code, maybeApplied: this.maybeApplied.has(op) })
 			} else {
 				failed.push({ op, code })
 			}
@@ -810,7 +890,11 @@ export class Replica {
 
 	/** The batch failed on the network: it stays for an identical repeat. */
 	failInflight() {
-		// Nothing to change: takeBatch() hands out the same batch and seq again.
+		// takeBatch() hands out the same batch and seq again; the first try
+		// may have been committed (job 216: maybe applied)
+		for (const op of this.inflight ? this.inflight.ops : []) {
+			this.maybeApplied.add(op)
+		}
 	}
 
 	/**
@@ -828,6 +912,11 @@ export class Replica {
 			return false
 		}
 		const ops = this.inflight.ops
+		if (maybeSent) {
+			for (const op of ops) {
+				this.maybeApplied.add(op)
+			}
+		}
 		const half = Math.ceil(ops.length / 2)
 		this.inflight.ops = ops.slice(0, half)
 		this.queue.unshift(...ops.slice(half).map((op) => (maybeSent ? { op, urgent: true, maybeSent: true } : { op, urgent: true })))

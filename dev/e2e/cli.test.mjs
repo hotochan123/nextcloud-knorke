@@ -109,3 +109,20 @@ test('flakeSummary keeps the passes apart (the flake gate counts each pass on it
 		{ id: 'E31@390x844', runs: 2, green: 1, skipped: 0, redReps: [1] },
 	])
 })
+
+// job 214: a measurement (measure: true) never joins a run without --only
+test('a measurement case runs only when --only names it (job 214, M01)', async () => {
+	const WITH = [...ALL, { id: 'M01', measure: true }]
+	assert.deepEqual(selectScenarios(WITH, null).ids, ALL.map((s) => s.id))
+	assert.deepEqual(selectScenarios(WITH, parseArgs(['--only', 'm01']).only), { ids: ['M01'], unknown: [] })
+	assert.deepEqual(selectScenarios(WITH, parseArgs(['--only', 'E03,M01']).only), { ids: ['E03', 'M01'], unknown: [] })
+	// the real list: M01 is a measurement with its own time limit, the only one
+	const { readFileSync } = await import('node:fs')
+	const index = readFileSync(new URL('./scenarios/index.mjs', import.meta.url), 'utf8')
+	assert.match(index, /^import \{ M01 \} from '\.\/votelist\.mjs'$/m)
+	assert.match(index, /, M01\]$/m)
+	const m01 = readFileSync(new URL('./scenarios/votelist.mjs', import.meta.url), 'utf8')
+	assert.match(m01, /id: 'M01',\s+measure: true,\s+timeoutMs: \d+,/)
+	const run = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
+	assert.match(run, /withTimeout\(sc\.run\(t, world\), sc\.timeoutMs \?\? SCENARIO_TIMEOUT_MS\)/)
+})

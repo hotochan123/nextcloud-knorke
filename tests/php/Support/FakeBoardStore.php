@@ -301,6 +301,19 @@ class FakeBoardStore extends BoardStore {
         return $ids;
     }
 
+    /** Factory job 189: the valid memberships of a board, ORDER BY uid (like validMember()). */
+    public function validMembers(int $board, int $nowMs): array {
+        $this->log[] = 'validMembers';
+        $out = [];
+        foreach ($this->members[$board] ?? [] as $uid => $m) {
+            if ($this->validMember($board, (string)$uid, $nowMs) !== null) {
+                $out[] = ['uid' => (string)$uid, 'link' => $m['link_id'] !== null];
+            }
+        }
+        usort($out, static fn (array $a, array $b): int => strcmp($a['uid'], $b['uid']));
+        return $out;
+    }
+
     /** Every board id, ascending (Compactor::run, BackfillItemBytes). */
     public function boardIds(): array {
         $ids = array_keys($this->boards);

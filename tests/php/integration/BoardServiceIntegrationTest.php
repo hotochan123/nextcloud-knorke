@@ -11,6 +11,7 @@ use OCA\Knorke\BackgroundJob\CleanupJob;
 use OCA\Knorke\Exception\HttpError;
 use OCA\Knorke\Listener\UserDeletedListener;
 use OCA\Knorke\Service\Access;
+use OCA\Knorke\Service\BoardMarks;
 use OCA\Knorke\Service\BoardService;
 use OCA\Knorke\Service\GuestToken;
 use OCA\Knorke\Service\Limits;
@@ -23,6 +24,7 @@ use OCA\Knorke\Service\ShareService;
 use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\IntegrationCase;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\Comments\ICommentsManager;
 use OCP\IAppConfig;
 use OCP\IConfig;
 use OCP\IGroupManager;
@@ -90,7 +92,7 @@ final class BoardServiceIntegrationTest extends IntegrationCase {
             Server::get(ISecureRandom::class), Server::get(LinkThrottle::class), Server::get(IRequest::class), Server::get(Limits::class),
             Server::get(ITimeFactory::class), $this->db, $policy, Server::get(MetaService::class), Server::get(ShareService::class),
             Server::get(SharePolicy::class), Server::get(LinkSecrets::class), $this->accessAs($this->uid, $policy),
-            Server::get(IAppConfig::class), Server::get(LoggerInterface::class));
+            Server::get(IAppConfig::class), Server::get(LoggerInterface::class), Server::get(ICommentsManager::class), Server::get(BoardMarks::class));
     }
 
     /** Runs $fn with core app config $key = $value and restores the previous state. */

@@ -300,7 +300,9 @@ test('AK7 groupSelection: one undo step, the ops go out, the selection grows by 
 	assert.equal(lastSel(h).oneGroup, true, 'the bar hears of the new group')
 	const ops = await opsAfter(h, n)
 	assert.deepEqual(ops.map((o) => [o.id, o.p.group]), [[A, g], [B, g], [C, g]], 'one batch of three patches')
-	// undo: the inverse (the fake server never echoes items, so the model shows the confirmed state again anyway)
+	// the server's echo (the fake server sends none by itself); job 155: undo compares with it
+	h.s.onChanges([A, B, C].map((id) => ({ ...structuredClone(h.model.get(id)), group: g })), [])
+	// undo: the inverse
 	const m = h.tr.calls.length
 	h.s.undo()
 	assert.deepEqual([h.model.get(A).group, h.model.get(B).group, h.model.get(C).group ?? null], [G, G, null])

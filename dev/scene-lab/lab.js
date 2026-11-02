@@ -41,7 +41,7 @@
 import Konva from 'konva/lib/Core'
 import { SceneModel } from '../../src/model/SceneModel.js'
 import { SceneManager } from '../../src/scene/index.js'
-import { canBeChildOf, typeInfo, TYPES } from '../../src/model/registry.js'
+import { canBeChildOf, isKnownType, typeInfo, TYPES } from '../../src/model/registry.js'
 import { routeConnector } from '../../src/model/connectors.js'
 import { labelGlyphWidth } from '../../src/model/text.js'
 import { keyBetween } from '../../src/model/zorder.js'
@@ -50,13 +50,15 @@ import { COVER_TOL_PX, cssTransformFor, cullRectOf, gestureRedrawFrames, viewRec
 import { CULL_MARGIN, KonvaRenderer, gapMarkerPoints, snapGuideDashOffset } from '../../src/scene/KonvaRenderer.js'
 import { gridLines } from '../../src/scene/grid.js'
 import {
-	CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_PAD, FONT_FAMILY, FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, GRID_MAJOR_COLOR,
+	CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_PAD, CONNECTOR_LABEL_PAD_X, FONT_FAMILY, FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, GRID_MAJOR_COLOR,
 	GRID_MINOR_COLOR, LOD2_ENTER, LOD2_LEAVE, LOD_COARSE_SCALE, LOD_TEXT_SCALE, MIN_SCALE, SNAP_GUIDE_COLOR, SNAP_GUIDE_DASH,
 	SNAP_GUIDE_STROKE_PX, TRANSFORM_LIVE_MAX,
 } from '../../src/model/tokens.js'
-import { COARSE_TITLE_BOX_PX, COARSE_TITLE_MIN_PX, COARSE_TITLE_PX, coarseLook, fitTitle } from '../../src/scene/nodes/coarse.js'
+import {
+	COARSE_LINE_PX, COARSE_SHAPE_MIN_PX, COARSE_TITLE_BOX_PX, COARSE_TITLE_MIN_PX, COARSE_TITLE_PX, coarseLook, fitTitle,
+} from '../../src/scene/nodes/coarse.js'
 import { HIT_TOL_MOUSE_PX } from '../../src/scene/InputController.js'
-import { SCENE_SETS, generateScene } from './scene-gen.js'
+import { MEASURE_SETS, generateSet } from './sets.js'
 import { ROUTE_CASES, routeAll, routeItems } from './routes.js'
 import routeExpected from './routes-expected.json'
 import { FrameMeter, measureRefresh, summarize } from './metrics.js'
@@ -88,13 +90,16 @@ proto.visible = function (...args) {
 // ---------------------------------------------------------------- scene
 const params = new URLSearchParams(location.search)
 const shadows = params.get('shadows') !== '0'
-// ?set= (measurement mode only, run.mjs --set): m1 (default) or noconn, the
-// same board without its connectors (scene-gen.js SCENE_SETS); run.mjs checks
+// ?set= (measurement mode only, run.mjs --set): m1 (default), noconn (the
+// same board without its connectors) or (job 214) m2notes and m2diagrams,
+// the boards with what came after M1 (sets.js MEASURE_SETS); run.mjs checks
 // meta.set after loading
 const set = params.get('set') ?? 'm1'
-if (!Object.hasOwn(SCENE_SETS, set)) throw new Error(`unknown ?set=${set} (${Object.keys(SCENE_SETS).join('|')})`)
-const { items, meta } = generateScene({ counts: SCENE_SETS[set] })
+if (!MEASURE_SETS.includes(set)) throw new Error(`unknown ?set=${set} (${MEASURE_SETS.join('|')})`)
+const { items, meta } = generateSet(set)
 meta.set = set
+// job 214: items the registry does not know, drawn as placeholders (the m2 sets have none)
+meta.placeholders = items.filter((it) => !isKnownType(it.t)).length
 const container = document.getElementById('board')
 const model = new SceneModel()
 const tLoad0 = performance.now()
@@ -294,6 +299,10 @@ const scene = new SceneManager(container, model, {
 		onTool: (t) => log.push(['tool', t]),
 	},
 })
+// job 214: the m2 sets bring the board's tags, the grid and reactions (as a session that may react)
+if (meta.tags) scene.setTags(meta.tags)
+if (meta.reactions) scene.setReactions({ canReact: true, me: null, touch: false })
+if (meta.grid) scene.setGrid(true)
 
 const tMount0 = performance.now()
 scene.mount()
@@ -1315,7 +1324,7 @@ async function labelCheck() {
 		if (cp <= 0x7e || cp >= 0xa0) probe(String.fromCodePoint(cp))
 	}
 	GLYPH_SAMPLES.forEach(probe)
-	return { pad: CONNECTOR_LABEL_PAD, labels, restored: scene.renderer.nodeText(id) === orig.data.label, glyphs: { n, over } }
+	return { pad: CONNECTOR_LABEL_PAD, padX: CONNECTOR_LABEL_PAD_X, labels, restored: scene.renderer.nodeText(id) === orig.data.label, glyphs: { n, over } }
 }
 
 /**
@@ -1502,8 +1511,9 @@ async function lod2Hysteresis() {
  * G14 (5): drags the note with six connectors (meta.hubNoteId) at a LOD-2
  * scale with real pointer events: 0 static draws while dragging (no LOD-2
  * paint either), one static node, the note is a node in the activeGroup and
- * missing from the painted list, its connectors are drawn nowhere (R13 (b));
- * after the release the board is painted again with the note.
+ * missing from the painted list, its connectors are drawn nowhere (R13 (b);
+ * job 202: the other connectors stay painted); after the release the board
+ * is painted again with the note and its connectors.
  *
  * @param {number} scale LOD-2 scale (0.08)
  * @param {number} [steps] moves (one per frame)
@@ -1540,7 +1550,7 @@ async function coarseDrag(scale, steps = 60) {
 	const during = {
 		lod: scene.stats().lod,
 		paintedHasNote: p1.ids.includes(id),
-		paintedConnectors: p1.ids.filter((k) => model.get(k)?.t === 'connector').length,
+		paintedConnectors: p1.ids.filter((k) => conns.has(k)).length,
 		connectorsActive: meta.hubConnectorIds.every((k) => scene.isActive(k)),
 		connectorsInLayers: scene.renderer.stage.find((n) => conns.has(n.getAttr('kid'))).length,
 	}
@@ -1558,8 +1568,75 @@ async function coarseDrag(scale, steps = 60) {
 		activeChildren: { min: Math.min(...actives), max: Math.max(...actives) },
 		...during,
 		intent: intent ? { ids: intent[1].ids, dx: intent[1].dx, dy: intent[1].dy } : null,
-		after: { paintedHasNote: after.ids.includes(id), lod: scene.stats().lod, activeChildren: scene.stats().activeChildren },
+		after: {
+			paintedHasNote: after.ids.includes(id), lod: scene.stats().lod, activeChildren: scene.stats().activeChildren,
+			connectorsBack: meta.hubConnectorIds.every((k) => after.ids.includes(k)),
+		},
 	}
+}
+
+/**
+ * Job 202: at a LOD-2 scale a note is dragged with real pointer events
+ * across the corridor of a right-angled connector that is not attached to
+ * it (its own little board far off the M1 set: notes A and B, the
+ * connector A → B, the note C above). Job 197 re-routes the connector live
+ * while C passes; the painting must not be drawn while dragging (R13) and
+ * paints the connector once after the release. The items are removed again.
+ *
+ * @param {number} scale LOD-2 scale (0.08)
+ * @param {number} [steps] moves (one per frame)
+ * @return {Promise<object>}
+ */
+async function coarseDragAcross(scale, steps = 40) {
+	const X = -80000
+	const Y = -80000
+	const nid = (n) => '01JY' + String(n).padStart(22, '0')
+	const note = (k, x, y) => ({ id: nid(k), t: 'sticky', x: X + x, y: Y + y, w: 200, h: 200, r: 0, z: 'zzzy' + k, parent: null, data: { text: '' }, style: { fill: '#fff6b6' } })
+	const conn = {
+		id: nid(9), t: 'connector', x: 0, y: 0, w: 0, h: 0, r: 0, z: 'zzzy9', parent: null,
+		data: { start: { item: nid(1) }, end: { item: nid(2) }, route: 'elbow' }, style: { stroke: '#2f6fdb', strokeWidth: 2 },
+	}
+	const items = [note(1, 0, 0), note(2, 1600, 1000), note(3, 700, -1600), conn]
+	scene.update(model.apply({ upserts: items }))
+	scene.setSelection([])
+	scene.setCamera(camAt(scale, { x: X + 800, y: Y + 300 }))
+	await idle()
+	const id = nid(3)
+	const c = scene.itemScreenRect(id)
+	const x0 = c.x + c.w / 2
+	const y0 = c.y + c.h / 2
+	const route = () => JSON.stringify(model.geometryOf(conn.id)?.points ?? null)
+	const before = route()
+	clearLog()
+	mouse('pointerdown', x0, y0)
+	mouse('pointermove', x0 + 2, y0 + 6)
+	await frames(2)
+	const d0 = draws()
+	const p0 = scene.renderer.coarsePainted()
+	let last = route()
+	let reroutes = 0
+	for (let i = 2; i <= steps + 1; i++) {
+		mouse('pointermove', x0 + 2, y0 + 6 * i)
+		await frame()
+		const now = route()
+		if (now !== last) reroutes++
+		last = now
+	}
+	const d1 = draws()
+	const p1 = scene.renderer.coarsePainted()
+	const atRelease = route()
+	mouse('pointerup', x0 + 2, y0 + 6 * (steps + 1))
+	await idle()
+	const p2 = scene.renderer.coarsePainted()
+	const out = {
+		lod: scene.stats().lod, reroutes, movedRoute: atRelease !== before,
+		staticDrawsDuring: d1.static - d0.static, paintsDuring: p1.paints - p0.paints,
+		connectorPaintedDuring: p1.ids.includes(conn.id), paintsAfter: p2.paints - p1.paints, connectorPaintedAfter: p2.ids.includes(conn.id),
+		routeAfterRelease: route() === atRelease,
+	}
+	scene.update(model.apply({ removes: items.map((it) => it.id) }))
+	await idle()
+	return out
 }
 
 /**
@@ -1728,13 +1805,16 @@ async function lod2TitleTargets(scale) {
 }
 
 /**
- * The LOD-2 painting (SPEC-M1 §6.3 table, R13 (a), (b)): one static draw at
- * a LOD-2 scale with spies on the 2D context: every painted id is one
- * fillRect (frames: fill + one strokeRect for the 1-px border), the frames
- * with a title from COARSE_TITLE_MIN_PX on get one fillText, no connector
- * is painted, the painted ids are the non-connector ids in view in
- * compareOrder; then a remote drag preview of a note: it leaves the painting
- * (one static draw) and comes back when the preview ends.
+ * The LOD-2 painting (SPEC-M1 §6.3 table, R13 (a), job 202): one static
+ * draw at a LOD-2 scale with spies on the 2D context: every painted box is
+ * one fillRect (frames: fill + one strokeRect for the 1-px border), every
+ * filled shape from COARSE_SHAPE_MIN_PX on one fill() of its outline
+ * instead, the lines (borders, connectors) one stroke() per colour and
+ * width, the frames with a title from COARSE_TITLE_MIN_PX on get one
+ * fillText, the painted ids are the ids in view with something to paint in
+ * compareOrder, connectors included; then a remote drag preview of a note:
+ * it leaves the painting (one static draw) and comes back when the preview
+ * ends. (The M1 set has no mind maps and no cap big enough at 0.05.)
  *
  * @param {number} scale LOD-2 scale
  * @return {Promise<object>}
@@ -1744,11 +1824,13 @@ async function coarsePaintCheck(scale) {
 	scene.setCamera(camAt(scale))
 	await idle()
 	const proto = CanvasRenderingContext2D.prototype
-	const spy = { fillRect: 0, strokeRect: 0, fillText: 0, texts: [] }
-	const own = { fillRect: proto.fillRect, strokeRect: proto.strokeRect, fillText: proto.fillText }
+	const spy = { fillRect: 0, strokeRect: 0, fillText: 0, fill: 0, stroke: 0, texts: [] }
+	const own = { fillRect: proto.fillRect, strokeRect: proto.strokeRect, fillText: proto.fillText, fill: proto.fill, stroke: proto.stroke }
 	proto.fillRect = function (...a) { spy.fillRect++; return own.fillRect.apply(this, a) }
 	proto.strokeRect = function (...a) { spy.strokeRect++; return own.strokeRect.apply(this, a) }
 	proto.fillText = function (...a) { spy.fillText++; spy.texts.push(a[0]); return own.fillText.apply(this, a) }
+	proto.fill = function (...a) { spy.fill++; return own.fill.apply(this, a) }
+	proto.stroke = function (...a) { spy.stroke++; return own.stroke.apply(this, a) }
 	const d0 = draws()
 	try {
 		// one camera step of a hair: one static draw, nothing else changes
@@ -1762,9 +1844,20 @@ async function coarsePaintCheck(scale) {
 	const painted = scene.renderer.coarsePainted().ids
 	const st = scene.stats()
 	const r = cullRectOf(scene.getCamera(), vw, vh, st.overscan, CULL_MARGIN)
-	// everything in view that LOD 2 paints: no connector, no shape without fill and stroke (nothing to see)
+	// everything in view that LOD 2 paints: no shape without fill and stroke (nothing to see), no connector without a route
 	const expected = model.sortByOrder(model.query(r.minX, r.minY, r.maxX, r.maxY).map((e) => e.id)
-		.filter((id) => model.get(id).t !== 'connector' && coarseLook(model.get(id)).cls !== 'skip'))
+		.filter((id) => coarseLook(model.get(id)).cls !== 'skip' && (model.get(id).t !== 'connector' || model.geometryOf(id)?.points?.length >= 4)))
+	// job 202: the shapes with an outline, and the lines by colour and width
+	const outlined = expected.filter((id) => coarseLook(model.get(id)).cls === 'shape' &&
+		Math.max(model.abs(id).w, model.abs(id).h) * scale >= COARSE_SHAPE_MIN_PX)
+	const lineKeys = new Set()
+	for (const id of expected) {
+		const look = coarseLook(model.get(id))
+		const color = look.cls === 'line' ? look.color : outlined.includes(id) ? look.stroke : null
+		if (color) lineKeys.add(color + ' ' + Math.max(COARSE_LINE_PX, look.sw * scale))
+	}
+	const connectorsInView = expected.filter((id) => model.get(id).t === 'connector').length
+	const filledOutlines = outlined.filter((id) => coarseLook(model.get(id)).fill !== null).length
 	const invisible = model.query(r.minX, r.minY, r.maxX, r.maxY)
 		.filter((e) => e.t === 'shape' && coarseLook(model.get(e.id)).cls === 'skip').length
 	const framesPainted = painted.filter((id) => model.get(id).t === 'frame')
@@ -1787,7 +1880,9 @@ async function coarsePaintCheck(scale) {
 		lod: st.lod, staticChildren: st.staticChildren, staticDraws: d1.static - d0.static,
 		painted: painted.length, expected: expected.length, sameOrder: JSON.stringify(painted) === JSON.stringify(expected),
 		connectorsPainted: painted.filter((id) => model.get(id).t === 'connector').length,
-		fillRect: spy.fillRect, strokeRect: spy.strokeRect, fillText: spy.fillText, frames: framesPainted.length, titled: titled.length,
+		connectorsInView, outlined: outlined.length, filledOutlines, lineKeys: lineKeys.size,
+		fillRect: spy.fillRect, strokeRect: spy.strokeRect, fillText: spy.fillText, fill: spy.fill, stroke: spy.stroke,
+		frames: framesPainted.length, titled: titled.length,
 		titles: spy.texts.slice(0, 3), invisibleShapes: invisible, preview,
 	}
 }
@@ -3039,6 +3134,7 @@ window.__lab = {
 	lod2Targets,
 	lod2TitleTargets,
 	coarsePaintCheck,
+	coarseDragAcross,
 	firstRenderAt,
 	camAt,
 	TRANSFORM_LIVE_MAX,

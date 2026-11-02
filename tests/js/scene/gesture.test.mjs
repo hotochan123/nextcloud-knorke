@@ -23,10 +23,35 @@
  * (Job 134) The pen goes first: during a pen or mouse press (button 0 or 1)
  * every finger is inert until it lifts; a running touch gesture ends with a
  * commit at its pointerdown.
+ * (Job 142) onTouchPan: exactly once when a pending first finger moves beyond
+ * TAP_SLOP_PX (its one-finger pan starts); never for a tap, a hold that
+ * became a marquee, a pinch (also not for the finger left after it), a
+ * claimed finger, a mouse/pen pan or the wheel.
+ * (Job 154) The mouse wheel zooms: isNotchedWheel (AK1: deltaMode 1/2, a
+ * macOS notch, a notch of Chrome on Windows/Linux by wheelDeltaY; deltaMode
+ * read first); the option wheel
+ * 'auto' (AK2: a notch zooms like Ctrl, decided once per gesture), 'zoom' and
+ * 'pan' (AK3), Ctrl/⌘, Shift and ignoreTarget per event in every stage.
+ * (Job 156) Right-drag: onTap carries the button of the pointerdown (2 for a
+ * right click); pointercancel and a pointermove without the right button (a
+ * missed pointerup) end a right press without a tap and a right-drag with
+ * directEnd (AK5); a touch gesture blocks it, a wheel gesture ends first.
+ * (Job 163) claimDrag: asked exactly once when a waiting first finger passes
+ * TAP_SLOP_PX, with its pointerId and pointerdown point; true claims it (no
+ * gesture, camera, onTouchPan or tap), false or no option pans as before;
+ * never asked for a claimed finger, a tap, a hold that longPress took, a
+ * pinch or in view-only mode (AK7).
+ * (Job 168) The pen's side button: isRightPress (the mouse's button 2, the
+ * pen's button 2 or button 0 with bit 2 in buttons); a right press of the pen
+ * is a pen press (a waiting finger drops out, a one-finger pan ends with
+ * its commit, fingers stay inert), it pans only by the pen's way beyond
+ * TAP_SLOP_PX, buttons 1 pans on, buttons 0 or pointercancel end it without
+ * a tap and the wheel works again (AK3); its click has no TAP_MS.
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { GestureController, LONG_PRESS_MS, TAP_MS, TAP_SLOP_PX, WHEEL_END_MS } from '../../../src/scene/GestureController.js'
+import { GestureController, LONG_PRESS_MS, MAC_NOTCH_PX, TAP_MS, TAP_SLOP_PX, WHEEL_END_MS, WHEEL_ZOOM, isNotchedWheel, isRightPress } from '../../../src/scene/GestureController.js'
+import { MAX_SCALE } from '../../../src/model/tokens.js'
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps, `${a} ≈ ${b}`)
 
@@ -179,7 +204,28 @@ describe('touch: CSS path', () => {
 		el.fire('pointerdown', touch(1, 100, 100))
 		el.fire('pointerdown', touch(2, 101, 100))
 		el.fire('pointermove', touch(2, 900, 100))
-		assert.equal(log.at(-1)[1].scale, 4)
+		assert.equal(log.at(-1)[1].scale, MAX_SCALE)
+		assert.equal(MAX_SCALE, 10, 'job 238 AK1: the pinch ends at 1000 %')
+	})
+
+	test('job 238 AK1: one pinch from 100 % to 1000 % (k = 10 on the CSS path), the end camera at scale 10', () => {
+		const { el, log } = setup()
+		el.fire('pointerdown', touch(1, 450, 400))
+		el.fire('pointerdown', touch(2, 550, 400))
+		// distance 100 → 500 → 1000: scale 5, then 10 (the midpoint (500, 400) stays put)
+		el.fire('pointermove', touch(1, 250, 400))
+		el.fire('pointermove', touch(2, 750, 400))
+		near(log.at(-1)[1].scale, 5)
+		el.fire('pointermove', touch(1, 0, 400))
+		el.fire('pointermove', touch(2, 1000, 400))
+		const c = log.at(-1)[1]
+		near(c.scale, 10)
+		near(c.x + 500 / c.scale, 500)
+		near(c.y + 400 / c.scale, 400)
+		el.fire('pointerup', touch(1, 0, 400))
+		el.fire('pointerup', touch(2, 1000, 400))
+		assert.equal(log.at(-1)[0], 'end')
+		near(log.at(-1)[1].scale, 10)
 	})
 
 	test('a third finger is ignored and joins when one of the two lifts', () => {
@@ -319,6 +365,20 @@ describe('wheel', () => {
 		assert.deepEqual(kinds(log), ['start', 'frame', 'frame', 'frame', 'frame', 'frame', 'end'])
 	})
 
+	test('job 238 AK1: Ctrl+wheel zooms in up to 1000 % and stops there', () => {
+		const { el, log, timers } = setup()
+		for (let i = 0; i < 60; i++) {
+			el.fire('wheel', { ctrlKey: true, deltaY: -60, deltaX: 0, deltaMode: 0, clientX: 510, clientY: 420 })
+		}
+		const c = log.at(-1)[1]
+		assert.equal(c.scale, MAX_SCALE)
+		assert.equal(c.scale, 10)
+		near(c.x + 500 / c.scale, 500)
+		timers.runAll()
+		assert.equal(log.at(-1)[0], 'end')
+		assert.equal(log.at(-1)[1].scale, 10)
+	})
+
 	test('wheel without Ctrl pans; Shift turns vertical into horizontal; deltaMode 1 = 16 px', () => {
 		const { el, log, timers } = setup()
 		el.fire('wheel', { deltaX: 10, deltaY: 20, deltaMode: 0, clientX: 0, clientY: 0 })
@@ -347,6 +407,260 @@ describe('wheel', () => {
 		el.fire('pointermove', touch(1, 0, -30))
 		assert.deepEqual(kinds(log), ['start', 'frame', 'end', 'start', 'frame'])
 		assert.deepEqual(log.at(-1)[1], { x: 0, y: 50, scale: 1 }, 'the touch pan continues from the wheel camera')
+	})
+})
+
+// ---- factory job 154: the mouse wheel zooms ----------------------------------------------
+
+/** A wheel event at container (500, 400) (client 510, 420), deltaMode 0, deltaX 0, no modifier. */
+const wheelAt = (props = {}) => ({ deltaX: 0, deltaMode: 0, clientX: 510, clientY: 420, ...props })
+/** One notch of a wheel on macOS (Safari, Chrome). */
+const NOTCH = 4.000244140625
+
+/**
+ * A Firefox-like wheel event of one notch (3 lines) with getters: whatever is read
+ * first fixes the unit, deltaMode first gives lines, deltaX or deltaY first pixels
+ * (48 px). Every read is recorded.
+ *
+ * @param {object} [extra] plain fields (clientX, ctrlKey, …)
+ * @return {{e: object, reads: string[]}} the event and the reads
+ */
+function firefoxNotch(extra = {}) {
+	const reads = []
+	let mode = null
+	const fix = (m) => {
+		if (mode === null) mode = m
+	}
+	const e = {
+		type: 'wheel', button: 0, clientX: 510, clientY: 420, ctrlKey: false, metaKey: false, shiftKey: false, ...extra,
+		preventDefault() {},
+		get deltaMode() { reads.push('deltaMode'); fix(1); return mode },
+		get deltaX() { reads.push('deltaX'); fix(0); return 0 },
+		get deltaY() { reads.push('deltaY'); fix(0); return mode === 1 ? 3 : 48 },
+		get wheelDeltaY() { reads.push('wheelDeltaY'); return undefined },
+	}
+	return { e, reads }
+}
+
+/** Hands an event object to the wheel listeners as it is (fakeEl.fire copies it, which would run the getters). */
+function fireRaw(el, e) {
+	for (const fn of el.listeners.get('wheel') ?? []) fn(e)
+}
+
+/** @return {object} the last camera the controller reported */
+const lastCam = (log) => log.at(-1)[1]
+
+describe('job 154 AK1: isNotchedWheel', () => {
+	test('true for deltaMode 1 and 2, a macOS notch (±k × 4.000244140625) and a wheelDeltaY of k × 120 that is not 3 × |deltaY| (100 with −120)', () => {
+		assert.equal(MAC_NOTCH_PX, NOTCH)
+		for (const e of [
+			{ deltaMode: 1, deltaX: 0, deltaY: 3 },
+			{ deltaMode: 2, deltaX: 0, deltaY: 1 },
+			{ deltaMode: 1, deltaX: 2, deltaY: 0 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 4.000244140625 },
+			{ deltaMode: 0, deltaX: 0, deltaY: -12.000732421875 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 40.00244140625 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 4.000244140625, wheelDeltaY: -120 },
+			// (c) Chrome and Edge on Windows and Linux: wheelDeltaY ±120 per notch
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: -120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: -100, wheelDeltaY: 120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 120, wheelDeltaY: -120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 200, wheelDeltaY: -240 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: 120 },
+			// what Chromium reports for page.mouse.wheel (measured in E55's browser): ±120 at every deltaY
+			{ deltaMode: 0, deltaX: 0, deltaY: 30, wheelDeltaY: -120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: -30, wheelDeltaY: 120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 2000, wheelDeltaY: -120 },
+		]) {
+			assert.equal(isNotchedWheel(e), true, JSON.stringify(e))
+		}
+	})
+
+	test('false for deltaY 4 and 2.5, 40 with wheelDeltaY 120, 100 without wheelDeltaY, 30 with wheelDeltaY 0, deltaX 3 with a notch; a trackpad of Chrome on macOS (wheelDeltaY = −3 × deltaY)', () => {
+		for (const e of [
+			{ deltaMode: 0, deltaX: 0, deltaY: 4 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 2.5 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 40, wheelDeltaY: 120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 100 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 30, wheelDeltaY: 0 },
+			{ deltaMode: 0, deltaX: 3, deltaY: 4.000244140625 },
+			// a trackpad of Chrome on macOS: |wheelDeltaY| = 3 × |deltaY|, also where that is a multiple of 120
+			{ deltaMode: 0, deltaX: 0, deltaY: 40, wheelDeltaY: -120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: -40, wheelDeltaY: 120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 80, wheelDeltaY: -240 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 4, wheelDeltaY: -12 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 7, wheelDeltaY: -21 },
+			// wheelDeltaY not a whole multiple of 120 or not a number; deltaX not 0; nothing at all
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: -100 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: -119.5 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: '-120' },
+			{ deltaMode: 0, deltaX: 3, deltaY: 100, wheelDeltaY: -120 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 0 },
+			{ deltaMode: 0, deltaX: 0, deltaY: 100, wheelDeltaY: 0 },
+		]) {
+			assert.equal(isNotchedWheel(e), false, JSON.stringify(e))
+		}
+	})
+
+	test('reads deltaMode before deltaX and deltaY (Firefox reports pixels otherwise)', () => {
+		const ff = firefoxNotch()
+		assert.equal(isNotchedWheel(ff.e), true, 'lines: a notch')
+		assert.equal(ff.reads[0], 'deltaMode')
+		const px = firefoxNotch()
+		void px.e.deltaX // read before deltaMode: Firefox switches to pixels
+		assert.equal(isNotchedWheel(px.e), false, '48 px: no notch')
+		assert.ok(!ff.reads.includes('wheelDeltaY'), 'deltaMode 1 decides alone')
+		assert.equal(px.reads.at(-1), 'wheelDeltaY', 'wheelDeltaY last, after deltaX and deltaY')
+		// the controller reads deltaMode first as well: the Firefox notch zooms in 'auto' like Ctrl + 3 lines
+		const a = setup({ wheel: () => 'auto' })
+		const g = firefoxNotch()
+		fireRaw(a.el, g.e)
+		assert.equal(g.reads[0], 'deltaMode')
+		const b = setup()
+		b.el.fire('wheel', wheelAt({ deltaMode: 1, deltaY: 3, ctrlKey: true }))
+		assert.deepEqual(lastCam(a.log), lastCam(b.log))
+		near(lastCam(a.log).scale, Math.exp(-48 * WHEEL_ZOOM), 1e-12)
+	})
+})
+
+describe('job 154 AK2: stage auto', () => {
+	test('an event with a notch without Ctrl gives the same camera as with ctrlKey (deltaMode 0, 1 and 2; 100 with wheelDeltaY −120)', () => {
+		for (const ev of [{ deltaY: NOTCH }, { deltaY: -3 * NOTCH }, { deltaMode: 1, deltaY: 3 }, { deltaMode: 1, deltaY: -2 }, { deltaMode: 2, deltaY: 0.05 }, { deltaY: 100, wheelDeltaY: -120 }, { deltaY: -100, wheelDeltaY: 120 }]) {
+			const a = setup({ wheel: () => 'auto' })
+			assert.equal(a.el.fire('wheel', wheelAt(ev)), true, 'preventDefault')
+			const b = setup({ wheel: () => 'auto' })
+			b.el.fire('wheel', wheelAt({ ...ev, ctrlKey: true }))
+			assert.deepEqual(lastCam(a.log), lastCam(b.log), JSON.stringify(ev))
+			assert.notEqual(lastCam(a.log).scale, 1, 'zoomed')
+			const c = lastCam(a.log)
+			near(c.x + 500 / c.scale, 500)
+			near(c.y + 400 / c.scale, 400)
+		}
+	})
+
+	test('deltaX 3 with deltaY 7 (a trackpad) pans as before; so does a trackpad of Chrome on macOS (40 with wheelDeltaY −120, 4 with −12)', () => {
+		for (const [ev, cam] of [[{ deltaX: 3, deltaY: 7 }, { x: 3, y: 7, scale: 1 }], [{ deltaY: 40, wheelDeltaY: -120 }, { x: 0, y: 40, scale: 1 }], [{ deltaY: 4, wheelDeltaY: -12 }, { x: 0, y: 4, scale: 1 }]]) {
+			const a = setup({ wheel: () => 'auto' })
+			a.el.fire('wheel', wheelAt(ev))
+			const b = setup()
+			b.el.fire('wheel', wheelAt(ev))
+			assert.deepEqual(lastCam(a.log), cam)
+			assert.deepEqual(lastCam(b.log), cam, 'without the option the same')
+		}
+	})
+
+	test('a gesture that starts with a notch zooms with its later events without a notch too (deltaX ignored); after its end the next event decides anew', () => {
+		const { el, log, timers } = setup({ wheel: () => 'auto' })
+		const ref = setup()
+		for (const ev of [{ deltaY: NOTCH }, { deltaX: 3, deltaY: 7 }, { deltaY: -2.5 }]) {
+			el.fire('wheel', wheelAt(ev))
+			ref.el.fire('wheel', wheelAt({ ...ev, deltaX: 0, ctrlKey: true }))
+		}
+		assert.deepEqual(lastCam(log), lastCam(ref.log))
+		near(lastCam(log).scale, Math.exp(-(NOTCH + 7 - 2.5) * WHEEL_ZOOM), 1e-12)
+		assert.equal(kinds(log).filter((k) => k === 'start').length, 1, 'one gesture')
+		timers.runAll()
+		const s = log.at(-1)[1]
+		assert.deepEqual(log.at(-1)[0], 'end')
+		el.fire('wheel', wheelAt({ deltaX: 3, deltaY: 7 }))
+		assert.deepEqual(lastCam(log), { x: s.x + 3 / s.scale, y: s.y + 7 / s.scale, scale: s.scale }, 'a new gesture: the trackpad pans')
+	})
+
+	test('a gesture that starts like a trackpad pans with a later notch too; Ctrl and Shift events do not decide', () => {
+		const { el, log, timers } = setup({ wheel: () => 'auto' })
+		el.fire('wheel', wheelAt({ deltaY: 7, clientX: 10, clientY: 20 }))
+		el.fire('wheel', wheelAt({ deltaY: NOTCH, clientX: 10, clientY: 20 }))
+		assert.deepEqual(lastCam(log), { x: 0, y: 7 + NOTCH, scale: 1 })
+		timers.runAll()
+		// a gesture that starts with Ctrl (a pinch) and Shift: the first plain event decides
+		const z = setup({ wheel: () => 'auto' })
+		z.el.fire('wheel', wheelAt({ deltaY: -60, ctrlKey: true }))
+		z.el.fire('wheel', wheelAt({ deltaY: 20, shiftKey: true }))
+		const s = lastCam(z.log)
+		z.el.fire('wheel', wheelAt({ deltaY: 7 }))
+		assert.deepEqual(lastCam(z.log), { x: s.x, y: s.y + 7 / s.scale, scale: s.scale }, 'the trackpad event decides: pan')
+		z.el.fire('wheel', wheelAt({ deltaY: NOTCH }))
+		assert.equal(lastCam(z.log).scale, s.scale, 'still pan')
+		const n = setup({ wheel: () => 'auto' })
+		n.el.fire('wheel', wheelAt({ deltaY: 20, shiftKey: true }))
+		n.el.fire('wheel', wheelAt({ deltaY: NOTCH }))
+		n.el.fire('wheel', wheelAt({ deltaY: 7 }))
+		near(lastCam(n.log).scale, Math.exp(-(NOTCH + 7) * WHEEL_ZOOM), 1e-12)
+	})
+})
+
+describe('job 154 AK3: stages zoom and pan, the modifiers in every stage', () => {
+	test('zoom: trackpad events zoom, deltaX ignored; a gesture that starts with deltaY 0 pans', () => {
+		const { el, log, timers } = setup({ wheel: () => 'zoom' })
+		const ref = setup()
+		for (const ev of [{ deltaX: 30, deltaY: 7 }, { deltaX: -5, deltaY: -2.5 }, { deltaY: 100 }]) {
+			el.fire('wheel', wheelAt(ev))
+			ref.el.fire('wheel', wheelAt({ ...ev, deltaX: 0, ctrlKey: true }))
+		}
+		assert.deepEqual(lastCam(log), lastCam(ref.log))
+		near(lastCam(log).scale, Math.exp(-104.5 * WHEEL_ZOOM), 1e-12)
+		timers.runAll()
+		const s = log.at(-1)[1]
+		el.fire('wheel', wheelAt({ deltaX: 20, deltaY: 0 }))
+		el.fire('wheel', wheelAt({ deltaX: 0, deltaY: 10 }))
+		assert.deepEqual(lastCam(log), { x: s.x + 20 / s.scale, y: s.y + 10 / s.scale, scale: s.scale }, 'a tilt wheel first: the gesture pans')
+	})
+
+	test('pan: notches pan as before (deltaMode 0 and 1, wheelDeltaY −120)', () => {
+		for (const ev of [{ deltaY: NOTCH }, { deltaMode: 1, deltaY: 2 }, { deltaY: 100, wheelDeltaY: -120 }, { deltaX: 10, deltaY: 20 }]) {
+			const a = setup({ wheel: () => 'pan' })
+			a.el.fire('wheel', wheelAt(ev))
+			const b = setup()
+			b.el.fire('wheel', wheelAt(ev))
+			assert.deepEqual(lastCam(a.log), lastCam(b.log), JSON.stringify(ev))
+			assert.equal(lastCam(a.log).scale, 1)
+		}
+		const { el, log } = setup({ wheel: () => 'pan' })
+		el.fire('wheel', wheelAt({ deltaMode: 1, deltaY: 2 }))
+		assert.deepEqual(lastCam(log), { x: 0, y: 32, scale: 1 }, '16 px per line')
+	})
+
+	for (const stage of ['auto', 'zoom', 'pan', undefined]) {
+		const opt = stage === undefined ? {} : { wheel: () => stage }
+		test(`${stage ?? 'no option'}: Ctrl and ⌘ zoom, Shift pans sideways, Ctrl+Shift zooms; over ignoreTarget without Ctrl no preventDefault`, () => {
+			for (const mod of ['ctrlKey', 'metaKey']) {
+				const { el, log } = setup(opt)
+				assert.equal(el.fire('wheel', wheelAt({ deltaY: -60, deltaX: 25, [mod]: true })), true)
+				const c = lastCam(log)
+				near(c.scale, Math.exp(0.09), 1e-12)
+				near(c.x + 500 / c.scale, 500)
+				near(c.y + 400 / c.scale, 400)
+			}
+			const sh = setup(opt)
+			sh.el.fire('wheel', wheelAt({ deltaY: 5 * NOTCH, shiftKey: true }))
+			assert.deepEqual(lastCam(sh.log), { x: 5 * NOTCH, y: 0, scale: 1 }, 'Shift with a notch: sideways')
+			sh.el.fire('wheel', wheelAt({ deltaY: 30, shiftKey: true }))
+			assert.deepEqual(lastCam(sh.log), { x: 5 * NOTCH + 30, y: 0, scale: 1 }, 'Shift with a trackpad step: sideways')
+			const cs = setup(opt)
+			cs.el.fire('wheel', wheelAt({ deltaY: -60, ctrlKey: true, shiftKey: true }))
+			near(lastCam(cs.log).scale, Math.exp(0.09), 1e-12)
+			const ov = setup({ ...opt, ignoreTarget: () => true })
+			for (const ev of [{ deltaY: NOTCH }, { deltaY: 30 }, { deltaMode: 1, deltaY: 3 }]) {
+				assert.equal(ov.el.fire('wheel', wheelAt(ev)), false, 'left to the browser: ' + JSON.stringify(ev))
+			}
+			assert.equal(ov.g.active, false)
+			assert.equal(ov.el.fire('wheel', wheelAt({ deltaY: 30, metaKey: true })), true, 'with ⌘ it zooms the board')
+			assert.equal(ov.g.active, true)
+		})
+	}
+
+	test('every stage swallows wheel events during a mouse pan and while a finger is pending', () => {
+		for (const stage of ['auto', 'zoom']) {
+			const { el, g, log } = setup({ wheel: () => stage, wantsPan: () => true })
+			el.fire('pointerdown', mouse(1, 100, 100, 1))
+			assert.equal(el.fire('wheel', wheelAt({ deltaY: NOTCH })), true)
+			assert.equal(g.active, false, stage + ': no CSS gesture during the pan')
+			el.fire('pointerup', mouse(1, 100, 100, 1))
+			el.fire('pointerdown', touch(2, 100, 100))
+			assert.equal(el.fire('wheel', wheelAt({ deltaY: NOTCH })), true)
+			assert.equal(g.active, false, stage + ': no CSS gesture while a finger is pending')
+			assert.deepEqual(kinds(log), ['directStart', 'directEnd'])
+		}
 	})
 })
 
@@ -969,12 +1283,13 @@ describe('the pen goes first: fingers during a pen press (job 134)', () => {
 		assert.equal(d.g.pending, true, 'destroy() forgot the pen press')
 	})
 
-	for (const [name, opts, ev] of [
-		['button 2', {}, (pointerType) => ({ ...mouse(9, 200, 200, 2), pointerType })],
-		['ignoreTarget true', { ignoreTarget: (e) => e.pointerId === 9 }, (pointerType) => ({ ...mouse(9, 200, 200), pointerType })],
+	// (job 168) a pen's button 2 is a pen press now (its side button): see 'pen right press (job 168)'
+	for (const [name, opts, ev, types] of [
+		['button 2 of the mouse', {}, (pointerType) => ({ ...mouse(9, 200, 200, 2), pointerType }), ['mouse']],
+		['ignoreTarget true', { ignoreTarget: (e) => e.pointerId === 9 }, (pointerType) => ({ ...mouse(9, 200, 200), pointerType }), ['pen', 'mouse']],
 	]) {
 		test(`(f) ${name}: no pen press, a waiting finger stays pending`, () => {
-			for (const pointerType of ['pen', 'mouse']) {
+			for (const pointerType of types) {
 				const { el, g } = setup(opts)
 				el.fire('pointerdown', touch(5, 50, 600))
 				el.fire('pointerdown', ev(pointerType))
@@ -985,6 +1300,433 @@ describe('the pen goes first: fingers during a pen press (job 134)', () => {
 			}
 		})
 	}
+})
+
+describe('onTouchPan: the first move of a one-finger pan (job 142)', () => {
+	/**
+	 * @param {object} [opts] controller options to override
+	 * @return {object} setup() plus pans: one entry per onTouchPan call (g.active at that moment)
+	 */
+	function panSetup(opts = {}) {
+		const pans = []
+		const s = setup({ ...opts, onTouchPan: () => pans.push(s.g.active) })
+		return { ...s, pans }
+	}
+	const pen = (id, x, y) => ({ pointerId: id, pointerType: 'pen', clientX: x + 10, clientY: y + 20, button: 0 })
+
+	test('exactly one call when a pending finger moves beyond TAP_SLOP_PX, with the pan already running; none before, none after', () => {
+		const { el, g, pans } = panSetup()
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointermove', touch(1, 100 + TAP_SLOP_PX, 100))
+		assert.deepEqual(pans, [], 'at TAP_SLOP_PX the finger is still pending')
+		assert.equal(g.pending, true)
+		el.fire('pointermove', touch(1, 100 + TAP_SLOP_PX + 1, 100))
+		assert.deepEqual(pans, [true], 'one call, the touch gesture is active')
+		for (const x of [150, 200, 40]) el.fire('pointermove', touch(1, x, 100))
+		el.fire('pointerup', touch(1, 40, 100))
+		assert.deepEqual(pans, [true], 'still one call for this pan')
+		el.fire('pointerdown', touch(2, 300, 300))
+		el.fire('pointermove', touch(2, 300, 360))
+		el.fire('pointerup', touch(2, 300, 360))
+		assert.deepEqual(pans, [true, true], 'the next pan reports again')
+	})
+
+	test('the state machine stays as without the option: the same frames and camera', () => {
+		const run = (opts) => {
+			const { el, log } = setup(opts)
+			el.fire('pointerdown', touch(1, 100, 100))
+			el.fire('pointermove', touch(1, 60, 100))
+			el.fire('pointermove', touch(1, -200, 50))
+			el.fire('pointerup', touch(1, -200, 50))
+			return log
+		}
+		assert.deepEqual(run({ onTouchPan: () => {} }), run({}))
+	})
+
+	test('no call for a tap, for a finger released within the slop after TAP_MS, or for pointercancel', () => {
+		const { el, pans, clock } = panSetup()
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointermove', touch(1, 105, 104))
+		el.fire('pointerup', touch(1, 105, 104))
+		el.fire('pointerdown', touch(2, 100, 100))
+		clock.t += TAP_MS + 100
+		el.fire('pointerup', touch(2, 100, 100))
+		el.fire('pointerdown', touch(3, 100, 100))
+		el.fire('pointercancel', touch(3, 100, 100))
+		assert.deepEqual(pans, [])
+	})
+
+	test('no call for a hold that longPress took (marquee), not even when it moves on', () => {
+		const { el, g, pans, timers } = panSetup({ longPress: () => true })
+		el.fire('pointerdown', touch(1, 100, 100))
+		timers.runAll()
+		assert.equal(g.isClaimed(1), true)
+		el.fire('pointermove', touch(1, 300, 300))
+		el.fire('pointerup', touch(1, 300, 300))
+		assert.deepEqual(pans, [])
+	})
+
+	test('a hold that longPress declined stays pending: its later move pans and reports once', () => {
+		const { el, g, pans, timers } = panSetup({ longPress: () => false })
+		el.fire('pointerdown', touch(1, 100, 100))
+		timers.runAll()
+		assert.equal(g.pending, true)
+		el.fire('pointermove', touch(1, 100, 160))
+		assert.deepEqual(pans, [true])
+	})
+
+	test('no call for a pinch (second finger before the move), nor for the finger left after it', () => {
+		const { el, g, pans } = panSetup()
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointerdown', touch(2, 300, 100))
+		el.fire('pointermove', touch(1, 50, 100))
+		el.fire('pointermove', touch(2, 400, 100))
+		el.fire('pointerup', touch(2, 400, 100))
+		assert.equal(g.active, true, 'the left finger keeps panning in the same gesture')
+		el.fire('pointermove', touch(1, 0, 0))
+		el.fire('pointermove', touch(1, -100, -50))
+		el.fire('pointerup', touch(1, -100, -50))
+		assert.equal(g.active, false)
+		assert.deepEqual(pans, [])
+	})
+
+	test('a second finger during the pan makes a pinch: no further call', () => {
+		const { el, pans } = panSetup()
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointermove', touch(1, 100, 150))
+		el.fire('pointerdown', touch(2, 300, 300))
+		el.fire('pointermove', touch(2, 350, 350))
+		el.fire('pointerup', touch(2, 350, 350))
+		el.fire('pointermove', touch(1, 0, 0))
+		el.fire('pointerup', touch(1, 0, 0))
+		assert.deepEqual(pans, [true])
+	})
+
+	test('no call for a claimed finger (an item drag, a create tool)', () => {
+		const { el, pans } = panSetup({ claimTouch: () => true })
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointermove', touch(1, 300, 300))
+		el.fire('pointerup', touch(1, 300, 300))
+		assert.deepEqual(pans, [])
+	})
+
+	test('no call for a mouse or pen pan, at once or deferred, nor for the middle button', () => {
+		for (const deferPan of [() => 0, () => 3]) {
+			const { el, g, pans } = panSetup({ wantsPan: () => true, deferPan })
+			for (const [down, move] of [
+				[mouse(1, 100, 100), mouse(1, 300, 300)],
+				[pen(2, 100, 100), pen(2, 300, 300)],
+				[mouse(3, 100, 100, 1), mouse(3, 300, 300, 1)],
+			]) {
+				el.fire('pointerdown', down)
+				el.fire('pointermove', { ...move, buttons: 1 })
+				assert.equal(g.panning, true, down.pointerType + ' pans')
+				el.fire('pointerup', move)
+			}
+			assert.deepEqual(pans, [])
+		}
+	})
+
+	test('no call for a pending finger that a pen press made inert, nor for the wheel', () => {
+		const { el, pans, timers } = panSetup()
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointerdown', pen(2, 500, 500))
+		el.fire('pointermove', touch(1, 300, 300))
+		el.fire('pointerup', pen(2, 500, 500))
+		el.fire('pointerup', touch(1, 300, 300))
+		el.fire('wheel', { deltaX: 40, deltaY: 30, deltaMode: 0, clientX: 0, clientY: 0 })
+		el.fire('wheel', { ctrlKey: true, deltaY: -60, deltaX: 0, deltaMode: 0, clientX: 510, clientY: 420 })
+		timers.runAll()
+		assert.deepEqual(pans, [])
+	})
+})
+
+describe('right-drag (job 156): a deferred right-button press of the mouse', () => {
+	/** @return {object} setup with the scene's options for the right button: it pans beyond 3 px */
+	const rightSetup = () => setup({ wantsPan: (e) => e.button === 2, deferPan: (e) => (e.button === 2 ? 3 : 0) })
+	/** A right-button pointer event of mouse 1 (button 2 for down/up/cancel, -1 for a move) with `buttons`. */
+	const right = (type, x, y, buttons) => ({ ...mouse(1, x, y, type === 'pointermove' ? -1 : 2), buttons })
+
+	test('a click reaches onTap with the button of its pointerdown (2), a finger\'s tap without one', () => {
+		const taps = []
+		const { el } = setup({ wantsPan: (e) => e.button === 2, deferPan: () => 3, onTap: (e, button) => taps.push([e.pointerType, button]) })
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('pointermove', right('pointermove', 103, 100, 2))
+		el.fire('pointerup', right('pointerup', 103, 100, 0))
+		el.fire('pointerdown', touch(5, 300, 300))
+		el.fire('pointerup', touch(5, 300, 300))
+		assert.deepEqual(taps, [['mouse', 2], ['touch', undefined]])
+	})
+
+	test('pointercancel while armed: no tap, nothing pending; while panning: directEnd', () => {
+		const { el, g, log } = rightSetup()
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('pointercancel', right('pointercancel', 100, 100, 0))
+		assert.equal(g.pending, false)
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('pointermove', right('pointermove', 90, 100, 2))
+		assert.equal(g.panning, true)
+		el.fire('pointercancel', right('pointercancel', 90, 100, 0))
+		assert.equal(g.panning, false)
+		assert.deepEqual(kinds(log), ['directStart', 'direct', 'directEnd'], 'no tap')
+	})
+
+	test('a pointermove without the right button while armed (a missed pointerup): no tap at a later pointerup; the wheel pans again', () => {
+		const { el, g, log, cam, timers } = rightSetup()
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('wheel', { deltaX: 0, deltaY: 50, deltaMode: 0, clientX: 0, clientY: 0 })
+		assert.equal(g.active, false, 'the wheel is swallowed while the press is armed')
+		el.fire('pointermove', right('pointermove', 101, 100, 0))
+		assert.equal(g.pending, false)
+		assert.equal(g.owns(1), false)
+		el.fire('pointerup', right('pointerup', 101, 100, 0))
+		assert.deepEqual(log, [], 'no tap, no pan')
+		el.fire('wheel', { deltaX: 0, deltaY: 50, deltaMode: 0, clientX: 0, clientY: 0 })
+		assert.equal(g.active, true)
+		timers.runAll()
+		assert.deepEqual(cam, { x: 0, y: 50, scale: 1 })
+	})
+
+	test('a pointermove without the right button while panning ends the pan (directEnd); later moves do not pan', () => {
+		const { el, g, log } = rightSetup()
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('pointermove', right('pointermove', 80, 100, 2))
+		el.fire('pointermove', right('pointermove', 60, 100, 1))
+		el.fire('pointermove', right('pointermove', 40, 100, 0))
+		assert.equal(g.panning, false)
+		assert.deepEqual(log, [['directStart'], ['direct', { x: 20, y: 0, scale: 1 }], ['directEnd']], 'buttons 1 (only the left one): the right one is up')
+	})
+
+	test('buttons 2 (or 3, with the left one too) keep the press; a deferred left press ignores buttons', () => {
+		const { el, g, log } = rightSetup()
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		el.fire('pointermove', right('pointermove', 101, 100, 3))
+		assert.equal(g.pending, true)
+		el.fire('pointermove', right('pointermove', 90, 100, 2))
+		assert.equal(g.panning, true)
+		el.fire('pointerup', right('pointerup', 90, 100, 0))
+		assert.deepEqual(kinds(log), ['directStart', 'direct', 'directEnd'])
+		const v = setup({ wantsPan: () => true, deferPan: () => 3 })
+		v.el.fire('pointerdown', mouse(2, 100, 100))
+		v.el.fire('pointermove', { ...mouse(2, 101, 100), buttons: 2 })
+		assert.equal(v.g.pending, true, 'a vote press (button 0) stays armed')
+	})
+
+	test('during a touch gesture a right press does nothing; a running wheel gesture ends first', () => {
+		const { el, g, log } = rightSetup()
+		el.fire('pointerdown', touch(5, 300, 300))
+		el.fire('pointermove', touch(5, 250, 300))
+		assert.equal(g.mode, 'touch')
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		assert.equal(g.pending, false)
+		el.fire('pointermove', right('pointermove', 50, 100, 2))
+		el.fire('pointerup', right('pointerup', 50, 100, 0))
+		assert.ok(!kinds(log).includes('directStart') && !kinds(log).includes('tap'), JSON.stringify(log))
+		el.fire('pointerup', touch(5, 250, 300))
+		el.fire('wheel', { deltaX: 0, deltaY: 50, deltaMode: 0, clientX: 0, clientY: 0 })
+		assert.equal(g.mode, 'wheel')
+		el.fire('pointerdown', right('pointerdown', 100, 100, 2))
+		assert.equal(g.mode, null, 'the wheel gesture ended (commit)')
+		assert.equal(log.at(-1)[0], 'end')
+		assert.equal(g.pending, true)
+	})
+})
+
+describe('pen right press (job 168): the side button pans, the pen goes first', () => {
+	/** @return {object} setup() with the scene's options for right presses (pen TAP_SLOP_PX, mouse 3 px) and taps [pointerType, button] */
+	function penSetup(opts = {}) {
+		const taps = []
+		const s = setup({
+			wantsPan: (e) => isRightPress(e),
+			deferPan: (e) => (isRightPress(e) ? (e.pointerType === 'pen' ? TAP_SLOP_PX : 3) : 0),
+			onTap: (e, button) => taps.push([e.pointerType, button]),
+			...opts,
+		})
+		return { ...s, taps }
+	}
+	/** A pen event of pointer 9 (container point x, y) with button and buttons. */
+	const pen = (x, y, button, buttons) => ({ pointerId: 9, pointerType: 'pen', clientX: x + 10, clientY: y + 20, button, buttons })
+	/** the side button reported as button 2, and as bit 2 in buttons with button 0 */
+	const DOWNS = [['button 2', 2, 2], ['button 0 with buttons 3', 0, 3]]
+
+	test('isRightPress: the mouse\'s button 2; the pen\'s button 2 or button 0 with bit 2 in buttons; nothing else', () => {
+		const yes = [{ pointerType: 'mouse', button: 2, buttons: 2 }, { pointerType: 'pen', button: 2, buttons: 2 }, { pointerType: 'pen', button: 0, buttons: 3 }, { pointerType: 'pen', button: 0, buttons: 2 }]
+		const no = [{ pointerType: 'mouse', button: 0, buttons: 3 }, { pointerType: 'pen', button: 0, buttons: 1 }, { pointerType: 'pen', button: 0 }, { pointerType: 'pen', button: 5, buttons: 32 }, { pointerType: 'touch', button: 2, buttons: 2 }, { pointerType: 'mouse', button: 1, buttons: 4 }]
+		assert.deepEqual(yes.map(isRightPress), yes.map(() => true))
+		assert.deepEqual(no.map(isRightPress), no.map(() => false))
+	})
+
+	for (const [name, button, buttons] of DOWNS) {
+		for (const end of ['buttons 0', 'pointercancel']) {
+			test(`AK3 ${name}, a waiting finger: it drops out; 10 px keep the camera, then only the pen's way pans, buttons 1 pans on; ${end} ends the pan without a tap, the wheel pans again`, () => {
+				const { el, g, log, cam, timers, taps } = penSetup({ longPress: () => true })
+				el.fire('pointerdown', touch(5, 50, 600))
+				assert.equal(g.pending, true)
+				el.fire('pointerdown', pen(200, 200, button, buttons))
+				assert.equal(g.owns(5), false, 'the finger lost its effect')
+				assert.ok(el.captured.includes(9), 'the pen is captured')
+				el.fire('pointermove', pen(210, 200, -1, buttons))
+				el.fire('pointermove', touch(5, 300, 600))
+				assert.deepEqual(log, [], '10 px: no pan; the finger does nothing')
+				el.fire('pointermove', pen(150, 180, -1, buttons))
+				assert.deepEqual(cam, { x: 50, y: 20, scale: 1 }, 'the first step pans the whole way since the pointerdown')
+				el.fire('pointermove', touch(5, 500, 700))
+				el.fire('pointermove', pen(140, 180, -1, 1))
+				assert.deepEqual(cam, { x: 60, y: 20, scale: 1 }, 'buttons 1 (the side button let go, the tip down) pans on')
+				if (end === 'buttons 0') el.fire('pointermove', pen(130, 180, -1, 0))
+				else el.fire('pointercancel', pen(130, 180, button, 0))
+				assert.equal(g.panning, false)
+				el.fire('pointermove', pen(100, 180, -1, 0))
+				el.fire('pointerup', pen(100, 180, button, 0))
+				el.fire('pointerup', touch(5, 500, 700))
+				assert.deepEqual(kinds(log), ['directStart', 'direct', 'direct', 'directEnd'], 'no gesture of the finger')
+				assert.deepEqual(cam, { x: 60, y: 20, scale: 1 })
+				assert.deepEqual(taps, [], 'no tap')
+				el.fire('wheel', { deltaX: 0, deltaY: 50, deltaMode: 0, clientX: 0, clientY: 0 })
+				assert.equal(g.active, true, 'the wheel starts a gesture again')
+				timers.runAll()
+				assert.deepEqual(cam, { x: 60, y: 70, scale: 1 })
+			})
+		}
+
+		test(`AK3 ${name}, a running one-finger pan: it ends with its live camera first (onGestureEnd), then only the pen's way pans`, () => {
+			const { el, g, log, cam, taps } = penSetup()
+			el.fire('pointerdown', touch(5, 100, 100))
+			el.fire('pointermove', touch(5, 60, 100))
+			assert.equal(g.mode, 'touch')
+			const live = g.live
+			const n = log.length
+			el.fire('pointerdown', pen(500, 500, button, buttons))
+			assert.deepEqual(log.slice(n), [['end', live]])
+			assert.equal(g.active, false)
+			el.fire('pointermove', touch(5, 0, 100))
+			el.fire('pointermove', pen(480, 500, -1, buttons))
+			el.fire('pointermove', touch(5, -100, 100))
+			el.fire('pointermove', pen(470, 490, -1, 1))
+			el.fire('pointerup', pen(470, 490, button, 0))
+			el.fire('pointerup', touch(5, -100, 100))
+			assert.deepEqual(cam, { x: live.x + 30, y: live.y + 10, scale: 1 })
+			assert.deepEqual(kinds(log.slice(n)), ['end', 'directStart', 'direct', 'direct', 'directEnd'])
+			assert.deepEqual(taps, [])
+		})
+	}
+
+	test('a pen right click: released within TAP_SLOP_PX, however long held (no TAP_MS), onTap(e, 2); 11 px pan without a tap; the mouse\'s right press stays no pen press', () => {
+		const { el, g, log, clock, taps } = penSetup()
+		el.fire('pointerdown', pen(200, 200, 2, 2))
+		clock.t += 4 * TAP_MS
+		el.fire('pointermove', pen(210, 200, -1, 1))
+		el.fire('pointerup', pen(210, 200, 2, 0))
+		el.fire('pointerdown', pen(200, 200, 0, 3))
+		el.fire('pointerup', pen(206, 208, 0, 0))
+		el.fire('pointerdown', pen(200, 200, 2, 2))
+		el.fire('pointermove', pen(211, 200, -1, 2))
+		el.fire('pointerup', pen(211, 200, 2, 0))
+		assert.deepEqual(taps, [['pen', 2], ['pen', 2]])
+		assert.deepEqual(kinds(log), ['directStart', 'direct', 'directEnd'])
+		el.fire('pointerdown', touch(5, 50, 600))
+		el.fire('pointerdown', { ...mouse(1, 200, 200, 2), buttons: 2 })
+		assert.equal(g.owns(5), true, 'a waiting finger stays with a mouse right press')
+	})
+})
+
+describe('claimDrag: a waiting first finger beyond TAP_SLOP_PX (job 163)', () => {
+	/**
+	 * @param {boolean|null} answer what the claimDrag spy returns (null: no claimDrag option)
+	 * @param {object} [opts] more controller options
+	 * @return {object} setup() plus asked (the claimDrag calls [id, p]) and pans (one entry per onTouchPan)
+	 */
+	function dragSetup(answer, opts = {}) {
+		const asked = []
+		const pans = []
+		const claimDrag = (id, p) => {
+			asked.push([id, p])
+			return answer
+		}
+		const s = setup({ ...(answer === null ? {} : { claimDrag }), onTouchPan: () => pans.push(1), ...opts })
+		return { ...s, asked, pans }
+	}
+
+	test('asked exactly once with the pointerId and the pointerdown point; true: claimed, no gesture, no camera, no onTouchPan, no tap at the release', () => {
+		const { el, g, log, cam, asked, pans } = dragSetup(true)
+		el.fire('pointerdown', touch(4, 120, 80))
+		el.fire('pointermove', touch(4, 120 + TAP_SLOP_PX, 80))
+		assert.deepEqual(asked, [], 'at TAP_SLOP_PX the finger still waits')
+		el.fire('pointermove', touch(4, 140, 86))
+		assert.deepEqual(asked, [[4, { x: 120, y: 80 }]], 'container px of the pointerdown, not of the move')
+		assert.equal(g.isClaimed(4), true)
+		assert.equal(g.owns(4), false, 'the input controller handles it now')
+		assert.equal(g.pending, false)
+		assert.equal(g.active, false)
+		el.fire('pointermove', touch(4, 300, 200))
+		// back near the pointerdown and released quickly: as a waiting finger this would be a tap
+		el.fire('pointermove', touch(4, 121, 80))
+		el.fire('pointerup', touch(4, 121, 80))
+		assert.deepEqual(log, [], 'no start, no frame, no tap')
+		assert.deepEqual(cam, { x: 0, y: 0, scale: 1 })
+		assert.deepEqual(pans, [])
+		assert.equal(asked.length, 1, 'never asked twice')
+		assert.equal(g.isClaimed(4), false)
+	})
+
+	test('after a true: a second finger cancels the claim once and both fingers pinch', () => {
+		let cancelled = 0
+		const { el, g, log } = dragSetup(true, { cancelClaim: () => { cancelled++ } })
+		el.fire('pointerdown', touch(1, 100, 100))
+		el.fire('pointermove', touch(1, 130, 100))
+		assert.equal(g.isClaimed(1), true)
+		el.fire('pointerdown', touch(2, 300, 100))
+		assert.equal(cancelled, 1)
+		assert.deepEqual(kinds(log), ['start'], 'the pinch starts')
+		assert.equal(g.isClaimed(1), false)
+	})
+
+	for (const [name, answer] of [['claimDrag says false', false], ['no claimDrag option', null]]) {
+		test(`${name}: the pan starts as before (the first frame covers the whole way), onTouchPan once`, () => {
+			const { el, g, log, asked, pans } = dragSetup(answer)
+			el.fire('pointerdown', touch(1, 100, 100))
+			el.fire('pointermove', touch(1, 60, 100))
+			assert.deepEqual(log, [['start', { x: 0, y: 0, scale: 1 }], ['frame', { x: 40, y: 0, scale: 1 }]])
+			assert.equal(g.isClaimed(1), false)
+			el.fire('pointermove', touch(1, 20, 100))
+			el.fire('pointerup', touch(1, 20, 100))
+			assert.deepEqual(kinds(log), ['start', 'frame', 'frame', 'end'])
+			assert.deepEqual(pans, [1])
+			assert.deepEqual(asked, answer === null ? [] : [[1, { x: 100, y: 100 }]], 'asked once, before the pan')
+		})
+	}
+
+	test('not asked for a claimed finger, a tap, a hold that longPress took, a pinch, nor in view-only mode', () => {
+		const claimed = dragSetup(true, { claimTouch: () => true })
+		claimed.el.fire('pointerdown', touch(1, 100, 100))
+		claimed.el.fire('pointermove', touch(1, 300, 100))
+		claimed.el.fire('pointerup', touch(1, 300, 100))
+		assert.deepEqual(claimed.asked, [], 'claimTouch took it')
+		const tap = dragSetup(true)
+		tap.el.fire('pointerdown', touch(1, 100, 100))
+		tap.el.fire('pointermove', touch(1, 106, 104))
+		tap.el.fire('pointerup', touch(1, 106, 104))
+		assert.deepEqual(kinds(tap.log), ['tap'])
+		assert.deepEqual(tap.asked, [], 'a tap')
+		const hold = dragSetup(true, { longPress: () => true })
+		hold.el.fire('pointerdown', touch(1, 100, 100))
+		hold.timers.runAll()
+		hold.el.fire('pointermove', touch(1, 300, 300))
+		hold.el.fire('pointerup', touch(1, 300, 300))
+		assert.deepEqual(hold.asked, [], 'a hold that became a marquee')
+		const pinch = dragSetup(true)
+		pinch.el.fire('pointerdown', touch(1, 100, 100))
+		pinch.el.fire('pointerdown', touch(2, 300, 100))
+		pinch.el.fire('pointermove', touch(1, 40, 100))
+		pinch.el.fire('pointermove', touch(2, 400, 100))
+		assert.deepEqual(pinch.asked, [], 'a pinch')
+		const view = dragSetup(true, { viewOnly: () => true })
+		view.el.fire('pointerdown', touch(1, 100, 100))
+		view.el.fire('pointermove', touch(1, 60, 100))
+		assert.deepEqual(view.asked, [], 'view-only')
+		assert.deepEqual(kinds(view.log), ['start', 'frame'], 'view-only: it pans')
+		assert.deepEqual(view.pans, [1])
+	})
 })
 
 describe('lifecycle', () => {

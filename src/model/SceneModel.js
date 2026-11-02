@@ -20,13 +20,18 @@
  *   and the hit test sorts its few candidates with it.
  * - rbush padding from the registry (`pad`, SPEC-M1 §6.2, finding F4):
  *   'shadow' notes, 'title' frames (title band), 'stroke' shapes (half the
- *   stroke width), 'none' text and placeholders; rotated boxes via
- *   rotatedBBox.
+ *   stroke width), 'none' text and placeholders, (job 188) 'band' note pads
+ *   (their sheets, model/pad.js; job 263 plus the note shadow); rotated boxes via
+ *   rotatedBBox. (Job 211) A symbol, BPMN event or gateway with a label
+ *   joins the label box (shapeLabelOf) to its entry, and a point on the
+ *   label hits it.
  * - no stored font size, no version/rev/deleted (the server owns those).
  *
  * M1 v2 (SPEC-M1 §6.2, round 1a): hit mode 'shape' (SHAPES[kind].hit:
  * box, ellipse formula with tolerance, polygon; the inside always hits, also
- * with fillOpacity 0), setBoxesLocal() for the transformer's live preview.
+ * with fillOpacity 0, unless hitTest's option hollow asks for the border band
+ * of a shape without fill, job 170, and its text zone, job 177),
+ * setBoxesLocal() for the transformer's live preview.
  *
  * Connector index (SPEC-M1 §6.2, round 1b):
  * - #links: Map<itemId, Set<connectorId>> from data.start.item/data.end.item,
@@ -47,6 +52,13 @@
  *   distance to hitPts ≤ tol + strokeWidth/2, a cap, or the label box;
  *   queryRect and boundsOf take the route box; abs() stays the stored
  *   0 × 0 box (rule 12)
+ * - (job 197) elbow connectors run around the other items (obstacles: every
+ *   item but connectors, frames and the connector's own targets, by its
+ *   rbush entry; connectors.elbowPlan); #watch holds each one's `watch`
+ *   rectangle, and every change of an item's entry (move, resize, stroke,
+ *   new, removed, frame cascade) re-routes the elbow connectors whose watch
+ *   it touches before or after, so a route never depends on the history:
+ *   it equals the route of a model loaded fresh with the same items
  * - local states that never touch the stored data ([S]-internal, while the
  *   scene drags): a shift of the free ends (moveLocal of a connector id),
  *   end overrides (setEndsLocal: retarget preview, free ends in a transform
@@ -67,9 +79,14 @@ import { capSize, labelBox, normalizeEndpoint, routeConnector } from './connecto
 import { distToPolyline, pointInPolygon, rotatedBBox, toLocal } from './geometry.js'
 import { fieldValue, layerRank, textPathOf, typeInfo } from './registry.js'
 import { canon } from './paths.js'
-import { outlinePoints, shapeOf } from './shapes.js'
+import { mindmapLayout, nodeAtLayout } from './mindmap.js'
+import { padExtent, padPartAt } from './pad.js'
+import { distToStroke, pointsOf } from './ink.js'
+import { colTop, hasLanes, laneHeadW } from './lanes.js'
+import { hasLabel, isImageKind, outlinePoints, shapeOf, symbolLabelBox } from './shapes.js'
+import { isCovered } from './privateWriting.js'
 import { isValidKey } from './zorder.js'
-import { FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, FRAME_TITLE_SIZE, SHADOW } from './tokens.js'
+import { FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, FRAME_TITLE_SIZE, NOTE_SHADOWS } from './tokens.js'
 
 /**
  * @typedef {{id:string, t:string, x:number, y:number, w:number, h:number, r:number, z:string,
@@ -77,7 +94,9 @@ import { FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, FRAME_TITLE_SIZE, SHADOW } from '.
  *            lock:({by:(string|null), name:(string|null)}|null)}} WireItem
  *   group and lock: M2 (SPEC-M1 §1.2 R20); the scene draws a lock symbol for a
  *   locked item (nodes/locks.js) and one outline per fully selected group
- * @typedef {'geom'|'z'|'parent'|'text'|'style'|'data'|'type'|'group'|'lock'} ChangeField
+ *   ChangeField react (job 172): data.react changed (not counted as data); the
+ *   scene paints the reaction rows in its overlay (nodes/reactions.js)
+ * @typedef {'geom'|'z'|'parent'|'text'|'style'|'data'|'type'|'group'|'lock'|'react'} ChangeField
  * @typedef {{added:string[], removed:string[], updated:Map<string, Set<ChangeField>>,
  *            geometry:Set<string>, reordered:boolean}} ChangeSummary
  *   geometry = ids of items that existed before the call and whose absolute box
@@ -95,8 +114,14 @@ import { FRAME_EDGE_HIT_PX, FRAME_TITLE_BAND, FRAME_TITLE_SIZE, SHADOW } from '.
 /** Deepest parent chain that is resolved (§6.2). */
 const MAX_DEPTH = 8
 
-/** rbush padding of a note: its drop shadow. */
-const STICKY_PAD = SHADOW.blur * 1.5 + Math.abs(SHADOW.y)
+/** rbush padding of a note: its drop shadows (job 259: the far one, 3 sigma + its offset). */
+export const STICKY_PAD = Math.max(...NOTE_SHADOWS.map((s) => s.blur * 1.5 + Math.hypot(s.x, s.y)))
+/**
+ * (Job 259) The margin a note keeps as an obstacle of an elbow route: the
+ * index padding of 0.4.0 (one shadow 0/2/8: 8 · 1.5 + 2), so routes do not
+ * change with the softer, wider shadows (the far one is invisible that far out).
+ */
+const STICKY_OBSTACLE_PAD = 14
 /** rbush padding of a frame: stroke on three sides, generous title band on top. */
 const FRAME_PAD = 2
 const FRAME_TITLE_PAD = FRAME_TITLE_SIZE * 1.8
@@ -127,6 +152,26 @@ function hasOwn(o, k) {
  */
 function isRouted(t) {
 	return typeInfo(t).hit === 'line'
+}
+
+/**
+ * @param {unknown} t item type
+ * @return {boolean} (job 197) an elbow route runs around items of this type:
+ *   all but connectors and frames (layer 'back')
+ */
+function isObstacle(t) {
+	return !isRouted(t) && typeInfo(t).layer !== 'back'
+}
+
+/**
+ * @param {string} id connector id
+ * @param {Route} route its route
+ * @return {IndexEntry|null} (job 197) its watch rectangle as an rbush entry, null without one
+ */
+function watchEntry(id, route) {
+	const w = route?.geom?.watch
+	if (!Array.isArray(w)) return null
+	return { minX: w[0], minY: w[1], maxX: w[2], maxY: w[3], id, t: 'watch' }
 }
 
 /**
@@ -166,15 +211,16 @@ function canonJson(v) {
 
 /**
  * @param {object} data data map
- * @param {string|null} key level-1 key to leave out
- * @return {string} canonical JSON of data without that key
+ * @param {Array<string|null>} keys level-1 keys to leave out (null entries are ignored)
+ * @return {string} canonical JSON of data without those keys
  */
-function dataJsonWithout(data, key) {
-	if (key === null || !Object.prototype.hasOwnProperty.call(data, key)) {
+function dataJsonWithout(data, keys) {
+	const drop = keys.filter((k) => k !== null && Object.prototype.hasOwnProperty.call(data, k))
+	if (drop.length === 0) {
 		return canonJson(data)
 	}
 	const copy = { ...data }
-	delete copy[key]
+	for (const k of drop) delete copy[k]
 	return canonJson(copy)
 }
 
@@ -197,7 +243,9 @@ function diffFields(a, b) {
 	if (textKey !== null && canonJson(a.data[textKey] ?? null) !== canonJson(b.data[textKey] ?? null)) {
 		out.add('text')
 	}
-	if (dataJsonWithout(a.data, textKey) !== dataJsonWithout(b.data, textKey)) out.add('data')
+	// (job 172) the reactions are a field of their own: the scene paints them in the overlay
+	if (canonJson(a.data.react ?? null) !== canonJson(b.data.react ?? null)) out.add('react')
+	if (dataJsonWithout(a.data, [textKey, 'react']) !== dataJsonWithout(b.data, [textKey, 'react'])) out.add('data')
 	if (a.group !== b.group) out.add('group')
 	if (JSON.stringify(a.lock ?? null) !== JSON.stringify(b.lock ?? null)) out.add('lock')
 	return out
@@ -280,6 +328,82 @@ export function hitShape(kind, lx, ly, w, h, tol) {
 }
 
 /**
+ * @param {object|undefined} it WireItem
+ * @return {boolean} (job 170) a shape without fill: style.fillOpacity 0 (a missing or
+ *   invalid value counts as its default 100, filled); (job 203) never an own shape
+ *   (kind image): its picture is its inside
+ */
+export function isUnfilledShape(it) {
+	return it?.t === 'shape' && fieldValue(it, 'style.fillOpacity') === 0 && !isImageKind(fieldValue(it, 'data.kind'))
+}
+
+/**
+ * @param {object|undefined} it WireItem
+ * @param {{w:number, h:number}} a its absolute box
+ * @return {{x:number, y:number, w:number, h:number, fs:number, lines:number, wrapW:number}|null}
+ *   (job 211) the label of a symbol, BPMN event or gateway in its own coordinates
+ *   (shapes.js symbolLabelBox), null for any other item or a blank text
+ */
+export function shapeLabelOf(it, a) {
+	if (it?.t !== 'shape' || !a) return null
+	return symbolLabelBox(fieldValue(it, 'data.kind'), fieldValue(it, 'data.text'), fieldValue(it, 'style.fontSize'), a.w, a.h)
+}
+
+/**
+ * @param {object|undefined} it WireItem
+ * @param {{w:number, h:number}} a its absolute box
+ * @return {number} (job 211) how far the label of a symbol, BPMN event or gateway reaches below
+ *   its box (world units, along the item's own axis); 0 without one
+ */
+export function labelReach(it, a) {
+	const l = shapeLabelOf(it, a)
+	return l ? l.y + l.h - a.h : 0
+}
+
+/**
+ * @param {number} x x
+ * @param {number} y y
+ * @param {{x:number, y:number, w:number, h:number}|null|undefined} r rectangle (w, h ≥ 0)
+ * @param {number} grow added on every side
+ * @return {boolean} (job 177) r grown by grow holds (x, y); false without a valid r
+ */
+function inRect(x, y, r, grow) {
+	if (!r || ![r.x, r.y, r.w, r.h].every(Number.isFinite)) return false
+	return x >= r.x - grow && y >= r.y - grow && x <= r.x + r.w + grow && y <= r.y + r.h + grow
+}
+
+/**
+ * (job 170) The empty inside of a shape without fill in its local frame: the
+ * inside of its outline shrunk by `band` (rect, roundRect and unknown kinds
+ * the box (band, band)–(w − band, h − band); ellipse the ellipse with the same
+ * centre and the half-axes w/2 − band, h/2 − band; the polygon kinds the
+ * points inside the polygon farther than band from its outline). None when
+ * w or h is at most 2 · band.
+ *
+ * @param {unknown} kind data.kind (unknown kinds count as rect)
+ * @param {number} lx local x (origin top-left of the unrotated box)
+ * @param {number} ly local y
+ * @param {number} w width
+ * @param {number} h height
+ * @param {number} band width of the border band inside the outline (world)
+ * @return {boolean} the point lies in the empty inside
+ */
+export function inHollow(kind, lx, ly, w, h, band) {
+	if (!(w > 2 * band) || !(h > 2 * band)) return false
+	const mode = shapeOf(kind).hit
+	if (mode === 'ellipse') {
+		const dx = (lx - w / 2) / (w / 2 - band)
+		const dy = (ly - h / 2) / (h / 2 - band)
+		return dx * dx + dy * dy < 1
+	}
+	if (mode === 'polygon') {
+		const pts = outlinePoints(kind, w, h)
+		return pointInPolygon(lx, ly, pts) && distToPolyline(lx, ly, [...pts, pts[0], pts[1]]) > band
+	}
+	return lx > band && ly > band && lx < w - band && ly < h - band
+}
+
+/**
  * @param {{x:number, y:number, w:number, h:number}} rect possibly with negative w/h
  * @return {{minX:number, minY:number, maxX:number, maxY:number}}
  */
@@ -303,6 +427,10 @@ export class SceneModel {
 	#tree = new RBush(16)
 	/** preview boxes for routing @type {((id:string) => (AbsBox|null))|null} */
 	#boxResolver = null
+	/** (job 195) the layout of a mind map for hit mode 'tree' (the scene's, as drawn), see setTreeLayout */
+	#treeLayout = null
+	/** (job 195) item object → its layout with estimateNodeSize, without a scene */
+	#treeCache = new WeakMap()
 	/** bound item → connectors (also for items that are not known yet) @type {Map<string, Set<string>>} */
 	#links = new Map()
 	/** connector → its route; absent = no geometry (unknown target) @type {Map<string, Route>} */
@@ -315,6 +443,10 @@ export class SceneModel {
 	#localEnds = new Map()
 	/** group id → its items (M2, R20 Gruppieren) @type {Map<string, Set<string>>} */
 	#groups = new Map()
+	/** (job 197) watch rectangles of elbow connectors (connectors.elbowPlan) */
+	#watch = new RBush(16)
+	/** (job 197) connector → its entry in #watch @type {Map<string, IndexEntry>} */
+	#watchEntries = new Map()
 
 	/**
 	 * Bulk load (snapshot or resync): replaces everything (local connector
@@ -334,6 +466,8 @@ export class SceneModel {
 		this.#shift.clear()
 		this.#localEnds.clear()
 		this.#groups.clear()
+		this.#watch.clear()
+		this.#watchEntries.clear()
 		for (const src of items ?? []) {
 			if (!src || typeof src.id !== 'string') continue
 			const old = this.#items.get(src.id)
@@ -361,15 +495,25 @@ export class SceneModel {
 			this.#entries.set(id, e)
 			entries.push(e)
 		}
+		// (job 197) the items first: elbow routes ask the index for obstacles
+		this.#tree.load(entries)
+		const lines = []
+		const watches = []
 		for (const id of routed) {
 			const route = this.#route(id)
 			if (!route) continue
 			this.#conn.set(id, route)
 			const e = this.#connEntry(id, route)
 			this.#entries.set(id, e)
-			entries.push(e)
+			lines.push(e)
+			const w = watchEntry(id, route)
+			if (w) {
+				this.#watchEntries.set(id, w)
+				watches.push(w)
+			}
 		}
-		this.#tree.load(entries)
+		this.#tree.load(lines)
+		this.#watch.load(watches)
 	}
 
 	/**
@@ -386,6 +530,7 @@ export class SceneModel {
 		const dirty = new Set()
 		const added = new Set()
 		const touched = new Set()
+		const goneEntries = []
 		for (const id of removes) {
 			const it = this.#items.get(id)
 			if (!it) continue
@@ -399,6 +544,7 @@ export class SceneModel {
 			if (e) {
 				this.#tree.remove(e)
 				this.#entries.delete(id)
+				goneEntries.push(e)
 			}
 			summary.removed.push(id)
 			touched.add(id)
@@ -446,12 +592,14 @@ export class SceneModel {
 			if (fields.has('geom') || fields.has('parent') || fields.has('type')) dirty.add(it.id)
 			// the rbush padding of a shape is half its stroke width
 			else if (fields.has('style') && typeInfo(it.t).pad === 'stroke') dirty.add(it.id)
+			// (job 211) and its entry holds the label of a symbol, BPMN event or gateway (text, kind)
+			else if ((fields.has('text') || fields.has('data')) && it.t === 'shape' && (hasLabel(fieldValue(old, 'data.kind')) || hasLabel(fieldValue(it, 'data.kind')))) dirty.add(it.id)
 			// a connector's route, caps and label box follow its data, style and label
 			else if (isRouted(it.t)) dirty.add(it.id)
 			if (fields.has('type') && isRouted(old.t) && !isRouted(it.t)) this.#dropConnState(it.id)
 			if (fields.has('z') || fields.has('type')) summary.reordered = true
 		}
-		this.#recompute(dirty, added, summary.geometry, touched)
+		this.#recompute(dirty, added, summary.geometry, touched, goneEntries)
 		return summary
 	}
 
@@ -656,6 +804,60 @@ export class SceneModel {
 	}
 
 	/**
+	 * (Job 197) The obstacles of an elbow route (connectors.js `obstacles`):
+	 * a query answering the index entries ([x0, y0, x1, y1], the drawn extent)
+	 * of the items that touch a rectangle, except connectors, frames and the
+	 * given items (the connector's own targets). Items are where the model
+	 * has them (a remote drag preview does not count).
+	 *
+	 * @param {Iterable<string>} [skip] items that are no obstacle
+	 * @return {(x0:number, y0:number, x1:number, y1:number) => number[][]}
+	 */
+	obstaclesFor(skip = []) {
+		const not = new Set(skip ?? [])
+		return (x0, y0, x1, y1) => {
+			const out = []
+			for (const e of this.#tree.search({ minX: x0, minY: y0, maxX: x1, maxY: y1 })) {
+				if (not.has(e.id) || !isObstacle(e.t)) continue
+				const k = e.t === 'sticky' ? STICKY_PAD - STICKY_OBSTACLE_PAD : 0
+				const r = [e.minX + k, e.minY + k, e.maxX - k, e.maxY - k]
+				if (r[0] <= x1 && r[2] >= x0 && r[1] <= y1 && r[3] >= y0) out.push(r)
+			}
+			return out
+		}
+	}
+
+	/**
+	 * (Job 195) Where hit mode 'tree' takes the layout of a mind map from:
+	 * the scene hands its layout as drawn (measured texts, a local preview);
+	 * without one (null) it is mindmapLayout with estimateNodeSize.
+	 *
+	 * @param {((id: string) => (object|null))|null} fn layout of a mind map id, null: none
+	 */
+	setTreeLayout(fn) {
+		this.#treeLayout = typeof fn === 'function' ? fn : null
+	}
+
+	/**
+	 * @param {string} id mind map id
+	 * @return {object|null} its layout for the hit test (model/mindmap.js mindmapLayout)
+	 */
+	treeLayoutOf(id) {
+		const it = this.#items.get(id)
+		if (!it) return null
+		if (this.#treeLayout !== null) {
+			const l = this.#treeLayout(id)
+			if (l) return l
+		}
+		let l = this.#treeCache.get(it)
+		if (!l) {
+			l = mindmapLayout(it)
+			this.#treeCache.set(it, l)
+		}
+		return l
+	}
+
+	/**
 	 * @param {string} id item id
 	 * @return {WireItem|undefined} the model's own object (do not mutate)
 	 */
@@ -716,21 +918,40 @@ export class SceneModel {
 	/**
 	 * Topmost item under a world point, precise per registry hit mode:
 	 * 'box' = the (rotated) box; 'frameEdge' = title band above the frame plus
-	 * a border band, the inside is empty canvas; 'shape' = SHAPES[kind].hit;
-	 * 'line' = the routed connector line, its caps and its label box.
+	 * a border band, the inside is empty canvas ((job 199) but for the head
+	 * column of a frame with lanes, model/lanes.js laneHeadW, and (job 208) the
+	 * head row of its columns, colTop); 'shape' = SHAPES[kind].hit;
+	 * 'line' = the routed connector line, its caps and its label box; (job
+	 * 188) 'pad' = (0, 0)–(w, h + 12) of a note pad (model/pad.js, job 263); (job
+	 * 195) 'tree' = a node or a fold dot of a mind map (treeLayoutOf); (job 273)
+	 * 'ink' = the line of a pen stroke (model/ink.js distToStroke).
 	 *
 	 * @param {number} wx world x
 	 * @param {number} wy world y
 	 * @param {number} [tolWorld] tolerance in world units (4 px / scale for a mouse, 12 px / scale for touch)
-	 * @param {{edgeWorld?:number, accept?:((id:string) => boolean)}} [opts] width of the frame
+	 * @param {{edgeWorld?:number, accept?:((id:string) => boolean), hollow?:boolean,
+	 *          textRect?:((id:string) => ({x:number, y:number, w:number, h:number}|null)),
+	 *          tabWidth?:((id:string) => (number|null))}} [opts] width of the frame
 	 *   border band in world units (the scene passes FRAME_EDGE_HIT_PX / scale; default
-	 *   FRAME_EDGE_HIT_PX); accept: only items it accepts count (e.g. bindable targets)
+	 *   FRAME_EDGE_HIT_PX); accept: only items it accepts count (e.g. bindable targets);
+	 *   hollow (job 170): a shape without fill (isUnfilledShape) hits only in its border band,
+	 *   its inside shrunk by edgeWorld + tolerance + half its stroke is empty canvas (inHollow),
+	 *   so the point goes on to the items below it; textRect (job 177, only with hollow): the
+	 *   text block of such a shape in its own coordinates (origin top-left of the unrotated
+	 *   box) or null, asked only for a point in its empty inside: that block grown by the
+	 *   tolerance on every side (its text zone) hits the shape too; tabWidth (job 252): the
+	 *   width of the tab a frame shows above its top edge (null or ≤ 0: none); then above the
+	 *   frame only that tab, widened by the tolerance (at most the frame's width), hits, not
+	 *   the whole title band
 	 * @return {string|null} item id
 	 */
 	hitTest(wx, wy, tolWorld = 0, opts = {}) {
 		const tol = Number.isFinite(tolWorld) && tolWorld > 0 ? tolWorld : 0
 		const edge = Number.isFinite(opts.edgeWorld) && opts.edgeWorld >= 0 ? opts.edgeWorld : FRAME_EDGE_HIT_PX
 		const accept = typeof opts.accept === 'function' ? opts.accept : null
+		const hollow = opts.hollow === true
+		const textRect = hollow && typeof opts.textRect === 'function' ? opts.textRect : null
+		const tabWidth = typeof opts.tabWidth === 'function' ? opts.tabWidth : null
 		const pad = tol + edge
 		const cands = this.#tree.search({ minX: wx - pad, minY: wy - pad, maxX: wx + pad, maxY: wy + pad })
 		if (cands.length === 0) {
@@ -738,8 +959,10 @@ export class SceneModel {
 		}
 		cands.sort((a, b) => this.compareOrder(b.id, a.id))
 		for (const e of cands) {
+			// job 275: a covered note (private writing) is never picked: clicks pass through it
+			if (isCovered(this.get(e.id))) continue
 			if (accept !== null && !accept(e.id)) continue
-			if (this.#hitItem(e.id, wx, wy, tol, edge)) {
+			if (this.#hitItem(e.id, wx, wy, tol, edge, hollow, textRect, tabWidth)) {
 				return e.id
 			}
 		}
@@ -758,7 +981,8 @@ export class SceneModel {
 		const out = []
 		for (const e of this.#tree.search(r)) {
 			const b = this.#boxOf(e.id)
-			if (!b) continue
+			// job 275: nor caught by a marquee or a new frame
+			if (!b || isCovered(this.get(e.id))) continue
 			const hit = mode === 'contain'
 				? b[0] >= r.minX && b[1] >= r.minY && b[2] <= r.maxX && b[3] <= r.maxY
 				: b[0] <= r.maxX && b[2] >= r.minX && b[1] <= r.maxY && b[3] >= r.minY
@@ -1064,6 +1288,7 @@ export class SceneModel {
 
 	/** @param {string} id connector that is gone or no connector any more */
 	#dropConnState(id) {
+		this.#dropWatch(id)
 		this.#conn.delete(id)
 		this.#last.delete(id)
 		this.#shift.delete(id)
@@ -1110,8 +1335,9 @@ export class SceneModel {
 	 * @param {Set<string>} added items new in this change (not reported in geometry)
 	 * @param {Set<string>} geometry collects ids whose box or route changed
 	 * @param {Set<string>} [gone] items removed in this change (their connectors route anew)
+	 * @param {IndexEntry[]} [goneEntries] (job 197) the index entries of the removed items
 	 */
-	#recompute(dirty, added, geometry, gone = new Set()) {
+	#recompute(dirty, added, geometry, gone = new Set(), goneEntries = []) {
 		const all = new Set()
 		for (const id of dirty) {
 			if (all.has(id)) continue
@@ -1120,17 +1346,26 @@ export class SceneModel {
 		}
 		const moved = new Set(gone)
 		const routed = new Set()
+		// (job 197) index entries of obstacles before and after this change
+		const shifted = [...goneEntries]
 		for (const id of all) {
 			const it = this.#items.get(id)
 			if (!it) continue
 			const before = this.#abs.get(id)
 			const a = this.#computeAbs(id)
 			this.#abs.set(id, a)
+			const old = this.#entries.get(id)
 			if (isRouted(it.t)) {
+				if (old && !isRouted(old.t)) shifted.push(old)
 				routed.add(id)
 				continue
 			}
 			this.#reindex(id, a)
+			const now = this.#entries.get(id)
+			if (!old || old.t !== now.t || old.minX !== now.minX || old.minY !== now.minY || old.maxX !== now.maxX || old.maxY !== now.maxY) {
+				if (old) shifted.push(old)
+				shifted.push(now)
+			}
 			if (added.has(id) || !before || !sameBox(before, a)) moved.add(id)
 			if (!added.has(id) && before && !sameBox(before, a)) {
 				geometry.add(id)
@@ -1143,6 +1378,12 @@ export class SceneModel {
 				for (const c of set) {
 					if (this.#items.has(c)) routed.add(c)
 				}
+			}
+		}
+		for (const e of shifted) {
+			if (!isObstacle(e.t)) continue
+			for (const w of this.#watch.search(e)) {
+				if (this.#items.has(w.id)) routed.add(w.id)
 			}
 		}
 		for (const id of routed) {
@@ -1170,6 +1411,7 @@ export class SceneModel {
 		const shift = this.#shift.get(id)
 		const last = this.#last.get(id)
 		const ends = []
+		const targets = []
 		for (const which of ENDS) {
 			const own = local && hasOwn(local, which)
 			let ep = own ? local[which] : (fieldValue(it, 'data.' + which) ?? null)
@@ -1177,12 +1419,14 @@ export class SceneModel {
 			if (hasOwn(ep, 'item')) {
 				const box = this.#targetBox(ep.item)
 				ends.push({ box, ep, point: box ? null : (last?.[which] ?? null) })
+				targets.push(ep.item)
 				continue
 			}
 			if (shift && !own) ep = { x: ep.x + shift.dx, y: ep.y + shift.dy }
 			ends.push({ box: null, ep, point: null })
 		}
-		const geom = routeConnector(ends[0], ends[1], fieldValue(it, 'data.route'))
+		const route = fieldValue(it, 'data.route')
+		const geom = routeConnector(ends[0], ends[1], route, route === 'elbow' ? { obstacles: this.obstaclesFor(targets) } : {})
 		if (!geom) return null
 		this.#last.set(id, { start: { x: geom.start.x, y: geom.start.y }, end: { x: geom.end.x, y: geom.end.y } })
 		return { geom, label: labelBox(fieldValue(it, 'data.label'), geom.labelAt) }
@@ -1204,6 +1448,14 @@ export class SceneModel {
 		return this.#abs.get(target) ?? null
 	}
 
+	/** @param {string} id connector whose watch rectangle goes (job 197) */
+	#dropWatch(id) {
+		const w = this.#watchEntries.get(id)
+		if (!w) return
+		this.#watch.remove(w)
+		this.#watchEntries.delete(id)
+	}
+
 	/**
 	 * @param {string} id connector id
 	 * @param {Route|null} route its route
@@ -1213,6 +1465,12 @@ export class SceneModel {
 		if (old) {
 			this.#tree.remove(old)
 			this.#entries.delete(id)
+		}
+		this.#dropWatch(id)
+		const w = route ? watchEntry(id, route) : null
+		if (w) {
+			this.#watchEntries.set(id, w)
+			this.#watch.insert(w)
 		}
 		if (!route) return
 		const e = this.#connEntry(id, route)
@@ -1254,23 +1512,45 @@ export class SceneModel {
 	 */
 	#makeEntry(id, a) {
 		const it = this.#items.get(id)
-		const b = rotatedBBox(a.x, a.y, a.w, a.h, a.r)
+		const pad = typeInfo(it.t).pad
+		// (job 188) a note pad with its sheets (never rotated: rotatable false); job 263: plus the shadow below
+		const e = pad === 'band' ? padExtent(a.w, a.h) : a
+		const b = rotatedBBox(a.x, a.y, e.w, e.h, pad === 'band' ? 0 : a.r)
 		let minX = Math.min(b[0], b[2])
 		let minY = Math.min(b[1], b[3])
 		let maxX = Math.max(b[0], b[2])
 		let maxY = Math.max(b[1], b[3])
-		const pad = typeInfo(it.t).pad
 		if (pad === 'title') {
 			minX -= FRAME_PAD
 			maxX += FRAME_PAD
 			maxY += FRAME_PAD
 			minY -= Math.max(FRAME_TITLE_PAD, FRAME_TITLE_BAND)
 		} else {
-			const d = pad === 'shadow' ? STICKY_PAD : pad === 'stroke' ? halfStroke(it) : 0
+			// (job 263) a note pad's bottom sheet casts the note shadow too
+			const d = pad === 'shadow' || pad === 'band' ? STICKY_PAD : pad === 'stroke' ? halfStroke(it) : 0
 			minX -= d
 			minY -= d
 			maxX += d
 			maxY += d
+		}
+		// (job 211) the label below a symbol, BPMN event or gateway, turned with the box around its centre
+		const l = shapeLabelOf(it, a)
+		if (l) {
+			const r = (a.r || 0) * Math.PI / 180
+			const cos = Math.cos(r)
+			const sin = Math.sin(r)
+			const cx = a.x + a.w / 2
+			const cy = a.y + a.h / 2
+			for (const [lx, ly] of [[l.x, l.y], [l.x + l.w, l.y], [l.x, l.y + l.h], [l.x + l.w, l.y + l.h]]) {
+				const dx = lx - a.w / 2
+				const dy = ly - a.h / 2
+				const wx = cx + dx * cos - dy * sin
+				const wy = cy + dx * sin + dy * cos
+				minX = Math.min(minX, wx)
+				minY = Math.min(minY, wy)
+				maxX = Math.max(maxX, wx)
+				maxY = Math.max(maxY, wy)
+			}
 		}
 		return { minX, minY, maxX, maxY, id, t: it.t }
 	}
@@ -1295,9 +1575,13 @@ export class SceneModel {
 	 * @param {number} wy world y
 	 * @param {number} tol tolerance (world)
 	 * @param {number} edge frame border band (world)
+	 * @param {boolean} hollow (job 170) a shape without fill hits only in its border band
+	 * @param {((id:string) => object|null)|null} textRect (job 177) and in the text zone of this text block
+	 * @param {((id:string) => number|null)|null} tabWidth (job 252) above a frame only its tab this wide
+	 *   hits; null: the whole title band
 	 * @return {boolean}
 	 */
-	#hitItem(id, wx, wy, tol, edge) {
+	#hitItem(id, wx, wy, tol, edge, hollow, textRect, tabWidth) {
 		const it = this.#items.get(id)
 		const mode = typeInfo(it.t).hit
 		if (mode === 'line') {
@@ -1306,11 +1590,44 @@ export class SceneModel {
 		const a = this.#abs.get(id)
 		const [lx, ly] = toLocal(wx, wy, a.x, a.y, a.w, a.h, a.r)
 		if (mode === 'shape') {
-			return hitShape(fieldValue(it, 'data.kind'), lx, ly, a.w, a.h, tol + halfStroke(it))
+			const kind = fieldValue(it, 'data.kind')
+			const half = halfStroke(it)
+			// (job 211) the label below a symbol, BPMN event or gateway, filled or not
+			if (inRect(lx, ly, shapeLabelOf(it, a), tol)) return true
+			if (!hitShape(kind, lx, ly, a.w, a.h, tol + half)) return false
+			// (job 170) the empty inside of a shape without fill is canvas, like a frame's
+			if (!hollow || !isUnfilledShape(it) || !inHollow(kind, lx, ly, a.w, a.h, edge + tol + half)) return true
+			// (job 177) except its text zone, like a frame's title
+			return textRect !== null && inRect(lx, ly, textRect(id), tol)
+		}
+		if (mode === 'pad') {
+			// (job 188) the box and the sheets of a note pad (job 263: the binding lies on the box)
+			return padPartAt(lx, ly, a.w, a.h, tol) !== null
+		}
+		if (mode === 'ink') {
+			// (job 273) only the line of a pen stroke; the rest of its box is empty canvas
+			return distToStroke(pointsOf(it.data?.points), lx, ly) <= tol + fieldValue(it, 'style.strokeWidth') / 2
+		}
+		if (mode === 'tree') {
+			// (job 195) only the nodes and fold dots of a mind map; the rest of its box is empty canvas
+			return nodeAtLayout(this.treeLayoutOf(id), lx, ly, tol) !== null
 		}
 		if (mode === 'frameEdge') {
-			const inTitle = lx >= -tol && lx <= a.w + tol && ly >= -FRAME_TITLE_BAND - tol && ly < 0
-			if (inTitle) {
+			if (ly >= -FRAME_TITLE_BAND - tol && ly < 0 && lx >= -tol) {
+				// (job 252) with tabWidth only the visible tab hits (none: nothing above the frame)
+				const tw = tabWidth === null ? a.w : tabWidth(id)
+				if (typeof tw === 'number' && Number.isFinite(tw) && tw > 0 && lx <= Math.min(tw, a.w) + tol) {
+					return true
+				}
+			}
+			// (job 199) the head column of a frame with lanes (job 208: none for a single lane without a name)
+			const hw = laneHeadW(it, a.w)
+			if (hasLanes(it) && hw > 0 && lx >= -tol && lx <= hw + tol && ly >= 0 && ly <= a.h + tol) {
+				return true
+			}
+			// (job 208) and the head row of its columns
+			const top = colTop(it, a.h)
+			if (top > 0 && lx >= -tol && lx <= a.w + tol && ly >= 0 && ly <= top + tol) {
 				return true
 			}
 			const d = edge + tol

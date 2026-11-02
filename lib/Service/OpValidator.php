@@ -25,7 +25,14 @@ namespace OCA\Knorke\Service;
  *   ['o' => 'put', 'id' => ulid, 'item' => normalized item, 'revive' => bool]
  *   ['o' => 'patch', 'id' => ulid, 'p' => [path => cleaned value], 'keep' => bool]
  *   ['o' => 'lock', 'id' => ulid, 'on' => bool]
+ *   ['o' => 'lock', 'id' => ulid, 'on' => true, 'restore' => true, 'by' => ?string]
  *   ['o' => 'remove', 'id' => ulid]
+ *   ['o' => 'react', 'id' => ulid, 'key' => 'p<pid>', 'e' => ?string, 'n' => string]
+ *
+ * Reactions (job 172, Reactions): a patch whose only path is data.react.<key>
+ * is a reaction op, checked before the edit rule (vote may react); every
+ * other patch that touches data.react is `bad`, and a put keeps reactions
+ * only as Reactions::filterPut says.
  *
  * Groups (M2, SPEC-M1 §1.2 "(R20) Gruppieren"): a put may carry p.group, a
  * patch the root path `group` (its own LWW register like z, also beside
@@ -40,12 +47,21 @@ namespace OCA\Knorke\Service;
  *
  * Lock and unlock (M2, SPEC-M1 §1.2 "(R20) Sperren") travel as a patch whose
  * ONLY path is `lock`: {"lock": {…}} (a non-empty JSON object that meets the
- * value rules; its content is neither read nor stored, the locker is always
- * the principal) locks, {"lock": null | {} | []} unlocks (rule 3: empty =
- * absent). Any other value, or `lock` next to another path, is `bad`; keep
- * is ignored. The role comes first: vote and view are `denied` here too. The
+ * value rules; its content is not stored and, but for `by` of a restore
+ * below, not read; a plain lock's locker is the principal) locks, {"lock":
+ * null | {} | []} unlocks (rule 3: empty = absent). Any other value, or
+ * `lock` next to another path, is `bad`; keep is ignored. The role comes first: vote and view are `denied` here too. The
  * rights on the stored lock (only the locker or a moderator unlocks, nothing
  * else touches a locked item) are SyncService::authorize()'s, under the lock.
+ *
+ * Restore (job 152, the undo of a foreign unlock): a locking lock op with the
+ * op key `restore` = the literal true also carries `restore` and `by`, the
+ * expected pid of the remembered locker: `lock.by` as a string, or null when
+ * it is missing or null (an unknown locker is expected); any other type of
+ * `by` is `bad`. Nothing else of the value is read (never `name`, never
+ * `guest`). `restore` with any other value, or on an unlock, changes
+ * nothing: the op stays a plain lock or unlock. SyncService decides under
+ * the lock whether the remembered lock comes back.
  *
  * keep (SPEC-M1 §4.6, §4.7 rule 15) is true only for the literal true; it
  * acts on containers only and is ignored everywhere else (like every other
@@ -69,6 +85,11 @@ final class OpValidator {
         if (!in_array($o, ['put', 'patch', 'remove'], true) || !is_string($id) || preg_match(self::ULID_RE, $id) !== 1) {
             return self::BAD;
         }
+        // A reaction (job 172) is the one patch vote may send: before the edit rule.
+        $reactKey = $o === 'patch' ? Reactions::opKey($op['p'] ?? null) : null;
+        if ($reactKey !== null) {
+            return self::reactOp($p, $id, $reactKey, $op['p'][Reactions::PREFIX . $reactKey], $fourByte);
+        }
         // Role rights per op live here, before the lock (M1: vote/view rules).
         // Rights that need the stored row go to SyncService::authorize().
         if (!$p->role->canEdit()) {
@@ -83,29 +104,64 @@ final class OpValidator {
                 return self::BAD;
             }
             $item = self::cleanPut($t, $op['p'] ?? null, $fourByte);
-            if ($item === null) {
+            if ($item === null || PrivateWriting::claimsCover($item['data'] ?? null)) {
+                // (job 275) data.covered is the server's mark of a hidden note, never a client's
                 return self::BAD;
             }
-            return ['o' => 'put', 'id' => $id, 'item' => $item, 'revive' => ($op['revive'] ?? false) === true];
+            $revive = ($op['revive'] ?? false) === true;
+            return ['o' => 'put', 'id' => $id, 'item' => Reactions::filterPut($item, $revive, $fourByte), 'revive' => $revive];
         }
         $p = $op['p'] ?? null;
         if (PathOps::isMap($p) && array_key_exists('lock', $p)) {
-            return self::lockOp($id, $p, $fourByte);
+            return self::lockOp($id, $p, $fourByte, ($op['restore'] ?? false) === true);
         }
         $patch = self::cleanPatch($p, $fourByte);
-        return $patch === null ? self::BAD : ['o' => 'patch', 'id' => $id, 'p' => $patch, 'keep' => ($op['keep'] ?? false) === true];
+        if ($patch === null) {
+            return self::BAD;
+        }
+        foreach (array_keys($patch) as $path) {
+            // only the reaction op itself writes reactions (job 172)
+            if (Reactions::touches((string)$path) || PrivateWriting::coverPath((string)$path, $patch[$path])) {
+                return self::BAD;
+            }
+        }
+        return ['o' => 'patch', 'id' => $id, 'p' => $patch, 'keep' => ($op['keep'] ?? false) === true];
+    }
+
+    /**
+     * A reaction op (job 172, Reactions): the role owner, edit or vote and the
+     * principal's own key, else `denied`; the value null, {} or [] takes the
+     * reaction back, an object with a valid e sets it, anything else is
+     * `bad`. n is the principal's name (Reactions::name), never the value
+     * sent. Normalized: ['o' => 'react', 'id', 'key', 'e' => ?string, 'n'].
+     *
+     * @return array{o: string, id?: string, key?: string, e?: ?string, n?: string}
+     */
+    private static function reactOp(Principal $p, string $id, string $key, mixed $v, bool $fourByte): array {
+        if (!$p->role->canVote() || $key !== Reactions::keyOf($p->pid)) {
+            return self::DENIED;
+        }
+        $e = null;
+        if ($v !== null && $v !== []) {
+            if (!PathOps::isMap($v) || !Reactions::isEmoji($v['e'] ?? null)) {
+                return self::BAD;
+            }
+            $e = $v['e'];
+        }
+        return ['o' => 'react', 'id' => $id, 'key' => $key, 'e' => $e, 'n' => Reactions::name($p->displayName, $fourByte)];
     }
 
     /**
      * A patch with the path `lock` (see the class comment): `lock` must be
      * its only key; null, {} or [] unlocks, a non-empty JSON object that
      * passes the value rules (PathOps::isWireValue, strings through
-     * cleanValue) locks; every other value is `bad`.
+     * cleanValue) locks; every other value is `bad`. With $restore (job
+     * 152) a lock carries the expected pid `by` as well (class comment).
      *
      * @param array<string, mixed> $p patch payload with the key `lock`
-     * @return array{o: string, id?: string, on?: bool}
+     * @return array{o: string, id?: string, on?: bool, restore?: true, by?: ?string}
      */
-    private static function lockOp(string $id, array $p, bool $fourByte): array {
+    private static function lockOp(string $id, array $p, bool $fourByte, bool $restore): array {
         if (count($p) !== 1) {
             return self::BAD;
         }
@@ -113,10 +169,21 @@ final class OpValidator {
         if ($v === null || $v === []) {
             return ['o' => 'lock', 'id' => $id, 'on' => false];
         }
-        if (!PathOps::isMap($v) || !self::cleanValue($v, $fourByte)[0]) {
+        if (!PathOps::isMap($v)) {
             return self::BAD;
         }
-        return ['o' => 'lock', 'id' => $id, 'on' => true];
+        [$ok, $v] = self::cleanValue($v, $fourByte);
+        if (!$ok) {
+            return self::BAD;
+        }
+        if (!$restore) {
+            return ['o' => 'lock', 'id' => $id, 'on' => true];
+        }
+        $by = $v['by'] ?? null;
+        if ($by !== null && !is_string($by)) {
+            return self::BAD;
+        }
+        return ['o' => 'lock', 'id' => $id, 'on' => true, 'restore' => true, 'by' => $by];
     }
 
     /** Is the raw op a vote op (SPEC-M1 §4.6)? Those go to VoteService::apply, never to applyOps. */
@@ -133,7 +200,12 @@ final class OpValidator {
      * are ignored. Set semantics: n is the voter's number on the item, never
      * a delta.
      *
-     * @return array{o: string, s?: int, id?: string, n?: int} ['o' => 'vote', 's', 'id', 'n'] | bad | denied
+     * (Job 216) The optional base `b` is the voter's number on the item the
+     * client started from (an integer 0–VOTE_PER_MAX, else `bad`, null too);
+     * VoteService answers `stale` when the voter's row is no longer b. Without
+     * the key the op stays a plain set (a tab with an older bundle).
+     *
+     * @return array{o: string, s?: int, id?: string, n?: int, b?: int} ['o' => 'vote', 's', 'id', 'n'(, 'b')] | bad | denied
      */
     public static function normalizeVote(Principal $p, mixed $op): array {
         if (!self::isVote($op)) {
@@ -146,15 +218,27 @@ final class OpValidator {
             || !is_string($id) || preg_match(self::ULID_RE, $id) !== 1) {
             return self::BAD;
         }
+        $hasBase = array_key_exists('b', $op);
+        $b = $hasBase ? Input::whole($op['b']) : null;
+        if ($hasBase && ($b === null || $b < 0 || $b > Limits::VOTE_PER_MAX)) {
+            return self::BAD;
+        }
         if (!$p->role->canVote()) {
             return self::DENIED;
         }
-        return ['o' => 'vote', 's' => $s, 'id' => $id, 'n' => $n];
+        $out = ['o' => 'vote', 's' => $s, 'id' => $id, 'n' => $n];
+        if ($hasBase) {
+            $out['b'] = $b;
+        }
+        return $out;
     }
 
     /**
      * Does any patch of the raw batch set a text path (§4.10.2)? Then the
      * lease check needs the presence map even when the request carried no `me`.
+     * (Job 173) A path data.cells or below it counts too: every cell of a
+     * table has a lease of its own; (job 195) so does data.texts and below it,
+     * every node of a mind map.
      */
     public static function touchesTextPath(array $ops): bool {
         $paths = ItemRegistry::allTextPaths();
@@ -164,6 +248,12 @@ final class OpValidator {
             }
             foreach ($paths as $path) {
                 if (array_key_exists($path, $op['p'])) {
+                    return true;
+                }
+            }
+            foreach (array_keys($op['p']) as $path) {
+                $path = (string)$path;
+                if ($path === 'data.cells' || str_starts_with($path, 'data.cells.') || $path === 'data.texts' || str_starts_with($path, 'data.texts.')) {
                     return true;
                 }
             }

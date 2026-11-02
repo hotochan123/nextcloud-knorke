@@ -8,13 +8,16 @@
  * Format `knorke:1` (also the import format for templates in M2):
  *   text/html   <meta charset="utf-8"><div data-knorke-clip="v1.<base64url(JSON)>"></div>
  *   text/plain  the texts of the items (notes, shapes, text items one per
- *               paragraph, frame titles as "# Title")
+ *               paragraph, frame titles as "# Title", job 195: a mind map
+ *               as an indented list)
  *   JSON        {knorke: 1, board, origin: [x, y], items: [{id, t, x, y, w,
  *               h, r, parent, data, style, group}]}, roots absolute, children
  *               relative to their payload parent (actions.copyPayload);
  *               group (M2, R20 Gruppieren) is the item's group id or null,
  *               only a key that pasteItems groups by (never sent); older
- *               versions ignore it, so `knorke: 1` stays
+ *               versions ignore it, so `knorke: 1` stays; (job 191) tags:
+ *               [{id, name, color}], the tags its notes carry (older
+ *               versions ignore it as well)
  * Never markup from item content in the HTML: base64 avoids escaping and
  * sanitizer surprises. The HTML is read with DOMParser (an inert document,
  * never the live DOM).
@@ -57,6 +60,9 @@
 import { ULID_RE } from '../model/ids.js'
 import { getPath, isWireValue, itemFromPut, KEY_RE, setPath } from '../model/paths.js'
 import { canBeChildOf, checkField, isKnownType, typeInfo } from '../model/registry.js'
+import { cleanTags } from '../model/tags.js'
+import { checkTable } from '../model/table.js'
+import { checkMindmap, outlineText } from '../model/mindmap.js'
 import { isSecureContext } from '../util/device.js'
 import { keys } from '../util/storage.js'
 
@@ -150,6 +156,14 @@ export function plainTextOf(payload) {
 			const title = it.data?.title
 			if (typeof title === 'string' && title.trim() !== '') {
 				out.push('# ' + title)
+			}
+			continue
+		}
+		// job 195: a mind map as an indented list (like "Copy as text")
+		if (it?.t === 'mindmap') {
+			const v = outlineText(it)
+			if (v.trim() !== '') {
+				out.push(v)
 			}
 			continue
 		}
@@ -323,6 +337,14 @@ function checkItem(it) {
 			return null
 		}
 	}
+	// job 173: a table's data has the form the server checks (Tables::check)
+	if (it.t === 'table' && !checkTable(out.data)) {
+		return null
+	}
+	// job 195: so has a mind map's (Mindmaps::check)
+	if (it.t === 'mindmap' && !checkMindmap(out.data)) {
+		return null
+	}
 	const parent = info.placement === 'none' || typeof it.parent !== 'string' || !ULID_RE.test(it.parent) ? null : it.parent
 	// the group key (M2, R20): only a ULID, anything else counts as no group
 	const group = typeof it.group === 'string' && ULID_RE.test(it.group) ? it.group : null
@@ -338,19 +360,27 @@ function checkItem(it) {
  * code points, typed fields by their registry rules (normalised),
  * required fields present. A parent that is not a fitting container of the
  * payload makes the item a root (its x/y are then taken as absolute). The
- * group key stays only as a ULID, otherwise null (M2, R20).
+ * group key stays only as a ULID, otherwise null (M2, R20). (Job 173) A
+ * table whose data breaks the form of model/table.js checkTable is skipped.
+ * (Job 181) Both limits are options: a board file (board/boardFile.js) has
+ * no item limit of its own and up to 16 MiB; the defaults are the
+ * clipboard's. (Job 191) tags: the payload's tag list cleaned (model/tags.js
+ * cleanTags: a ULID, a name, a #rrggbb colour, each id and name once); an
+ * invalid entry is dropped, never the payload.
  *
  * @param {unknown} raw parsed JSON
+ * @param {{maxItems?: number, maxBytes?: number}} [o] most items (default PASTE_MAX, Infinity: no limit) and most
+ *   bytes as UTF-8 JSON (default CLIP_MAX_BYTES)
  * @return {{ok: true, payload: object, skipped: number}|{ok: false, reason: string, count: number}}
  */
-export function validatePayload(raw) {
+export function validatePayload(raw, { maxItems = PASTE_MAX, maxBytes = CLIP_MAX_BYTES } = {}) {
 	if (!isMap(raw) || raw.tooLarge === true) {
 		return { ok: false, reason: raw?.tooLarge === true ? 'size' : 'format', count: 0 }
 	}
 	if (raw.knorke !== 1 || !Array.isArray(raw.items)) {
 		return { ok: false, reason: 'format', count: 0 }
 	}
-	if (raw.items.length > PASTE_MAX) {
+	if (raw.items.length > maxItems) {
 		return { ok: false, reason: 'max', count: raw.items.length }
 	}
 	let bytes
@@ -359,7 +389,7 @@ export function validatePayload(raw) {
 	} catch (e) {
 		return { ok: false, reason: 'format', count: raw.items.length }
 	}
-	if (bytes > CLIP_MAX_BYTES) {
+	if (bytes > maxBytes) {
 		return { ok: false, reason: 'size', count: raw.items.length }
 	}
 	const items = []
@@ -387,7 +417,7 @@ export function validatePayload(raw) {
 	const origin = Array.isArray(raw.origin) && raw.origin.length === 2 && raw.origin.every(isCoord) ? [raw.origin[0], raw.origin[1]] : null
 	return {
 		ok: true,
-		payload: { knorke: 1, board: Number.isInteger(raw.board) ? raw.board : null, origin, items },
+		payload: { knorke: 1, board: Number.isInteger(raw.board) ? raw.board : null, origin, items, tags: cleanTags(raw.tags) },
 		skipped,
 	}
 }

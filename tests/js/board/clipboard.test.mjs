@@ -5,6 +5,10 @@
 /*
  * Clipboard format, check, storage and DOM paths (SPEC-M1 §6.5.3). The
  * payload is foreign input: every rejection reason has a case.
+ *
+ * Factory job 174 (AK4): the canvas stays as it was – an Excel grid with
+ * its <table> HTML pasted through the paste catcher gives notes as before,
+ * and a paste in a note editor (or any editor but a cell's) is not taken.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -15,7 +19,11 @@ import {
 	storeClip, toBase64Url, validatePayload, writeClipboard,
 } from '../../../src/board/clipboard.js'
 import { TYPES } from '../../../src/model/registry.js'
-import { FakeModel, ID, connector, frame, memoryStorage, shape, sticky, textItem } from './fakes.mjs'
+import { FakeModel, FakeScene, ID, connector, frame, memoryStorage, shape, sticky, textItem } from './fakes.mjs'
+import { BoardSession } from '../../../src/board/BoardSession.js'
+import { TextEditor } from '../../../src/scene/TextEditor.js'
+import { dispatch, installDom } from '../scene/fakeDom.mjs'
+import { FakeClock } from '../sync/fakeClock.mjs'
 
 const A = ID(1)
 const B = ID(2)
@@ -111,7 +119,7 @@ test('validatePayload: item level – every rejection is skipped and counted, th
 	const ok = wire(sticky(A, { x: 1, y: 2 }))
 	const cases = {
 		'id no ULID': { ...ok, id: 'nope' },
-		'unknown type': { ...ok, id: ID(10), t: 'pen' },
+		'unknown type': { ...ok, id: ID(10), t: 'brush' },
 		'type toString': { ...ok, id: ID(11), t: 'toString' },
 		'x not finite': { ...ok, id: ID(12), x: 'NaN' },
 		'y beyond 1e7': { ...ok, id: ID(13), y: 1e7 + 1 },
@@ -357,4 +365,69 @@ test('job 026 (AK5): validatePayload keeps group only as a ULID, any other value
 	const p = copyPayload(m, [A, B, F])
 	assert.deepEqual(p.items.map((it) => [it.id, it.group]), [[F, null], [A, g], [B, g]], 'group per item (string or null)')
 	assert.deepEqual(validatePayload(p).payload.items.map((it) => it.group), [null, g, g], 'the own payload passes the check unchanged')
+})
+
+// ---- job 174 (AK4): the canvas and the other editors stay as they were ----------
+
+/** Excel's clipboard for a 2 × 2 range: tab-separated text/plain and an HTML table. */
+const EXCEL = {
+	'text/plain': 'Name\tAge\r\nAnn\t31\r\n',
+	'text/html': '<html><body><table><tr><td>Name</td><td>Age</td></tr><tr><td>Ann</td><td>31</td></tr></table></body></html>',
+}
+
+test('job 174 AK4: Excel text with its table HTML pasted through the paste catcher gives notes as before', async () => {
+	const clock = new FakeClock(10000)
+	const handlers = {}
+	const catcher = { value: '', focus() {}, addEventListener: (t, fn) => { handlers[t] = fn }, removeEventListener() {} }
+	const me = { pid: 'pidalice00000001', name: 'Alice Adler', role: 'owner', guest: false, mod: true, source: 'own' }
+	const tr = {
+		kind: 'user',
+		async snapshot() {
+			return { proto: 2, epoch: 'k3x9a0b2', now: 1760100000000, rev: 5, minRev: 0, board: { id: 7, title: 'Board', role: 'owner', metaRev: 0, meta: {} }, me, items: [] }
+		},
+		async sync(body) {
+			return body.ops ? { rev: 6, presence: {}, acks: { seq: body.seq, rev: 6, res: body.ops.map(() => 'ok') } } : { rev: body.since, presence: {} }
+		},
+	}
+	const s = new BoardSession({
+		container: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800 }) },
+		mode: 'user',
+		boardId: 7,
+		pasteCatcher: catcher,
+		ui: {},
+		deps: {
+			SceneModel: FakeModel, SceneManager: FakeScene, transport: tr, storage: memoryStorage(), now: clock.now, sleep: clock.sleep,
+			rand: () => 0.5, win: null, toast: () => {}, info: () => {}, parseHtml: () => ({ querySelector: () => null }),
+		},
+	})
+	await s.open()
+	await clock.advance(0)
+	let prevented = false
+	handlers.paste({ preventDefault: () => { prevented = true }, clipboardData: { getData: (t) => EXCEL[t] ?? '', files: [] } })
+	assert.equal(prevented, true)
+	const notes = [...s.model.ids()].map((id) => s.model.get(id)).filter((it) => it.t === 'sticky')
+	assert.deepEqual(notes.map((it) => it.data.text).sort(), ['31', 'Age', 'Ann', 'Name'], 'one note per cell, no table')
+	assert.equal([...s.model.ids()].some((id) => s.model.get(id).t === 'table'), false)
+	s.destroy()
+})
+
+test('job 174 AK4: a paste in a note editor (and the other kinds but cell) is not taken', () => {
+	const dom = installDom()
+	try {
+		const root = dom.doc.createElement('div')
+		dom.doc.body.appendChild(root)
+		const closed = []
+		const ed = new TextEditor(root, { onIntent: () => {}, onClose: (id) => closed.push(id) })
+		for (const [kind, path] of [['note', 'data.text'], ['shape', 'data.text'], ['text', 'data.text'], ['title', 'data.title'], ['label', 'data.label']]) {
+			ed.open({ id: ID(5), path, kind, value: 'x', before: 'x', maxLength: 6000 })
+			const e = dispatch(ed.element, 'paste', { clipboardData: { getData: (t) => EXCEL[t] ?? '' } })
+			assert.equal(e.defaultPrevented, false, kind + ': the browser pastes')
+			assert.equal(ed.element.value, 'x', kind)
+			assert.deepEqual(closed, [], kind + ': still open')
+			ed.discard()
+			closed.length = 0
+		}
+	} finally {
+		dom.restore()
+	}
 })

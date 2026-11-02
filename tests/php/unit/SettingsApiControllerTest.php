@@ -19,6 +19,7 @@ use OCP\IUserSession;
 use OCP\L10N\IFactory;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use OCA\Knorke\Service\AiService;
 
 /**
  * Route 27 `PUT /api/v1/settings/privacy` (M2 privacy notice, AK2): admins
@@ -31,6 +32,7 @@ final class SettingsApiControllerTest extends TestCase {
     private array $writes = [];
     /** @var list<string> isAdmin calls */
     private array $asked = [];
+    private ?AiService $ai = null;
 
     private function controller(?string $uid, array $body, array $extraHeaders = []): SettingsApiController {
         $route = ['_route' => 'knorke.settingsApi.update'];
@@ -63,6 +65,7 @@ final class SettingsApiControllerTest extends TestCase {
                 return $id === 'admin';
             }]),
             new PrivacyNotice($appConfig, $l10n),
+            $this->ai ?? $this->createMock(AiService::class),
         );
     }
 
@@ -111,5 +114,15 @@ final class SettingsApiControllerTest extends TestCase {
             $this->assertSame([$status, $data], [$r->getStatus(), $r->getData()], json_encode(array_keys($body)));
         }
         $this->assertSame([], $this->writes, 'no error writes anything');
+    }
+
+    public function testRoute58IsForAdminsOnly(): void {
+        // factory job 267 (AK10): the AI settings, as route 27
+        $this->ai = $this->createMock(AiService::class);
+        $this->ai->expects($this->once())->method('saveSettings')->with(['enabled' => false, 'dailyLimit' => 5])->willReturn(['enabled' => false, 'dailyLimit' => 5]);
+        $this->assertSame(403, $this->controller('bob', ['enabled' => false])->ai()->getStatus());
+        $r = $this->controller('admin', ['enabled' => false, 'dailyLimit' => 5])->ai();
+        $this->assertSame([200, ['ai' => ['enabled' => false, 'dailyLimit' => 5]]], [$r->getStatus(), $r->getData()]);
+        $this->assertSame(400, $this->controller('admin', ['limit' => 5])->ai()->getStatus(), 'unknown field');
     }
 }

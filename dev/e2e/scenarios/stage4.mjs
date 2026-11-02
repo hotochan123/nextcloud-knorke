@@ -71,8 +71,9 @@ export const E34_BUSY_MS = 3000
 export const E34_RETRY_MS = 700
 
 /** Entries of the menu on objects and on empty canvas (§6.6 ContextMenu.vue, §6.8). */
-export const MENU_ON_ITEMS = Object.freeze(['cut', 'copy', 'duplicate', 'delete', 'front', 'back', 'edit-text', 'connect', 'zoom-selection'])
-export const MENU_ON_EMPTY = Object.freeze(['paste-here', 'note-here', 'select-all', 'fit'])
+// job 230: the groups of the context bar's "…" (with the exports of the selection, delete last); the board menu keeps the wheel, the mass unlocks and the grid
+export const MENU_ON_ITEMS = Object.freeze(['cut', 'copy', 'duplicate', 'front', 'back', 'connect', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv', 'delete'])
+export const MENU_ON_EMPTY = Object.freeze(['wheel', 'unlock-frame', 'unlock-all', 'grid', 'grid-snap'])
 /** aria-label of the menu root (§6.11: id ≠ null → "Selection actions", null → "Board actions"; the German texts of l10n/de.json too). */
 export const MENU_LABELS = Object.freeze({
 	items: Object.freeze(['Selection actions', 'Aktionen für die Auswahl']),
@@ -531,8 +532,9 @@ export const E37 = {
 		t.check(MENU_LABELS.items.includes(m.label), '[C] (1) aria-label der Wurzel = „Selection actions“ (§6.11, id ≠ null)', m.label)
 		t.check(menuPlaced(m.place), '[C] (1) Menü als Geschwister von .knorke-canvas in .knorke-board, nicht im Szenen-Container (§6.6 Ort)', m.place)
 		t.check(near(parseAt(m.at), [pa.x - box.x, pa.y - box.y]), '[S] (1) data-knorke-menu-at = Klickpunkt − Leinwand-Ecke (±1)', { at: m.at, want: [pa.x - box.x, pa.y - box.y] })
-		const want1 = ['cut', 'copy', 'duplicate', 'delete', 'front', 'back', 'edit-text', 'zoom-selection']
-		t.check(m.items && want1.every((x) => m.items.includes(x)) && !m.items.includes('connect'), '[C] (1) Einträge cut, copy, duplicate, delete, front, back, edit-text, zoom-selection; connect fehlt', m.items)
+		const want1 = ['cut', 'copy', 'duplicate', 'front', 'back', 'delete']
+		t.check(m.items && want1.every((x) => m.items.includes(x)) && !m.items.includes('connect') && m.items.at(-1) === 'delete' && !m.items.includes('edit-text') && !m.items.includes('zoom-selection'),
+			'[C] (1) Einträge cut, copy, duplicate, front, back … delete zuletzt; connect, edit-text und zoom-selection fehlen (Job 230)', m.items)
 		t.check(m.items && m.focused === m.items[0], '[C] (1) Fokus auf dem ersten Eintrag', { focused: m.focused, first: m.items?.[0] })
 		await p.keyboard.press('ArrowDown')
 		const f2 = (await menuState(p)).focused
@@ -575,7 +577,7 @@ export const E37 = {
 		}, { timeout: 3000 })
 		t.check(undone, '[C] (2) Strg+Z entfernt beide Kopien (ein Schritt)', (await itemMap(p)).size)
 
-		t.step('(3) Rechtsklick auf leere Fläche, note-here, tippen, Esc')
+		t.step('(3) Rechtsklick auf leere Fläche (nur noch Raster und Co.), dann N und ein Klick dort, tippen, Esc')
 		const pt3 = await freePoint(p, [A, B, C], [[0.8, 0.75], [0.75, 0.7], [0.85, 0.6], [0.7, 0.8], [0.6, 0.8]])
 		t.must(pt3, '[D] Vorbedingung: freie Stelle der Leinwand gefunden')
 		const before3 = await itemMap(p)
@@ -585,11 +587,15 @@ export const E37 = {
 		t.check(JSON.stringify(await K.selection(p)) === '[]', '[S] (3) Rechtsklick auf leere Fläche leert die Auswahl', await K.selection(p))
 		t.check(m.count === 1 && m.target === '', '[C] (3) Menü mit Ziel "" (leere Fläche)', m)
 		t.check(MENU_LABELS.empty.includes(m.label), '[C] (3) aria-label der Wurzel = „Board actions“ (§6.11, id null)', m.label)
-		t.check(m.items && ['note-here', 'select-all', 'fit'].every((x) => m.items.includes(x)), '[C] (3) note-here, select-all, fit da', m.items)
-		t.check(m.items && !m.items.includes('paste-here'), '[C] (3) paste-here fehlt (http-Dev-Stack ohne Secure Context, §6.5.3 R19)', m.items)
+		t.check(m.items && m.items.length > 0 && m.items.every((x) => MENU_ON_EMPTY.includes(x)), '[C] (3) nur Mausrad, Massen-Entsperren und Raster (Job 230)', m.items)
+		t.check(m.items && !['paste-here', 'note-here', 'select-all', 'fit'].some((x) => m.items.includes(x)), '[C] (3) paste-here, note-here, select-all und fit fehlen', m.items)
 		const at3 = parseAt(m.at)
 		const W = at3 ? await containerToWorld(p, at3) : null
-		await menuItem(p, 'note-here')
+		t.check(await escMenu(p), '[C] (3) Esc schließt das Menü')
+		// job 230: "Add note here" left the menu; the note tool places a note at the point
+		await p.locator(CANVAS).first().focus()
+		await p.keyboard.press('n')
+		await p.mouse.click(pt3.x, pt3.y)
 		const ed = p.locator('textarea[data-knorke-editor]').first()
 		const edOpen = await ed.waitFor({ state: 'visible', timeout: 4000 }).then(() => true, () => false)
 		t.check(edOpen, '[C] (3) note-here: Editor offen')

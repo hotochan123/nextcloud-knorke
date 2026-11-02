@@ -22,7 +22,13 @@ namespace OCA\Knorke\Exception;
  * Retry-After header from it) and `proto` (409 protocol). They come after
  * error and message and never replace them. The privacy notice of route 27
  * (M2) uses `at` as "default" or a language code, and `max` with
- * text_too_long and too_many_languages.
+ * text_too_long and too_many_languages. The template suggestions (routes
+ * 28–34, factory job 182) answer 409 suggestion_limit with `max`. The
+ * comment routes (35–43, factory job 189) add comment_empty,
+ * comment_too_long, thread_resolved and comments_full; the tag routes (44
+ * and 45, factory job 191) tag_limit, tag_exists and tag_gone; the shape
+ * library routes (46–54, factory job 203) library_limit with `max`, and
+ * suggestion_limit with a message of their own.
  *
  * The machine code lives in $error, not $code: \Exception already declares an
  * untyped $code that a readonly string property may not redeclare.
@@ -75,6 +81,19 @@ final class HttpError extends \RuntimeException {
         'invalid_url' => 'The address must be an absolute http or https URL.',
         'unknown_language' => 'This language is not available on this Nextcloud.',
         'too_many_languages' => 'Too many languages.',
+        // template suggestions (routes 28–34, factory job 182)
+        'suggestion_limit' => 'You have reached the most open template suggestions an account may have.',
+        // comments (routes 35–43, factory job 189)
+        'comment_empty' => 'The comment is empty.',
+        'comment_too_long' => 'The comment is too long.',
+        'thread_resolved' => 'This thread is resolved. Reopen it to reply.',
+        'comments_full' => 'This board has too many comments.',
+        // tags (routes 44 and 45, factory job 191)
+        'tag_limit' => 'This board has too many tags.',
+        'tag_exists' => 'A tag with this name already exists.',
+        'tag_gone' => 'This tag no longer exists.',
+        // own shape libraries (routes 46–54, factory job 203)
+        'library_limit' => 'You have reached the most shape libraries an account may have.',
     ];
 
     /** Keys of the error form itself; $extra never overrides them. */

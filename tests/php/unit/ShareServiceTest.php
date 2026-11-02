@@ -250,7 +250,7 @@ final class ShareServiceTest extends TestCase {
         $this->h->boards->log = [];
         $this->h->tx = [];
         $this->save([self::e('user', 'bob', 'moderate')]);
-        $this->assertSame(['lockBoard --', 'lockBoard acl-'], $this->h->boards->log, 'lock first; acl_gen + 1 after the diff');
+        $this->assertSame(['lockBoard --', 'lockBoard acl-', 'validMembers'], $this->h->boards->log, 'lock first; acl_gen + 1 after the diff; the answer (list()) reads the link members afterwards');
         $this->assertSame(['begin', 'commit'], $this->h->tx);
         $this->assertSame(4, $this->h->boards->boards[$this->b]['acl_gen']);
         $this->assertSame(4, $this->h->cache->getGens($this->b)['acl'], 'setGens after COMMIT');
@@ -260,7 +260,7 @@ final class ShareServiceTest extends TestCase {
         $this->h->boards->log = [];
         $this->h->mem->log = [];
         $this->save([self::e('user', 'bob', 'moderate')]);
-        $this->assertSame(['lockBoard --'], $this->h->boards->log);
+        $this->assertSame(['lockBoard --', 'validMembers'], $this->h->boards->log);
         $this->assertSame(4, $this->h->boards->boards[$this->b]['acl_gen']);
         $this->assertNotContains('set a:' . $this->b, $this->h->mem->log);
         // Removing everything: one more bump.
@@ -548,5 +548,57 @@ final class ShareServiceTest extends TestCase {
         $this->assertSame($sorted, $first, 'ascending ids');
         $this->h->shares->bumpBoards(array_slice($ids, 0, 50));
         $this->assertCount(50, $this->h->boards->log, '50 boards: inline');
+    }
+
+    // ── viaLink (factory job 248) ──────────────────────────────────────────
+
+    /** AK1: account rows of valid link members carry viaLink (last key); never stale links, M0 rows, groups or teams. */
+    public function testListMarksAccountsThatAreAlsoInThroughALink(): void {
+        $now = $this->h->nowMs();
+        $edit = $this->h->boards->insertLink($this->b, 'Ab3dEf6hIj9kLm2nOp5qRs8t', 'edit', 'alice', 1);
+        $gone = $this->h->boards->insertLink($this->b, 'Zb3dEf6hIj9kLm2nOp5qRs8t', 'vote', 'alice', 1);
+        $this->h->boards->links[$gone]['revoked_at'] = 2;
+        $old = $this->h->boards->insertLink($this->b, 'Yb3dEf6hIj9kLm2nOp5qRs8t', 'edit', 'alice', 1, null, $now - 1);
+        $this->h->knorkeFor['carol'] = false;
+        $this->h->boards->addMember($this->b, 'bob', 'edit', $edit, 1);
+        $this->h->boards->addMember($this->b, 'carol', 'edit', $edit, 1);
+        $this->h->boards->addMember($this->b, 'dave', 'vote', $gone, 1);
+        $this->h->boards->addMember($this->b, 'erin', 'edit', $old, 1);
+        $this->h->boards->addMember($this->b, 'frank', 'edit', null, 1);
+        $this->h->groups['staff'] = ['bob'];
+        foreach (['bob', 'carol', 'dave', 'erin', 'frank'] as $uid) {
+            $this->h->shareRows->add($this->b, 'user', $uid, 'moderate');
+        }
+        $this->h->shareRows->add($this->b, 'group', 'staff', 'edit');
+        $rows = [];
+        foreach ($this->h->shares->list('alice', $this->b)['shares'] as $r) {
+            $rows[$r['kind'] . ':' . $r['id']] = $r;
+        }
+        $this->assertSame(['kind' => 'user', 'id' => 'bob', 'name' => 'Bob Display', 'role' => 'moderate', 'available' => true, 'viaLink' => true], $rows['user:bob']);
+        $this->assertSame(['appAccess', 'viaLink'], array_slice(array_keys($rows['user:carol']), -2), 'after appAccess');
+        $this->assertTrue($rows['user:carol']['viaLink']);
+        foreach (['user:dave' => 'revoked link', 'user:erin' => 'expired link', 'user:frank' => 'M0 row without link', 'group:staff' => 'group'] as $k => $why) {
+            $this->assertArrayNotHasKey('viaLink', $rows[$k], $why);
+        }
+        $this->assertSame(1, count(array_filter($this->h->boards->log, static fn (string $l): bool => $l === 'validMembers')), 'one query per call');
+    }
+
+    /** AK1: while links are not allowed for the owner, no row carries viaLink. */
+    public function testNoViaLinkWhileLinksAreNotAllowed(): void {
+        $h = new AccessHarness();
+        $b = $h->boards->addBoard('alice');
+        $h->linksAllowed = ['alice' => false];
+        $link = $h->boards->insertLink($b, 'Ab3dEf6hIj9kLm2nOp5qRs8t', 'edit', 'alice', 1);
+        $h->boards->addMember($b, 'bob', 'edit', $link, 1);
+        $h->shareRows->add($b, 'user', 'bob', 'moderate');
+        $this->assertArrayNotHasKey('viaLink', $h->shares->list('alice', $b)['shares'][0]);
+    }
+
+    /** AK2: the answer of PUT carries viaLink the same way. */
+    public function testSaveAnswerMarksLinkMembers(): void {
+        $link = $this->h->boards->insertLink($this->b, 'Ab3dEf6hIj9kLm2nOp5qRs8t', 'edit', 'alice', 1);
+        $this->h->boards->addMember($this->b, 'bob', 'edit', $link, 1);
+        $out = $this->save([self::e('user', 'bob'), self::e('user', 'carol')]);
+        $this->assertSame([true, null], [$out['shares'][0]['viaLink'] ?? null, $out['shares'][1]['viaLink'] ?? null]);
     }
 }

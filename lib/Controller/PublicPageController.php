@@ -9,10 +9,13 @@ namespace OCA\Knorke\Controller;
 
 use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\Db\BoardStore;
+use OCA\Knorke\Db\VoteStore;
 use OCA\Knorke\Http\GuestPageResponse;
 use OCA\Knorke\Service\Limits;
+use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\LinkThrottle;
 use OCA\Knorke\Service\PrivacyNotice;
+use OCA\Knorke\Service\VoteService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\AppFramework\Http\Attribute\PublicPage;
@@ -40,10 +43,17 @@ use OCP\IUserSession;
  *                       {role: edit|vote, password: bool}
  *      revoked link   → same page, linkState 'revoked' — no throttle, no miss
  *      expired link   → same page, linkState 'expired' — no throttle, no miss
+ *      links not allowed for the owner (LinkPolicy, also a disabled owner,
+ *                       job 245) → same page, linkState 'disabled'
  *      never issued   → LinkThrottle::missBlocked(ip): blocked → 429,
  *                       else the page with linkState 'invalid'
  *    linkInfo is null except for 'ok'; it tells only holders of the token
  *    that a password is needed (SPEC-M1 §7.5).
+ *    Job 184: a link without a password also gets accountsOnlyVote: true
+ *    (after password) while an open, unexpired vote session of the board
+ *    has config.accountsOnly, so the name dialog can say that only accounts
+ *    vote and offer the sign-in. Otherwise linkInfo stays byte for byte as
+ *    before; a link with a password tells nothing about the board.
  *
  * Render mode RENDER_AS_PUBLIC; app config public_template = base switches to
  * RENDER_AS_BASE (measurement E12 only). The page itself writes nothing.
@@ -80,6 +90,8 @@ final class PublicPageController extends Controller {
         private Limits $limits,
         private ITimeFactory $time,
         private PrivacyNotice $privacy,
+        private VoteStore $votes,
+        private ?LinkPolicy $policy = null,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -105,8 +117,26 @@ final class PublicPageController extends Controller {
         if ($link['expires_at'] !== null && $link['expires_at'] <= $nowMs) {
             return $this->page(['linkToken' => $token, 'linkState' => 'expired', 'boardId' => null]);
         }
-        return $this->page(['linkToken' => $token, 'linkState' => 'ok', 'boardId' => $link['board']['id'],
-            'linkInfo' => ['role' => $link['role'], 'password' => $link['password_hash'] !== null]]);
+        // Nextcloud does not let the owner share via link, or the owner is a
+        // disabled account (job 245): the link is not available, nothing about the board.
+        if ($this->policy !== null && !$this->policy->allows((string)$link['board']['owner'])) {
+            return $this->page(['linkToken' => $token, 'linkState' => 'disabled', 'boardId' => null]);
+        }
+        $info = ['role' => $link['role'], 'password' => $link['password_hash'] !== null];
+        if ($link['password_hash'] === null && $this->accountsOnlyVote((int)$link['board']['id'], $nowMs)) {
+            $info['accountsOnlyVote'] = true;
+        }
+        return $this->page(['linkToken' => $token, 'linkState' => 'ok', 'boardId' => $link['board']['id'], 'linkInfo' => $info]);
+    }
+
+    /**
+     * (Job 184) The board has an open session for accounts only that has not
+     * ended yet. Read only: an expired session that is still open is not
+     * closed here (the page writes nothing), it just does not count.
+     */
+    private function accountsOnlyVote(int $board, int $nowMs): bool {
+        $s = $this->votes->open($board);
+        return $s !== null && $s['config']['accountsOnly'] === true && !VoteService::expired($s, $nowMs);
     }
 
     /** @param array<string, mixed> $values */

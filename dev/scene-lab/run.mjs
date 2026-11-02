@@ -35,8 +35,11 @@
  *   --browser-env KEY=VALUE     WebKit only, repeatable: extra environment of the browser for
  *                               experiments with WPE/Mesa variables (measure.json records it and
  *                               how many browser processes saw it)
- *   --set m1|noconn             scene set (scene-gen.js SCENE_SETS; default m1): noconn is the same
- *                               board without its 800 connectors, the A/B of the camera step
+ *   --set m1|noconn|m2notes|m2diagrams|mdnotes  scene set (sets.js MEASURE_SETS; default m1): noconn is the same
+ *                               board without its 800 connectors, the A/B of the camera step; m2notes
+ *                               and m2diagrams (job 214) the boards with what came after M1. The
+ *                               report judges every run against the M1 thresholds (thresholds.js)
+ *                               and names page errors, placeholders and the host load (/proc/loadavg)
  *   --shadows on|off            note shadows (default on; off loads the lab with ?shadows=0, the
  *                               A/B of the shadow cost, SPEC-M1 §9.5 WP-S4); off adds -noshadow
  *                               to the report names (K8), the report header names it
@@ -59,6 +62,7 @@ import { chromiumKind, memoryReportLines, memorySnapshot, parseDrmFdinfo, parseP
 import { engineDelta, gpuReportLines, gpuVerdict, mesaDrivers, parseDrmEngines, webkitKind } from './gpu.js'
 import { evaluateBounds, parseStatusIds } from './bounds.js'
 import { LABEL_RE, reportFiles } from './names.js'
+import { evaluate, verdictLines } from './thresholds.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DIST = join(HERE, 'dist')
@@ -81,7 +85,26 @@ const WEBKIT_SKIA = String(opt('webkit-skia', 'cpu'))
 const viewportArg = /^(\d{3,4})x(\d{3,4})$/.exec(String(opt('viewport', '1920x1080')))
 const VIEWPORT = viewportArg ? { width: Number(viewportArg[1]), height: Number(viewportArg[2]) } : null
 const DPR = Number(opt('dpr', 1))
-// --set m1|noconn (measurement mode only): the lab page loads ?set=<set>
+// --set (measurement mode only): the lab page loads ?set=<set>; the list of sets.js MEASURE_SETS
+// (this container sees only dev/scene-lab, sets.js imports the app's model)
+const SETS = ['m1', 'noconn', 'm2notes', 'm2diagrams', 'mdnotes']
+/** The report's words for a set other than m1. */
+const SET_TEXT = {
+	noconn: 'dasselbe Board ohne seine Verbinder, A/B zum M1-Satz',
+	m2notes: 'das M1-Board mit Tags, Sperren, Gruppen, Reaktionen und Raster (Job 214)',
+	m2diagrams: 'Diagramm-Board mit BPMN-Pools, Flussdiagrammen, Mindmaps, Tabellen, Notizblöcken und eigenen Formen (Job 214)',
+	mdnotes: 'das M1-Board, jede zweite Notiz mit Markdown (fett, kursiv, Liste, Link, Code, durchgestrichen; Job 279)',
+}
+
+/** @return {number[]|null} the host's load averages over 1, 5 and 15 minutes (a container sees the host's) */
+function hostLoad() {
+	try {
+		const v = readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/).slice(0, 3).map(Number)
+		return v.length === 3 && v.every(Number.isFinite) ? v : null
+	} catch {
+		return null
+	}
+}
 const SET = String(opt('set', 'm1'))
 // --label <x> (run.sh KNORKE_LAB_LABEL): appended to the report names
 const LABEL = opt('label', null)
@@ -103,7 +126,7 @@ function invalidOption() {
 		if (IS_CHROMIUM || !/^[A-Z][A-Z0-9_]{0,63}$/.test(key)) return `--browser-env ${key}`
 	}
 	if (!VIEWPORT) return `--viewport ${opt('viewport')}`
-	if (!['m1', 'noconn'].includes(SET)) return `--set ${SET}`
+	if (!SETS.includes(SET)) return `--set ${SET}`
 	if (!['on', 'off'].includes(SHADOWS)) return `--shadows ${SHADOWS}`
 	if (LABEL !== null && (typeof LABEL !== 'string' || !LABEL_RE.test(LABEL))) return `--label ${LABEL}`
 	if (!(DPR >= 1 && DPR <= 4)) return `--dpr ${opt('dpr')}`
@@ -1137,7 +1160,7 @@ async function gates() {
 			const b = l.box
 			const t = l.layout
 			if (!b || !t) return { text: l.text, ok: false, why: 'no box or no text node' }
-			const W = b.w - 2 * d.pad
+			const W = b.w - 2 * d.padX
 			const texts = t.rows.map((r) => r.text)
 			const why = [
 				l.level === 0 ? null : `level ${l.level}`,
@@ -1378,7 +1401,7 @@ async function gates() {
 		return [ok, { seq, move: moves[0]?.[1], atSettle }]
 	})
 
-	await step('gate', 'G14 LOD 2: (1) one static child at 0.08 and in the board pan at 0.05; (2) camera step p95 ≤ 2 ms in the zoom series around 0.08 (< LOD2_ENTER) and the board pan; (3) first render of the whole board at 0.05 ≤ 250 ms; (4) 0.1 ± 0.004 without a switch; (5) drag at 0.08: 0 static draws, one static child, the note not painted; fps reported', async () => {
+	await step('gate', 'G14 LOD 2: (1) one static child at 0.08 and in the board pan at 0.05; (2) camera step p95 ≤ 2 ms in the zoom series around 0.08 (< LOD2_ENTER) and the board pan; (3) first render of the whole board at 0.05 ≤ 250 ms; (4) 0.1 ± 0.004 without a switch; (5) drag at 0.08: 0 static draws, one static child, the note and its connectors not painted (back after the release); fps reported', async () => {
 		const d = await lab(() => window.__lab.lod2Gate())
 		const g = {
 			one: d.at008.lod === 2 && d.at008.staticChildren === 1 && d.boardPan.staticChildren.min === 1 && d.boardPan.staticChildren.max === 1 &&
@@ -1390,7 +1413,8 @@ async function gates() {
 			drag: d.drag.hitAtPress && d.drag.staticDrawsDuring === 0 && d.drag.paintsDuring === 0 && d.drag.staticChildren.min === 1 &&
 				d.drag.staticChildren.max === 1 && d.drag.lod === 2 && !d.drag.paintedHasNote && d.drag.paintedConnectors === 0 &&
 				d.drag.connectorsActive && d.drag.connectorsInLayers === 0 && d.drag.activeChildren.max === 1 &&
-				JSON.stringify(d.drag.intent?.ids) === JSON.stringify([d.drag.hub]) && d.drag.after.paintedHasNote && d.drag.after.activeChildren === 0,
+				JSON.stringify(d.drag.intent?.ids) === JSON.stringify([d.drag.hub]) && d.drag.after.paintedHasNote && d.drag.after.activeChildren === 0 &&
+				d.drag.after.connectorsBack,
 		}
 		const report = {
 			zoom: { fps: d.zoom.frames.fps, missed: d.zoom.frames.pctMissed, cameraP50: d.zoom.camera.p50, cameraP95: d.zoom.camera.p95, staticDrawP50: d.zoom.draw.static.p50 },
@@ -1399,12 +1423,18 @@ async function gates() {
 		return [Object.values(g).every(Boolean), { gates: g, ...report, at008: d.at008, firstRender: d.firstRender, hysteresis: d.hysteresis, drag: d.drag }]
 	})
 
-	await step('check', 'LOD 2 painting: one fillRect per painted id, frame border + 12-px title (≥ 40 px), no connector, the non-connector ids in view in compareOrder; a remote drag preview leaves the painting (one static draw) and comes back', async () => {
+	await step('check', 'LOD 2 painting: one fillRect per painted box, one fill() per outlined shape (job 202), one stroke() per line colour and width, the connectors in view painted, frame border + 12-px title (≥ 40 px), the ids in view in compareOrder; a remote drag preview leaves the painting (one static draw) and comes back; a note dragged at 0.08 across an elbow connector not attached to it re-routes it live without any painting while dragging, one painting with it after the release', async () => {
 		const d = await lab(() => window.__lab.coarsePaintCheck(0.05))
+		const a = await lab(() => window.__lab.coarseDragAcross(0.08))
+		d.across = a
 		const ok = d.lod === 2 && d.staticChildren === 1 && d.staticDraws === 1 && d.painted === d.expected && d.sameOrder &&
-			d.connectorsPainted === 0 && d.fillRect === d.painted && d.strokeRect === d.frames && d.frames >= 20 &&
+			d.connectorsInView > 0 && d.connectorsPainted === d.connectorsInView && d.outlined > 0 &&
+			d.fillRect === d.painted - d.connectorsInView - d.outlined && d.fill === d.filledOutlines && d.stroke === d.lineKeys &&
+			d.strokeRect === d.frames && d.frames >= 20 &&
 			d.fillText === d.titled && d.titled > 0 && !d.preview.inPainting && d.preview.activeChildren === 1 &&
-			d.preview.staticDraws === 1 && d.preview.back
+			d.preview.staticDraws === 1 && d.preview.back &&
+			a.lod === 2 && a.reroutes >= 1 && a.staticDrawsDuring === 0 && a.paintsDuring === 0 && a.connectorPaintedDuring &&
+			a.paintsAfter >= 1 && a.connectorPaintedAfter && a.routeAfterRelease
 		return [ok, d]
 	})
 
@@ -1853,6 +1883,8 @@ async function measure() {
 	const cdp = IS_CHROMIUM ? await context.newCDPSession(page) : null
 	const memory = { browser: BROWSER, gpu: GPU, gpuInfo: await gpuInfo(), idleMs: MEMORY_IDLE_MS, settled: await memoryNow(cdp) }
 	const procsBefore = ownProcesses()
+	// job 214: the host's load around the run (a shared host: a busy one makes every value worse)
+	const loadavg = { start: hostLoad(), end: null }
 	const d = await lab(() => window.__lab.measure())
 	const procsAfter = ownProcesses()
 	memory.after = await memoryNow(cdp)
@@ -1871,11 +1903,15 @@ async function measure() {
 		}
 	}
 	await cdp?.detach()
+	loadavg.end = hostLoad()
 	const webgl = await webglInfo()
 	const gpuEv = gpuEvidence(procsBefore, procsAfter, webgl, ownProcesses())
 	log(`GPU evidence: ${gpuEv.verdict.verdict} – ${gpuEv.verdict.reasons.join('; ')}`)
 	const meta = await lab(() => ({ meta: window.__lab.meta, timings: window.__lab.timings }))
-	writeReport('json', JSON.stringify({ browser: browser.version(), engine: BROWSER, viewport: VIEWPORT, dpr: DPR, gpu: GPU, set: SET, shadows: SHADOWS, label: LABEL, files: FILES, gpuEvidence: gpuEv, bounds, ...d, lod2First, ...meta, memory }, null, 1) + '\n')
+	// job 214: page errors of the whole run and the verdicts of the M1 thresholds (thresholds.js)
+	const errorsSeen = [...pageErrors, ...await lab(() => window.__lab.errors.slice())]
+	const thresholds = evaluate({ ...d, lod2First })
+	writeReport('json', JSON.stringify({ browser: browser.version(), engine: BROWSER, viewport: VIEWPORT, dpr: DPR, gpu: GPU, set: SET, shadows: SHADOWS, label: LABEL, files: FILES, gpuEvidence: gpuEv, bounds, ...d, lod2First, ...meta, memory, loadavg, pageErrors: errorsSeen, thresholds }, null, 1) + '\n')
 	// frame columns as in SPEC-M1 §8.8 point 5 (spike thresholds, metrics.js frameStats); the camera
 	// step only where the scenario moves the camera
 	const row = (name, r, cam = true) => {
@@ -1928,9 +1964,19 @@ async function measure() {
 		`${BROWSER_LABEL}, ${VIEWPORT.width}×${VIEWPORT.height}, DPR ${DPR}, ${rendering}; ` +
 			`Szene ${meta.meta.counts.sticky} Notizen + ${meta.meta.counts.shape ?? 0} Formen + ${meta.meta.counts.text ?? 0} Text-Objekte + ` +
 			`${meta.meta.counts.connector ?? 0} Verbinder + ${meta.meta.counts.frame} Frames + ${meta.meta.counts.unknown} Platzhalter` +
-			(SET === 'm1' ? '.' : ` (Satz ${SET}: dasselbe Board ohne seine Verbinder, A/B zum M1-Satz).`) +
+			(meta.meta.counts.mindmap ? ` + ${meta.meta.counts.mindmap} Mindmaps + ${meta.meta.counts.table} Tabellen + ${meta.meta.counts.pad} Notizblöcke` : '') +
+			` (${meta.meta.counts.total} Objekte)` + (SET_TEXT[SET] ? ` – Satz ${SET}: ${SET_TEXT[SET]}` : '') + '.' +
 			(SHADOWS === 'on' ? '' : ' **Notiz-Schatten aus** (`--shadows off`, A/B der Schattenkosten).'),
 		...(IS_CHROMIUM ? [] : ['', 'WebKit im Container (WPE, headless) ist eine Annäherung an Safari, **keine** iPad-Werte (SPEC-M1 §16).']),
+		'',
+		'## Schwellen (M1, SPEC-M1 §8.5 G12/G14 und §8.8 Punkt 6)',
+		'',
+		...verdictLines(thresholds),
+		'',
+		`- Seitenfehler: ${errorsSeen.length}${errorsSeen.length ? ` (${errorsSeen.slice(0, 5).join(' · ')})` : ''}; ` +
+			`Platzhalter (unbekannte Typen): ${meta.meta.placeholders ?? '–'}; ` +
+			`Lastmittel des Hosts (1/5/15 min) am Anfang ${loadavg.start?.join(' / ') ?? '–'}, am Ende ${loadavg.end?.join(' / ') ?? '–'}` +
+			(meta.meta.extras ? `; M2-Zusätze ${JSON.stringify(meta.meta.extras)}, Raster ${meta.meta.grid ? 'an' : 'aus'}` : '') + '.',
 		'',
 		`- Laden des Modells: ${Math.round(d.loadMs * 10) / 10} ms`,
 		`- erstes Rendern (mount bis erster Draw der statischen Ebene): ${d.firstRenderMs === null ? '–' : Math.round(d.firstRenderMs * 10) / 10 + ' ms'}`,

@@ -13,7 +13,8 @@
  *   its bindings (functions, refs) to the test, plus its template as an
  *   SSR render function, so @vue/server-renderer can render it to HTML;
  * - every @nextcloud/vue component resolves to a stub that renders
- *   <div data-stub="<Name>" …attributes> with its default slot. Date
+ *   <div data-stub="<Name>" …attributes> with its icon slot (NcButton) and
+ *   its default slot. Date
  *   attributes are written as their local calendar day (YYYY-MM-DD), so a
  *   date picker's min, max and model can be read from the HTML; listeners
  *   and object values are left out.
@@ -49,7 +50,8 @@ export default {
 			if (v instanceof Date) attrs[k] = isNaN(v) ? '' : day(v)
 			else if (v === null || v === undefined || typeof v !== 'object') attrs[k] = v
 		}
-		return h('div', attrs, this.$slots.default ? this.$slots.default() : undefined)
+		const kids = [...(this.$slots.icon ? this.$slots.icon() : []), ...(this.$slots.default ? this.$slots.default() : [])]
+		return h('div', attrs, kids.length > 0 ? kids : undefined)
 	},
 }
 `

@@ -1,0 +1,233 @@
+/*
+ * Knorke · Tokens nach der Re-Design-Runde (Entwurf, Stand 29.10.2026)
+ *
+ * Teil 1  Leisten (HTML, Nextcloud-Vue): Abstände, Radien, Ebenen, Schatten, Leistenhöhen.
+ *         Alles hängt an Nextcloud-Variablen; der Wert nach dem Komma ist nur Ersatz.
+ *         Akzente laufen ausschließlich über --color-primary-element (Standard #00679e).
+ * Teil 2  Leinwand (Konva): eine Palette, Schrift, Linien, Ecken, Schatten, Auswahl.
+ *         Konva braucht sRGB-Hex; die Werte sind aus OKLCH abgeleitet (Kommentar je Ton).
+ * Teil 3  Dunkelmodus: Variante (a) dunkle Leinwand, Variante (b) helle Leinwand + dunkelgraue Leisten.
+ *
+ * Kontrastwerte sind berechnet (WCAG 2.x relative Leuchtdichte), nicht geschätzt.
+ */
+
+/* ───────────────────────── Teil 1 · Leisten ───────────────────────── */
+/* Auf .knorke (App-Wurzel) statt nur :root: Nextcloud setzt Thema-Variablen auch unterhalb von :root
+   (z. B. body[data-themes*=dark]); var() wird dort aufgelöst, wo die Eigenschaft steht. */
+:root, .knorke {
+	/* Akzent: nie fest verdrahten. Nextcloud liefert die Werte je Admin-Einstellung. */
+	--k-accent: var(--color-primary-element, #00679e);
+	--k-accent-text: var(--color-primary-element-text, #ffffff);
+	--k-accent-hover: var(--color-primary-element-hover, color-mix(in oklch, var(--k-accent) 88%, black));
+	--k-accent-light: var(--color-primary-element-light, color-mix(in oklch, var(--k-accent) 14%, white));
+	--k-accent-light-text: var(--color-primary-element-light-text, color-mix(in oklch, var(--k-accent) 75%, black));
+
+	/* Flächen und Text der Leisten (Nextcloud-Rollen) */
+	--k-surface: var(--color-main-background, #ffffff);
+	--k-text: var(--color-main-text, #222222);
+	--k-text-muted: var(--color-text-maxcontrast, #6b6b6b);          /* 5,33:1 auf Weiß */
+	--k-hover: var(--color-background-hover, #f5f5f5);
+	--k-border: var(--color-border, #ededed);
+	--k-border-strong: var(--color-border-maxcontrast, #7f7f7f);
+
+	/* Status: immer helle Fläche + dunkler Text (Nextcloud-Paare), nie weißer Text */
+	--k-info-bg: var(--k-accent-light);        --k-info-text: var(--k-accent-light-text);
+	--k-warning-bg: var(--color-warning, #ffeec5); --k-warning-text: var(--color-warning-text, #664700); /* 7,42:1 */
+	--k-success-bg: var(--color-success, #d8f3da); --k-success-text: var(--color-success-text, #005416); /* 7,79:1 */
+	--k-error-bg: var(--color-error, #ffe7e7);     --k-error-text: var(--color-error-text, #8a0000);     /* 8,57:1 */
+
+	/* Abstände: 4er-Raster */
+	--k-space-1: 4px;
+	--k-space-2: 8px;
+	--k-space-3: 12px;
+	--k-space-4: 16px;
+	--k-space-5: 24px;
+	--k-space-6: 32px;
+	--k-inset: 8px;            /* Abstand aller Inseln zum Rand der Leinwand */
+	--k-gap: 4px;              /* Abstand zwischen Knöpfen in einer Leiste */
+	--k-group-gap: 8px;        /* Abstand zwischen Gruppen (statt Trennlinie) */
+
+	/* Radien: eine Familie für alle Leisten (V15) */
+	--k-radius-bar: 12px;      /* Kopfzeilen-Inseln, Werkzeug-, Kontext-, Zoom-, Sitzungsleiste */
+	--k-radius-panel: 12px;    /* Panels, Menüs, Popover */
+	--k-radius-dialog: 16px;
+	--k-radius-control: var(--border-radius-element, 8px); /* Knöpfe innen */
+	--k-radius-pill: 999px;    /* Chips, Hinweise */
+
+	/* Ebenen (V15): Leiste < Panel/Menü < Dialog. Kein Rand, nur Schatten. */
+	--k-z-canvas: 0;
+	--k-z-bar: 10;
+	--k-z-contextbar: 20;
+	--k-z-panel: 30;
+	--k-z-menu: 40;
+	--k-z-notice: 45;
+	--k-z-dialog: 50;
+	--k-shadow-color: var(--color-box-shadow-rgb, 0, 0, 0);
+	--k-shadow-bar: 0 1px 2px rgba(var(--k-shadow-color), .08), 0 2px 6px rgba(var(--k-shadow-color), .06);
+	--k-shadow-panel: 0 2px 4px rgba(var(--k-shadow-color), .08), 0 8px 24px rgba(var(--k-shadow-color), .12);
+	--k-shadow-dialog: 0 8px 16px rgba(var(--k-shadow-color), .12), 0 24px 56px rgba(var(--k-shadow-color), .22);
+	--k-backdrop: rgba(0, 0, 0, .32);
+
+	/* Leistenhöhen und Fingerziele */
+	--k-btn: 36px;             /* Maus */
+	--k-btn-touch: 44px;       /* Stift/Finger (Tablet, Telefon) – WCAG 2.5.5 */
+	--k-bar-pad: 4px;
+	--k-bar-h: calc(var(--k-btn) + 2 * var(--k-bar-pad));          /* 44px */
+	--k-bar-h-touch: calc(var(--k-btn-touch) + 2 * var(--k-bar-pad)); /* 52px */
+	--k-icon: 20px;            /* Material Design Icons, Umriss-Variante (V5) */
+	--k-panel-w: 296px;        /* Formen-, Kommentar-, Abstimmungs-Panel */
+	--k-menu-min-w: 240px;     /* NcActions-Menüs; deutsche Texte ~30 % länger */
+
+	/* Fokus: Hauptfarbe des Textes, damit er auf hell und dunkel sichtbar bleibt */
+	--k-focus-ring: 0 0 0 2px var(--k-surface), 0 0 0 4px var(--k-text);
+
+	/* Schrift: eine Familie für Leisten und Leinwand (V7) */
+	--k-font: var(--font-face, system-ui, -apple-system, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, Ubuntu, "Noto Sans", "Liberation Sans", Arial, sans-serif);
+	--k-ui-size: 15px;         /* Nextcloud --default-font-size */
+	--k-ui-size-small: 13px;
+
+	--k-motion: 120ms cubic-bezier(.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:root { --k-motion: 0ms linear; }
+}
+
+/* ───────────────────────── Teil 2 · Leinwand ───────────────────────── */
+:root, .knorke {
+	--canvas-bg: #f3f2f0;          /* oklch(.962 .003 100) – neutraler als heute #f1f1ec */
+	--canvas-text: #191b1d;        /* oklch(.22 .005 250) – 15,44:1 auf der Leinwand */
+	--canvas-text-muted: #5c5f63;  /* 5,74:1 auf der Leinwand */
+	--canvas-font: var(--k-font);  /* heute Arial; jetzt dieselbe Schrift wie die Leisten */
+
+	/* ── Die eine Palette (V6) ──
+	   Reihenfolge überall gleich: Notiz, Form, Verbinder, Mindmap-Ast, Tag, Personenfarbe.
+	   -light  = Notiz/Füllung, dunkler Text darauf (Kontrast zu --canvas-text)
+	   -strong = Linie, Text, Ast, Tag, Personenfarbe (Kontrast zu Weiß / zur Leinwand)
+	   -ondark = Linie auf dunkler Leinwand, nur Dunkelmodus (a) (Kontrast zu --canvas-bg-dark)   */
+
+	/*  #  Name       light                 strong                 ondark
+	   01 Hellblau   #a2d9fe  11,43:1      #0275a9  5,10 / 4,56   #3a91c3  4,52   oklch h238  (Standard neuer Notizen)
+	   02 Türkis     #8fe7e1  12,08:1      #087c77  5,05 / 4,51   #399792  4,52   oklch h190
+	   03 Salbei     #b3e8b3  12,43:1      #307d37  5,10 / 4,56   #5c975e  4,54   oklch h145
+	   04 Gelb       #faea89  14,14:1      #7e6f01  5,05 / 4,51   #988a38  4,53   oklch h100
+	   05 Orange     #febf87  10,71:1      #a25d04  5,12 / 4,57   #bf7a35  4,55   oklch h62
+	   06 Koralle    #ffaaa7   9,51:1      #c43e45  5,09 / 4,55   #d56a69  4,58   oklch h22
+	   07 Rosa       #f9b7d6  10,50:1      #b94082  5,10 / 4,56   #cb699b  4,53   oklch h350
+	   08 Lila       #d9b9ee   9,97:1      #9550bb  5,07 / 4,53   #ab75cb  4,61   oklch h312
+	   09 Indigo     #b9c8fc  10,47:1      #5165d3  5,06 / 4,52   #7085de  4,58   oklch h272
+	   10 Sand       #e1ceb0  11,23:1      #816b46  5,09 / 4,55   #9a886a  4,59   oklch h80
+	   11 Weiß       #ffffff  17,27:1      –  (Linie fällt auf Grau)
+	   12 Grau       #e0e0dd  13,06:1      #6f6f6d  5,04 / 4,50   #a7a9ac  5,92 (auf #2b2c30)
+	   13 Schwarz    #191b1d  (weißer Text 17,27:1)   #191b1d  17,27 / 15,44   #e6e7e8 12,74
+	   Kleinster Abstand zweier heller Töne: ΔE(OKLab) 0,049 (Hellblau/Indigo) – heute 0,02 (zwei Rosa). */
+	--pal-hellblau-light: #a2d9fe; --pal-hellblau-strong: #0275a9; --pal-hellblau-ondark: #3a91c3;
+	--pal-tuerkis-light:  #8fe7e1; --pal-tuerkis-strong:  #087c77; --pal-tuerkis-ondark:  #399792;
+	--pal-salbei-light:   #b3e8b3; --pal-salbei-strong:   #307d37; --pal-salbei-ondark:   #5c975e;
+	--pal-gelb-light:     #faea89; --pal-gelb-strong:     #7e6f01; --pal-gelb-ondark:     #988a38;
+	--pal-orange-light:   #febf87; --pal-orange-strong:   #a25d04; --pal-orange-ondark:   #bf7a35;
+	--pal-koralle-light:  #ffaaa7; --pal-koralle-strong:  #c43e45; --pal-koralle-ondark:  #d56a69;
+	--pal-rosa-light:     #f9b7d6; --pal-rosa-strong:     #b94082; --pal-rosa-ondark:     #cb699b;
+	--pal-lila-light:     #d9b9ee; --pal-lila-strong:     #9550bb; --pal-lila-ondark:     #ab75cb;
+	--pal-indigo-light:   #b9c8fc; --pal-indigo-strong:   #5165d3; --pal-indigo-ondark:   #7085de;
+	--pal-sand-light:     #e1ceb0; --pal-sand-strong:     #816b46; --pal-sand-ondark:     #9a886a;
+	--pal-weiss-light:    #ffffff;
+	--pal-grau-light:     #e0e0dd; --pal-grau-strong:     #6f6f6d; --pal-grau-ondark:     #a7a9ac;
+	--pal-schwarz-light:  #191b1d; --pal-schwarz-strong:  #191b1d; --pal-schwarz-ondark:  #e6e7e8;
+
+	--note-default: var(--pal-hellblau-light);   /* bleibt Hellblau, bewusst nicht Gelb */
+
+	/* Notizen */
+	--note-size: 180;              /* Kantenlänge in Leinwand-Einheiten */
+	--note-radius: 6px;            /* heute 3px */
+	--note-padding: 16px;
+	--note-shadow: 0 1px 2px rgba(0,0,0,.10), 0 3px 8px rgba(0,0,0,.08); /* heute 0 2px 6px .25 */
+	/* Notiztext (V7): drei feste Stufen, Standard M. „Auto“ verkleinert nur, wenn M nicht passt,
+	   in Schritten bis --note-text-min; nie größer als die gewählte Stufe. */
+	--note-text-s: 16px;
+	--note-text-m: 22px;
+	--note-text-l: 32px;
+	--note-text-min: 12px;
+	--note-line-height: 1.25;
+	--note-weight: 400;
+
+	/* Text-Werkzeug */
+	--text-s: 16px; --text-m: 22px; --text-l: 32px; --text-xl: 44px;
+
+	/* Frames (V7): Kopf im Frame, dunkel und halbfett */
+	--frame-fill: #ffffff;
+	--frame-stroke: #8a8c8e;       /* 3,02:1 zur Leinwand, 3,37:1 zu Weiß */
+	--frame-stroke-width: 1.5px;
+	--frame-radius: 8px;
+	--frame-head-h: 56px;
+	--frame-title-size: 24px;      /* heute 28px grau über dem Frame */
+	--frame-title-weight: 600;
+	--frame-title-color: var(--canvas-text);
+
+	/* Swimlanes */
+	--lane-head-w: 150px;
+	--lane-head-fill: #f3f2f0;     /* = Leinwand, ruhiger als rgba(0,0,0,.05) */
+	--lane-title-size: 20px;       /* ≥ Notiztext S, heute ~11px */
+	--lane-title-weight: 600;
+	--lane-divider: var(--frame-stroke);
+
+	/* Formen und Verbinder */
+	--shape-stroke: var(--pal-schwarz-strong);
+	--shape-stroke-width: 2px;     /* Stufen: 1 / 2 / 4 */
+	--shape-radius-rounded: 12px;
+	--shape-text-size: 20px;
+	--connector-stroke: #3d4044;   /* 9,31:1 zur Leinwand */
+	--connector-width: 2px;
+	--connector-label-size: 16px;
+	--connector-label-bg: var(--canvas-bg);
+
+	/* Mindmap: Äste nehmen die -strong-Töne in Palettenreihenfolge */
+	--mindmap-root-fill: #ffffff;
+	--mindmap-root-stroke: var(--canvas-text);
+	--mindmap-root-size: 22px;
+	--mindmap-branch-size: 18px;
+	--mindmap-branch-width: 3px;
+
+	/* Auswahl (V8): nur Eckgriffe in der Primärfarbe */
+	--sel-color: var(--k-accent);
+	--sel-outline-width: 1.5px;
+	--sel-handle: 10px;            /* Maus; Stift/Finger 14px sichtbar, 44px Trefferfläche */
+	--sel-handle-touch: 14px;
+	--sel-handle-fill: #ffffff;
+	--sel-rotate-reveal: 24px;     /* Drehgriff erscheint im Abstand ≤ 24px zur Ecke */
+	--sel-anchor-reveal: 16px;     /* Verbindungspunkte erscheinen ≤ 16px zur Kante */
+	--sel-anchor: 10px;            /* liegen auf der Kante, nie auf dem Nachbarobjekt */
+
+	/* Andere Personen (V17): feste Farbe je Konto = -strong-Ton aus hash(userId) mod 10 */
+	--peer-label-size: 13px;
+	--peer-select-dash: 6 4;
+
+	/* Sitzung */
+	--vote-badge: 28px;            /* sichtbar; Trefferfläche 44px */
+	--vote-badge-fill: var(--k-accent);
+}
+
+/* ───────────────────────── Teil 3 · Dunkelmodus ───────────────────────── */
+/* Variante (a): Leinwand gedämpft dunkel, Notizen bleiben farbig und hell */
+[data-k-dark="a"] {
+	--canvas-bg: #202327;          /* oklch(.255 .008 255) */
+	--canvas-text-on-bg: #e6e7e8;  /* 12,74:1 */
+	--frame-fill: #2b2e32;
+	--frame-stroke: #7d8084;       /* 3,98:1 zur Leinwand, 3,44:1 zur Frame-Fläche */
+	--frame-title-color: #e6e7e8;
+	--lane-head-fill: #25282c;
+	--connector-stroke: #c9cbce;   /* 9,70:1 */
+	--mindmap-root-fill: #2b2e32;
+	--mindmap-root-stroke: #e6e7e8;
+	--sel-handle-fill: #202327;
+	/* Notizen behalten -light + dunklen Text; Linien/Äste/Tags nehmen -ondark.
+	   Füllung „Weiß“ wird hier zur Frame-Fläche mit hellem Text, alles andere bleibt. */
+}
+/* Variante (b): Leinwand bleibt hell, Leisten dunkelgrau statt schwarz */
+[data-k-dark="b"] {
+	--k-surface: #2b2c30;          /* statt #171717 */
+	--k-text: #ebebeb;             /* 11,70:1 */
+	--k-text-muted: #b4b6b9;       /* 6,86:1 */
+	--k-hover: #3a3b40;
+	--k-shadow-bar: 0 1px 2px rgba(0,0,0,.18), 0 4px 12px rgba(0,0,0,.14);
+}

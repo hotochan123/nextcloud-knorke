@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knorke · Runde 4 · Notizblock, Frames, Swimlanes, Tabellen, Diagramme</title>
+<style>/* Runde 4 · Seite (gleicher Rahmen wie Runde 2 und 3) */
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Liberation Sans", sans-serif; color: #222; background: oklch(0.975 0.002 250); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid #222; outline-offset: 2px; }
+.hdr { position: sticky; top: 0; z-index: 50; background: #fff; border-bottom: 1px solid #e3e4e6; }
+.hrow { max-width: 1440px; margin: 0 auto; padding: 10px 40px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 16px; white-space: nowrap; }
+.brand span { font-weight: 400; color: #5d5f63; }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: #eef0f2; }
+.seg button { border: 0; background: none; padding: 7px 14px; border-radius: 8px; font-size: 14px; white-space: nowrap; }
+.seg button[aria-selected="true"] { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.16); font-weight: 600; }
+.seg button:hover:not([aria-selected="true"]) { background: #e2e5e8; }
+.pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.pills button { border: 1px solid #d7d9dc; background: #fff; border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+.pills button.code { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 52px; }
+.pills button:hover { background: #f1f3f5; }
+.pills button[aria-current="true"] { background: #191b1d; border-color: #191b1d; color: #fff; }
+.main { max-width: 1440px; margin: 0 auto; padding: 24px 40px 40px; }
+.hero { display: flex; gap: 32px; align-items: flex-start; padding: 8px 0 20px; border-bottom: 1px solid #e3e4e6; margin-bottom: 8px; }
+.bigcode { font-size: 120px; line-height: .9; font-weight: 800; letter-spacing: -3px; color: #191b1d; min-width: 190px; font-variant-numeric: tabular-nums; }
+.hero h2 { margin: 6px 0 8px; font-size: 26px; font-weight: 650; }
+.hero p { margin: 0; max-width: 860px; font-size: 16px; color: #33363a; }
+.sec { padding: 20px 0 8px; }
+.sec h3 { font-size: 18px; margin: 0 0 12px; font-weight: 650; }
+.tiles { display: flex; flex-wrap: wrap; gap: 20px; }
+.tile { margin: 0; background: #fff; border-radius: 12px; padding: 0 0 10px; box-shadow: 0 0 0 1px #e3e4e6; overflow: hidden; }
+.tile canvas { display: block; }
+.tile.full { width: 1360px; }
+.tile.half { width: 670px; }
+.tile.wide { width: 900px; }
+.tile.narrow { width: 440px; }
+.tile figcaption { padding: 8px 14px 0; font-size: 13px; color: #33363a; }
+.vlist { list-style: none; margin: 0; padding: 0; }
+.vlist li { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid #e9eaec; }
+.vlist p { margin: 4px 0 0; max-width: 900px; color: #33363a; font-size: 14px; }
+.code-s { font-size: 48px; font-weight: 800; color: #191b1d; text-decoration: none; letter-spacing: -1px; line-height: 1; }
+.code-s:hover { text-decoration: underline; text-underline-offset: 6px; }
+.foot { max-width: 1440px; margin: 0 auto; padding: 16px 40px 40px; color: #5d5f63; font-size: 13px; }
+</style>
+</head>
+<body>
+<header class="hdr" id="hdr" data-od-id="switcher"></header>
+<main class="main" id="main" data-od-id="variant"></main>
+<footer class="foot">Alle Leinwand-Ausschnitte sind mit Canvas 2D gezeichnet – nur mit dem, was Konva auch kann: Rechtecke mit Radius, Pfade, Kreise, Linien mit Strichmuster, Text in Arial, Deckkraft und Schatten. Unter 30 % Zoom fallen Schatten und Texte in Notizen, Tabellen, Mindmaps und Notizblock-Titel weg, wie heute in Knorke; Notizen (N4), Formen (F4) und Verbinder (V6) sind wie in Runde 3 entschieden gezeichnet. Die Seite braucht kein Internet. Tasten ← → blättern durch die Varianten.</footer>
+<script>/* Runde 4 · Kopie der Leinwand-Bausteine aus Runde 3 (src3/scene.js), Auswahl auf den Stand §3.0 (2 px, Griffe 10 px).
+   Rechtecke mit Radius, Pfade, Kreise, Linien mit Strichmuster, Text (Arial), Deckkraft, Schatten (shadowBlur/Offset). */
+const PAL = {
+	hellblau: ['#a2d9fe', '#0275a9'], tuerkis: ['#8fe7e1', '#087c77'], salbei: ['#b3e8b3', '#307d37'], gelb: ['#faea89', '#7e6f01'],
+	orange: ['#febf87', '#a25d04'], koralle: ['#ffaaa7', '#c43e45'], rosa: ['#f9b7d6', '#b94082'], lila: ['#d9b9ee', '#9550bb'],
+	indigo: ['#b9c8fc', '#5165d3'], sand: ['#e1ceb0', '#816b46'], weiss: ['#ffffff', '#6f6f6d'], grau: ['#e0e0dd', '#6f6f6d'], schwarz: ['#191b1d', '#191b1d'],
+};
+const BG = '#f3f2f0', INK = '#191b1d', SEL = '#0082c9', FRAME_LINE = '#8a8c8e';
+const FONT = 'Arial, "Liberation Sans", Helvetica, sans-serif';
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+
+/* ── Zeichenfläche: z = Zoom, alles in Leinwand-Einheiten ── */
+function withShadow(c, sh, fn) {
+	/* Konva: Schatten wird mit dem Zoom skaliert und fällt in Bildschirm-Richtung */
+	c.save(); c.shadowColor = `rgba(0,0,0,${sh.a})`; c.shadowBlur = sh.blur * c.Z * c.DPR; c.shadowOffsetX = (sh.x || 0) * c.Z * c.DPR; c.shadowOffsetY = sh.y * c.Z * c.DPR; fn(); c.restore();
+}
+function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect ? c.roundRect(x, y, w, h, r) : (c.moveTo(x + r, y), c.arcTo(x + w, y, x + w, y + h, r), c.arcTo(x + w, y + h, x, y + h, r), c.arcTo(x, y + h, x, y, r), c.arcTo(x, y, x + w, y, r), c.closePath()); }
+/* Vieleck mit gerundeten Ecken (arcTo) */
+function poly(c, pts, r = 0) {
+	c.beginPath();
+	if (!r) { pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); return; }
+	const n = pts.length, mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+	const s = mid(pts[n - 1], pts[0]); c.moveTo(s[0], s[1]);
+	for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; c.arcTo(p[0], p[1], q[0], q[1], r); }
+	c.closePath();
+}
+/* ── Text wie Knorke: umbrechen, verkleinern, ab ≤16 lange Wörter trennen ── */
+function font(c, s, wt = 400) { c.font = `${wt} ${s}px ${FONT}`; }
+function wrapLines(c, text, maxW, s, wt, hyph) {
+	font(c, s, wt); const words = text.split(/\s+/), out = []; let cur = '';
+	const push = w => { const t = cur ? cur + ' ' + w : w; if (c.measureText(t).width <= maxW) cur = t; else { if (cur) out.push(cur); cur = w; } };
+	for (const w of words) {
+		if (c.measureText(w).width > maxW) {
+			if (!hyph) return null;
+			let rest = w; if (cur) { out.push(cur); cur = ''; }
+			while (c.measureText(rest).width > maxW) { let k = rest.length - 1; while (k > 1 && c.measureText(rest.slice(0, k) + '-').width > maxW) k--; out.push(rest.slice(0, k) + '-'); rest = rest.slice(k); }
+			cur = rest; continue;
+		}
+		push(w);
+	}
+	if (cur) out.push(cur); return out;
+}
+function fitText(c, text, maxW, maxH, start, lh, wt = 400, min = 10) {
+	for (let s = start; s >= min; s--) { const L = wrapLines(c, text, maxW, s, wt, s <= 16); if (L && L.length * s * lh <= maxH) return { s, L }; }
+	return { s: min, L: wrapLines(c, text, maxW, min, wt, true) };
+}
+function drawText(c, text, box, o = {}) {
+	const lh = o.lh || 1.2, wt = o.wt || 400, al = o.align || 'center', va = o.valign || 'middle';
+	let { s, L } = o.fixed ? { s: o.size, L: null } : fitText(c, text, box.w, box.h, o.size || 22, lh, wt, o.min || 10);
+	if (o.fixed) { /* feste Schriftgröße: was nicht passt, endet mit … */ L = wrapLines(c, text, box.w, s, wt, true); const max = Math.max(1, Math.floor(box.h / (s * lh) + 1e-6)); if (L.length > max) { L = L.slice(0, max); let l = L[max - 1].replace(/-$/, ''); while (l.length > 1 && c.measureText(l + '…').width > box.w) l = l.slice(0, -1); L[max - 1] = l + '…'; } }
+	font(c, s, wt); c.fillStyle = o.color || INK; c.textBaseline = 'middle'; c.textAlign = al === 'left' ? 'left' : al === 'right' ? 'right' : 'center';
+	const tx = al === 'left' ? box.x : al === 'right' ? box.x + box.w : box.x + box.w / 2, th = L.length * s * lh;
+	const y0 = va === 'top' ? box.y : va === 'bottom' ? box.y + box.h - th : box.y + (box.h - th) / 2;
+	L.forEach((l, i) => c.fillText(l, tx, y0 + (i + .5) * s * lh));
+	return s;
+}
+/* ── Auswahl, Tags, Abstimmung, Reaktion (nicht Thema, muss Platz haben) ── */
+function selection(c, x, y, w, h) {
+	const z = c.Z, o = 4 / z, hs = 10 / z; c.save(); c.strokeStyle = SEL; c.lineWidth = 2 / z; c.strokeRect(x - o, y - o, w + 2 * o, h + 2 * o);
+	for (const [a, b] of [[x - o, y - o], [x + w + o, y - o], [x - o, y + h + o], [x + w + o, y + h + o]]) { c.fillStyle = '#fff'; c.fillRect(a - hs / 2, b - hs / 2, hs, hs); c.lineWidth = 2 / z; c.strokeRect(a - hs / 2, b - hs / 2, hs, hs); }
+	c.restore();
+}
+function tags(c, x, y, w, list) {
+	let tx = x; font(c, 13, 400);
+	for (const [t, col] of list) { const tw = c.measureText(t).width + 14; rr(c, tx, y, tw, 22, 11); c.fillStyle = PAL[col][1]; c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, tx + 7, y + 11.5); tx += tw + 6; }
+}
+function voteDot(c, cx, cy, n) { const z = c.Z, r = 14 / z; c.save(); c.beginPath(); c.arc(cx, cy, r, 0, 7); c.fillStyle = SEL; c.fill(); c.strokeStyle = '#fff'; c.lineWidth = 2 / z; c.stroke(); font(c, 13 / z, 700); c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(String(n), cx, cy + .5 / z); c.restore(); }
+function reactions(c, x, y) { rr(c, x, y, 76, 28, 14); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = '#e0e0dd'; c.lineWidth = 1; c.stroke(); font(c, 15); c.fillStyle = INK; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText('👍 3', x + 10, y + 14.5); c.fillText('🎉', x + 50, y + 14.5); }
+
+/* ── Notizen ── */
+function note(c, n, NS) {
+	const S = n.size || NS.size || 200, x = n.x, y = n.y, col = PAL[n.color || 'hellblau'], r = NS.radius;
+	c.save();
+	if (n.rot) { c.translate(x + S / 2, y + S / 2); c.rotate(n.rot * Math.PI / 180); c.translate(-x - S / 2, -y - S / 2); }
+	const shapePath = () => { if (NS.ear) { const e = NS.ear; c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + S, y, x + S, y + S, r); c.lineTo(x + S, y + S - e); c.lineTo(x + S - e, y + S); c.arcTo(x, y + S, x, y, r); c.arcTo(x, y, x + S, y, r); c.closePath(); } else rr(c, x, y, S, S, r); };
+	const shadows = c.Z >= .3 ? NS.shadow : [];
+	/* abstehende Ecken: zwei kleine, schräge Flächen unter der Notiz – nur ihr Schatten ist zu sehen */
+	if (NS.lift && c.Z >= .3) for (const side of [-1, 1]) withShadow(c, NS.lift, () => { c.save(); const cx = side < 0 ? x + 30 : x + S - 30; c.translate(cx, y + S - 14); c.rotate(side * 4 * Math.PI / 180); c.fillStyle = col[0]; c.fillRect(-26, -10, 52, 20); c.restore(); });
+	if (!shadows.length) { shapePath(); c.fillStyle = col[0]; c.fill(); }
+	for (const sh of shadows) withShadow(c, sh, () => { shapePath(); c.fillStyle = col[0]; c.fill(); });
+	if (NS.edge) { shapePath(); c.strokeStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], NS.edge.a); c.lineWidth = NS.edge.w; c.stroke(); }
+	if (NS.highlight) { c.save(); shapePath(); c.clip(); c.fillStyle = 'rgba(255,255,255,.45)'; c.fillRect(x, y, S, 1.5); c.restore(); }
+	if (NS.ear) { const e = NS.ear; c.beginPath(); c.moveTo(x + S, y + S - e); c.lineTo(x + S - e, y + S - e + 2); c.lineTo(x + S - e, y + S); c.closePath(); withShadow(c, { y: 1, blur: 2, a: .12 }, () => { c.fillStyle = col[0]; c.fill(); }); c.fillStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], .22); c.fill(); }
+	if (NS.tape) { c.save(); c.translate(x + S / 2, y + 2); c.rotate(-2.5 * Math.PI / 180); c.fillStyle = rgba(n.color === 'weiss' ? PAL.grau[1] : col[1], .22); c.fillRect(-36, -11, 72, 22); c.restore(); }
+	const T = NS.text, pad = T.pad, tagH = n.tags ? 30 : 0;
+	if (n.text) drawText(c, n.text, { x: x + pad, y: y + pad, w: S - 2 * pad, h: S - 2 * pad - tagH }, { size: n.fs || 22, lh: T.lh, wt: T.wt, align: n.align || T.align, valign: n.valign || T.valign, color: n.color === 'schwarz' ? '#ffffff' : INK });
+	if (n.tags) tags(c, x + 10, y + S - 30, S, n.tags);
+	c.restore();
+	if (n.vote) voteDot(c, x + S - 2, y + 2, n.vote);
+	if (n.react) reactions(c, x, y + S + 8);
+	if (n.sel) selection(c, x, y, S, S);
+}
+
+/* ── Grundformen und Flussdiagramm ── */
+function shapePath(c, k, x, y, w, h, FS) {
+	const pr = FS.polyR || 0;
+	switch (k) {
+		case 'rect': return FS.rectR ? rr(c, x, y, w, h, FS.rectR) : (c.beginPath(), c.rect(x, y, w, h));
+		case 'round': return rr(c, x, y, w, h, FS.roundR === 'pct' ? Math.min(w, h) * .15 : FS.roundR);
+		case 'ellipse': c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7); return;
+		case 'diamond': return poly(c, [[x + w / 2, y], [x + w, y + h / 2], [x + w / 2, y + h], [x, y + h / 2]], pr);
+		case 'triangle': return poly(c, [[x + w / 2, y], [x + w, y + h], [x, y + h]], pr);
+		case 'arrow': return poly(c, [[x, y + h * .25], [x + w * .65, y + h * .25], [x + w * .65, y], [x + w, y + h / 2], [x + w * .65, y + h], [x + w * .65, y + h * .75], [x, y + h * .75]], pr);
+		case 'doc': { const r = FS.rectR || 0; c.beginPath(); c.moveTo(x, y + h * .85); c.lineTo(x, y + r); c.arcTo(x, y, x + w, y, r); c.arcTo(x + w, y, x + w, y + h, r); c.lineTo(x + w, y + h * .85); c.bezierCurveTo(x + w * .75, y + h * .65, x + w * .5, y + h * 1.05, x + w * .25, y + h * .95); c.quadraticCurveTo(x + w * .1, y + h * .9, x, y + h * .85); c.closePath(); return; }
+		case 'db': { const e = h * .12; c.beginPath(); c.moveTo(x, y + e); c.ellipse(x + w / 2, y + e, w / 2, e, 0, Math.PI, 0); c.lineTo(x + w, y + h - e); c.ellipse(x + w / 2, y + h - e, w / 2, e, 0, 0, Math.PI); c.closePath(); return; }
+	}
+}
+/* Textfeld je Form (Anteil der Fläche) */
+function textBox(k, x, y, w, h, FS) {
+	const better = FS.field === 'better';
+	/* neu: Raute 58 × 38 %, Dreieck unten ab 60 % der Höhe, 58 % breit, Innenabstand 4 (die Ecken des Felds liegen schon innen an der Kontur); Ellipse 84 × 54 %, Innenabstand 8 */
+	const B = better ? { ellipse: [.84, .54], diamond: [.58, .38], tri: [.58, .4, .6] } : { ellipse: [.71, .71], diamond: [.5, .5], tri: [.5, .5, .5] };
+	const p = better ? ({ diamond: 4, triangle: 4, ellipse: 8 }[k] ?? FS.pad) : FS.pad;
+	let b;
+	if (k === 'ellipse' || k === 'diamond') { const [fw, fh] = B[k]; b = { x: x + w * (1 - fw) / 2, y: y + h * (1 - fh) / 2, w: w * fw, h: h * fh }; }
+	else if (k === 'triangle') { const [fw, , t] = B.tri; b = { x: x + w * (1 - fw) / 2, y: y + h * t, w: w * fw, h: h * (1 - t) }; }
+	else if (k === 'arrow') b = { x, y: y + h * .25, w: w * .65, h: h * .5 };
+	else if (k === 'db') b = { x, y: y + h * .24, w, h: h * .7 };
+	else if (k === 'doc') b = { x, y, w, h: h * .8 };
+	else b = { x, y, w, h };
+	return { x: b.x + p, y: b.y + p, w: Math.max(4, b.w - 2 * p), h: Math.max(4, b.h - 2 * p) };
+}
+function shape(c, s, FS) {
+	const hue = s.color || FS.fill || "weiss", fill = PAL[hue][0], w = s.sw ?? FS.sw;
+	const strokeCol = s.stroke || (FS.tone && hue !== "weiss" ? PAL[hue][1] : FS.ink);
+	const P = () => shapePath(c, s.k, s.x, s.y, s.w, s.h, FS);
+	c.save(); c.globalAlpha = 1;
+	if (FS.shadow && c.Z >= .3 && (s.alpha ?? 1) > 0) withShadow(c, FS.shadow, () => { P(); c.fillStyle = (s.alpha ?? 1) < 1 ? rgba(fill, .001) : fill; c.fill(); });
+	P(); c.fillStyle = (s.alpha ?? 1) < 1 ? rgba(fill, s.alpha) : fill; c.fill();
+	if (w > 0) { P(); c.strokeStyle = strokeCol; c.lineWidth = w; c.lineJoin = FS.polyR || FS.rectR ? 'round' : 'miter'; if (s.dash === 'dash') c.setLineDash([4 * w, 3 * w]); if (s.dash === 'dot') { c.setLineDash([0.01, 2.5 * w]); c.lineCap = 'round'; } c.stroke(); c.setLineDash([]); c.lineCap = 'butt'; }
+	if (s.db) { c.beginPath(); const e = s.h * .12; c.ellipse(s.x + s.w / 2, s.y + e, s.w / 2, e, 0, 0, Math.PI); c.strokeStyle = strokeCol; c.lineWidth = w; c.stroke(); }
+	if (s.showField) { const b = textBox(s.k, s.x, s.y, s.w, s.h, FS); c.setLineDash([4 / c.Z, 3 / c.Z]); c.strokeStyle = SEL; c.lineWidth = 1 / c.Z; c.strokeRect(b.x, b.y, b.w, b.h); c.setLineDash([]); }
+	if (s.text) drawText(c, s.text, textBox(s.k, s.x, s.y, s.w, s.h, FS), { size: s.fs || FS.fs, lh: FS.lh, color: INK, min: 8, fixed: s.fixed });
+	c.restore();
+	if (s.sel) selection(c, s.x, s.y, s.w, s.h);
+}
+/* Andockpunkt einer Form: Mitte der Seite */
+function anchor(s, side) {
+	const m = { r: [s.x + s.w, s.y + s.h / 2, 1, 0], l: [s.x, s.y + s.h / 2, -1, 0], t: [s.x + s.w / 2, s.y, 0, -1], b: [s.x + s.w / 2, s.y + s.h, 0, 1] }[side];
+	return { x: m[0], y: m[1], dx: m[2], dy: m[3] };
+}
+
+/* ── Verbinder ── */
+function elbowPts(a, b, out = 20) {
+	const A = [a.x + a.dx * out, a.y + a.dy * out], Bp = [b.x + b.dx * out, b.y + b.dy * out], pts = [[a.x, a.y], A];
+	const ah = a.dx !== 0, bh = b.dx !== 0;
+	if (ah && bh) { const mx = (A[0] + Bp[0]) / 2; pts.push([mx, A[1]], [mx, Bp[1]]); }
+	else if (!ah && !bh) { const my = (A[1] + Bp[1]) / 2; pts.push([A[0], my], [Bp[0], my]); }
+	else if (ah) pts.push([Bp[0], A[1]]); else pts.push([A[0], Bp[1]]);
+	pts.push(Bp, [b.x, b.y]);
+	return clean(pts);
+}
+function clean(p) { const o = [p[0]]; for (let i = 1; i < p.length; i++) { const q = o[o.length - 1]; if (Math.abs(q[0] - p[i][0]) < .01 && Math.abs(q[1] - p[i][1]) < .01) continue; o.push(p[i]); } for (let i = o.length - 2; i > 0; i--) { const a = o[i - 1], b = o[i], d = o[i + 1]; if ((Math.abs(a[0] - b[0]) < .01 && Math.abs(b[0] - d[0]) < .01) || (Math.abs(a[1] - b[1]) < .01 && Math.abs(b[1] - d[1]) < .01)) o.splice(i, 1); } return o; }
+/* Pfeilspitze: Länge L und halbe Breite B je nach Variante */
+function tipSize(w, VS) { if (VS.tip === 'fine') { const L = 6 + 4 * Math.sqrt(w); return [L, L * .36]; } const L = 3 * w + 4; return [L, L / 2]; }
+const CUT = { arrow: 0, none: 0, triangle: 1, triangleOpen: 1, diamond: 1, dot: .9, circleOpen: .875 }; /* Anteil von L bis zum hinteren Rand des Endes (Raute: ×2) */
+function drawEnd(c, type, tip, dir, w, VS, color) {
+	if (type === 'none') return;
+	const [L, B] = tipSize(w, VS), ux = dir[0], uy = dir[1], px = -uy, py = ux, X = tip[0], Y = tip[1];
+	c.save(); c.fillStyle = color; c.strokeStyle = color; c.setLineDash([]); c.lineJoin = VS.tip === 'fine' ? 'miter' : 'miter'; c.lineCap = 'round';
+	const bx = X - ux * L, by = Y - uy * L;
+	if (type === 'arrow') { c.beginPath(); c.moveTo(bx + px * B, by + py * B); c.lineTo(X, Y); c.lineTo(bx - px * B, by - py * B); c.lineWidth = w; c.stroke(); }
+	else if (type === 'triangle' || type === 'triangleOpen') { c.beginPath(); c.moveTo(X, Y); c.lineTo(bx + px * B, by + py * B); c.lineTo(bx - px * B, by - py * B); c.closePath(); if (type === 'triangle') c.fill(); else { c.fillStyle = BG; c.fill(); c.lineWidth = Math.max(1, w * .75); c.stroke(); } }
+	else if (type === 'diamond') { const mx = X - ux * L, my = Y - uy * L, ex = X - ux * 2 * L, ey = Y - uy * 2 * L; c.beginPath(); c.moveTo(X, Y); c.lineTo(mx + px * B, my + py * B); c.lineTo(ex, ey); c.lineTo(mx - px * B, my - py * B); c.closePath(); c.fill(); }
+	else { const r = L / 2; c.beginPath(); c.arc(X - ux * r, Y - uy * r, r * (type === 'dot' ? .8 : .75), 0, 7); if (type === 'dot') c.fill(); else { c.fillStyle = BG; c.fill(); c.lineWidth = Math.max(1, w * .75); c.stroke(); } }
+	c.restore();
+	return CUT[type] * L * (type === 'diamond' ? 1 : 1);
+}
+function connector(c, k, VS) {
+	const w = k.w || 2, color = k.color || '#3d4044', end = k.end || VS.defEnd, start = k.start || 'none';
+	let a = { ...k.a }, b = { ...k.b };
+	const g = VS.gap || 0; a.x += a.dx * g; a.y += a.dy * g; b.x += b.dx * (VS.tipGap ?? g); b.y += b.dy * (VS.tipGap ?? g);
+	const route = k.route || 'elbow';
+	c.save(); c.strokeStyle = color; c.lineWidth = w; c.lineJoin = 'miter'; c.lineCap = 'butt';
+	if (k.dash === 'dash') c.setLineDash([4 * w, 3 * w]); if (k.dash === 'dot') { c.setLineDash([0.01, 2.5 * w]); c.lineCap = 'round'; }
+	let pts, mid, dirEnd, dirStart;
+	const [L] = tipSize(w, VS), cut = (CUT[end] || 0) * L * (end === 'diamond' ? 2 : 1), cutS = (CUT[start] || 0) * L * (start === 'diamond' ? 2 : 1);
+	if (route === 'curve') {
+		const d = Math.hypot(b.x - a.x, b.y - a.y), kk = VS.curve === 'tense' ? Math.max(60, .6 * d) : Math.max(40, .4 * d);
+		let c1 = [a.x + a.dx * kk, a.y + a.dy * kk], c2 = [b.x + b.dx * kk, b.y + b.dy * kk];
+		if (VS.curve === 's') { const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2; c1 = a.dx ? [mx, a.y] : [a.x, my]; c2 = b.dx ? [mx, b.y] : [b.x, my]; }
+		const P = t => { const u = 1 - t; return [u * u * u * a.x + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * b.x, u * u * u * a.y + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * b.y]; };
+		pts = []; for (let i = 0; i <= 40; i++) pts.push(P(i / 40));
+		const pe = pts[pts.length - 1], pq = P(.97), dl = Math.hypot(pe[0] - pq[0], pe[1] - pq[1]); dirEnd = [(pe[0] - pq[0]) / dl, (pe[1] - pq[1]) / dl];
+		c.beginPath(); c.moveTo(a.x, a.y); c.bezierCurveTo(c1[0], c1[1], c2[0], c2[1], b.x - dirEnd[0] * cut, b.y - dirEnd[1] * cut); c.stroke();
+		mid = P(.5);
+	} else {
+		pts = route === 'straight' ? [[a.x, a.y], [b.x, b.y]] : (k.pts || elbowPts(a, b));
+		if (k.pts && (VS.gap || VS.tipGap)) { pts = pts.map(p => p.slice()); pts[0] = [a.x, a.y]; pts[pts.length - 1] = [b.x, b.y]; }
+		const n = pts.length, e = pts[n - 1], f = pts[n - 2], dl = Math.hypot(e[0] - f[0], e[1] - f[1]); dirEnd = [(e[0] - f[0]) / dl, (e[1] - f[1]) / dl];
+		const s0 = pts[0], s1 = pts[1], sl = Math.hypot(s1[0] - s0[0], s1[1] - s0[1]); dirStart = [(s0[0] - s1[0]) / sl, (s0[1] - s1[1]) / sl];
+		const draw = pts.map(p => p.slice()); draw[n - 1] = [e[0] - dirEnd[0] * cut, e[1] - dirEnd[1] * cut]; draw[0] = [s0[0] - dirStart[0] * cutS, s0[1] - dirStart[1] * cutS];
+		c.beginPath(); c.moveTo(draw[0][0], draw[0][1]);
+		for (let i = 1; i < n - 1; i++) {
+			if (VS.corner && route === 'elbow') { const p = draw[i], q = draw[i + 1], o = draw[i - 1], r = Math.min(VS.corner, Math.hypot(p[0] - o[0], p[1] - o[1]) / 2, Math.hypot(q[0] - p[0], q[1] - p[1]) / 2); c.arcTo(p[0], p[1], q[0], q[1], r); }
+			else c.lineTo(draw[i][0], draw[i][1]);
+		}
+		c.lineTo(draw[n - 1][0], draw[n - 1][1]); c.stroke();
+		/* halbe Länge */
+		let tot = 0; const seg = []; for (let i = 1; i < n; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); tot += l; }
+		let h = tot / 2; mid = pts[0]; for (let i = 0; i < seg.length; i++) { if (h <= seg[i]) { const t = h / seg[i]; mid = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t, Math.abs(pts[i + 1][0] - pts[i][0]) > Math.abs(pts[i + 1][1] - pts[i][1])]; break; } h -= seg[i]; }
+	}
+	c.setLineDash([]);
+	if (k.sel) { c.save(); c.globalAlpha = .28; c.strokeStyle = SEL; c.lineWidth = w + 8 / c.Z; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.stroke(); c.restore(); }
+	drawEnd(c, end, [b.x, b.y], dirEnd, w, VS, color);
+	if (start !== 'none' && dirStart) drawEnd(c, start, [a.x, a.y], [-dirStart[0], -dirStart[1]], w, VS, color);
+	c.restore();
+	if (k.sel) for (const p of [[k.a.x, k.a.y], [k.b.x, k.b.y]]) { c.beginPath(); c.arc(p[0], p[1], 6 / c.Z, 0, 7); c.fillStyle = '#fff'; c.fill(); c.strokeStyle = SEL; c.lineWidth = 2 / c.Z; c.stroke(); }
+	if (k.label && c.Z >= .3) label(c, k.label, mid, VS, k.under);
+}
+function label(c, t, mid, VS, under) {
+	const L = VS.label || {}, size = L.size || 16, pad = L.pad ?? 4;
+	const lines = wrapLines(c, t, 240 - 2 * pad, size, 400, true), lw = Math.max(...lines.map(l => (font(c, size), c.measureText(l).width))), lh = size * 1.2;
+	const bw = lw + 2 * pad + (L.kind === 'pill' ? 8 : 0), bh = lines.length * lh + 2 * pad;
+	let cx = mid[0], cy = mid[1];
+	if (L.kind === 'above') cy -= (mid[2] === false ? 0 : bh / 2 + 3), cx += (mid[2] === false ? bw / 2 + 6 : 0);
+	c.save();
+	if (L.kind === 'pill') { rr(c, cx - bw / 2, cy - bh / 2, bw, bh, Math.min(bh / 2, 12)); c.fillStyle = '#ffffff'; c.fill(); c.strokeStyle = 'rgba(25,27,29,.28)'; c.lineWidth = 1; c.stroke(); }
+	else if (L.kind !== 'above') { rr(c, cx - bw / 2, cy - bh / 2, bw, bh, 3); c.fillStyle = BG; c.fill(); }
+	font(c, size); c.fillStyle = INK; c.textAlign = 'center'; c.textBaseline = 'middle';
+	lines.forEach((l, i) => c.fillText(l, cx, cy - bh / 2 + pad + (i + .5) * lh));
+	c.restore();
+	void under;
+}
+/* Frame mit Reiter A2 (Runde 2) */
+function frameA2(c, f) {
+	const { x, y, w, h } = f, col = PAL[f.color || 'weiss'], mid = { weiss: '#d1d1ce', gelb: '#e8ce49', hellblau: '#6bbef2' }[f.color || 'weiss'], r = 6, TH = 40;
+	font(c, 22, 600); const tw = c.measureText(f.title).width + 28;
+	const P = () => { c.beginPath(); c.moveTo(x, y + h - r); c.lineTo(x, y - TH + r); c.arcTo(x, y - TH, x + r, y - TH, r); c.lineTo(x + tw - r, y - TH); c.arcTo(x + tw, y - TH, x + tw, y - TH + r, r); c.lineTo(x + tw, y); c.lineTo(x + w - r, y); c.arcTo(x + w, y, x + w, y + r, r); c.lineTo(x + w, y + h - r); c.arcTo(x + w, y + h, x + w - r, y + h, r); c.lineTo(x + r, y + h); c.arcTo(x, y + h, x, y + h - r, r); c.closePath(); };
+	P(); c.fillStyle = col[0]; c.fill();
+	c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - TH + r); c.arcTo(x, y - TH, x + r, y - TH, r); c.lineTo(x + tw - r, y - TH); c.arcTo(x + tw, y - TH, x + tw, y - TH + r, r); c.lineTo(x + tw, y); c.closePath(); c.fillStyle = mid; c.fill();
+	P(); c.strokeStyle = FRAME_LINE; c.lineWidth = 1.5 / c.Z; c.stroke();
+	font(c, 22, 600); c.fillStyle = INK; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(f.title, x + 14, y - TH / 2 + 1);
+}
+/* Kachel zeichnen: Canvas mit Pixeldichte, Hintergrund, Zoom */
+function paint(cv, spec) {
+	const dpr = Math.min(2, window.devicePixelRatio || 1), W = spec.w, H = spec.h;
+	cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+	const c = cv.getContext('2d'); c.DPR = dpr; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = BG; c.fillRect(0, 0, W, H);
+	(spec.panels || [{ x: 0, y: 0, w: W, h: H, z: spec.z || 1, ox: spec.ox || 0, oy: spec.oy || 0, draw: spec.draw, label: spec.label }]).forEach(p => {
+		c.save(); c.beginPath(); c.rect(p.x, p.y, p.w, p.h); c.clip(); c.translate(p.x + (p.ox || 0), p.y + (p.oy || 0)); c.scale(p.z, p.z); c.Z = p.z; p.draw(c); c.restore();
+		if (p.label) { c.font = '12px system-ui, sans-serif'; c.fillStyle = '#5c5f63'; c.textAlign = 'left'; c.textBaseline = 'alphabetic'; c.fillText(p.label, p.x + 10, p.y + p.h - 10); }
+		if (spec.panels) { c.strokeStyle = '#e3e4e6'; c.lineWidth = 1; c.strokeRect(p.x + .5, p.y + .5, p.w - 1, p.h - 1); }
+	});
+}
+Object.assign(window, { PAL, note, shape, connector, anchor, elbowPts, frameA2, paint, drawText, selection, rr, font, INK, BG, tipSize, drawEnd });
+</script>
+<script>/* Runde 4 · große Dinge auf der Leinwand: Notizblock, Frame, Swimlanes, Tabelle, Mindmap, Organigramm/Baum.
+   Nur Konva-Mittel: Rechtecke mit Radius, Pfade, Kreise, Linien/Strichmuster, Text (Arial), Deckkraft, Schatten, Clip. */
+const TAB = { weiss: '#d1d1ce', gelb: '#e8ce49', hellblau: '#6bbef2', tuerkis: '#50cec7', salbei: '#8acf8b', orange: '#ec9d4f', koralle: '#ef8482', rosa: '#e693bc', lila: '#c198db', indigo: '#98aaec', sand: '#c8b08a', grau: '#c3c3bf', schwarz: '#36383b' };
+const LINE0 = '#67686a', GRID0 = '#c6cacf', HEAD0 = '#eef1f5', MUTED = '#5c5f63', HINT = '#646d77';
+const STRONG10 = ['#0275a9', '#087c77', '#307d37', '#7e6f01', '#a25d04', '#c43e45', '#b94082', '#9550bb', '#5165d3', '#816b46'];
+const HUE_OF = { '#0275a9': 'hellblau', '#087c77': 'tuerkis', '#307d37': 'salbei', '#7e6f01': 'gelb', '#a25d04': 'orange', '#c43e45': 'koralle', '#b94082': 'rosa', '#9550bb': 'lila', '#5165d3': 'indigo', '#816b46': 'sand' };
+const N4 = { radius: 6, shadow: [{ y: 1, blur: 2, a: .10 }, { y: 5, blur: 14, a: .09 }], edge: { w: 1, a: .18 }, ear: 26, text: { lh: 1.25, pad: 18, wt: 400, align: 'center', valign: 'middle' } };
+const F4 = { sw: 2, ink: '#3d4044', rectR: 4, roundR: 16, polyR: 4, tone: true, field: 'better', pad: 12, fs: 20, lh: 1.2, sizes: 'new' };
+const V6 = { corner: 10, tip: 'fine', defEnd: 'triangle', gap: 0, tipGap: 0, label: { kind: 'pill', size: 15, pad: 5 }, curve: 'tense' };
+function mix(a, b, t) { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); const A = p(a), B = p(b); return '#' + A.map((v, i) => Math.round(v * t + B[i] * (1 - t)).toString(16).padStart(2, '0')).join(''); }
+function textW(c, t, s, wt = 400) { font(c, s, wt); return c.measureText(t).width; }
+function ellip(c, t, s, wt, max) { font(c, s, wt); if (c.measureText(t).width <= max) return t; let x = t; while (x.length > 1 && c.measureText(x + '…').width > max) x = x.slice(0, -1); return x.trimEnd() + '…'; }
+function txt(c, t, x, y, s, wt = 400, col = INK, al = 'left') { font(c, s, wt); c.fillStyle = col; c.textAlign = al; c.textBaseline = 'middle'; c.fillText(t, x, y); }
+/* „+“-Knopf: heute Kreis 12 px; gross = 24 px mit weißem Plus (für Stift und Finger) */
+function plusBtn(c, x, y, big) { const z = c.Z, r = (big ? 12 : 6) / z; c.save(); c.beginPath(); c.arc(x, y, r, 0, 7); c.fillStyle = SEL; c.fill(); c.strokeStyle = '#fff'; c.lineWidth = 2 / z; c.stroke(); if (big) { c.beginPath(); c.moveTo(x - 5 / z, y); c.lineTo(x + 5 / z, y); c.moveTo(x, y - 5 / z); c.lineTo(x, y + 5 / z); c.lineWidth = 2 / z; c.lineCap = 'round'; c.stroke(); } c.restore(); }
+function selRect(c, x, y, w, h, o = 4) { const z = c.Z; c.save(); c.strokeStyle = SEL; c.lineWidth = 2 / z; c.strokeRect(x - o / z, y - o / z, w + 2 * o / z, h + 2 * o / z); c.restore(); }
+function handle(c, x, y, kind = 'square', px = 10) { const z = c.Z, s = px / z; c.save(); c.fillStyle = '#fff'; c.strokeStyle = SEL; c.lineWidth = 2 / z; if (kind === 'round') { c.beginPath(); c.arc(x, y, s / 2, 0, 7); c.fill(); c.stroke(); } else { rr(c, x - s / 2, y - s / 2, s, s, 2 / z); c.fill(); c.stroke(); } c.restore(); }
+
+/* ── Notizblock ── */
+function notepad(c, b, BS) {
+	const S = b.size || 200, x = b.x, y = b.y, hue = b.color || 'hellblau', col = PAL[hue], tab = TAB[hue], z = c.Z;
+	const n = BS.sheets, dx = BS.dx, dy = BS.dy, edgeCol = BS.hard ? 'rgba(0,0,0,.35)' : rgba(hue === 'weiss' ? '#6f6f6d' : col[1], .18);
+	const sheet = (sx, sy, shadow) => { const P = () => rr(c, sx, sy, S, S, 6); if (shadow && z >= .3) for (const sh of N4.shadow) withShadow(c, sh, () => { P(); c.fillStyle = col[0]; c.fill(); }); P(); c.fillStyle = col[0]; c.fill(); P(); c.strokeStyle = edgeCol; c.lineWidth = 1; c.stroke(); };
+	if (BS.tab && b.title) { /* Reiter wie A2 */ const tw = Math.min(textW(c, b.title, 18, 600) + 28, S - 24); c.beginPath(); c.moveTo(x, y + 6); c.lineTo(x, y - 34 + 6); c.arcTo(x, y - 34, x + 6, y - 34, 6); c.lineTo(x + tw - 6, y - 34); c.arcTo(x + tw, y - 34, x + tw, y - 34 + 6, 6); c.lineTo(x + tw, y + 6); c.closePath(); c.fillStyle = tab; c.fill(); c.strokeStyle = edgeCol; c.lineWidth = 1; c.stroke(); if (z >= .3) txt(c, ellip(c, b.title, 18, 600, tw - 28), x + 14, y - 16, 18, 600, hue === 'schwarz' ? '#fff' : INK); }
+	for (let i = n; i >= 1; i--) sheet(x + dx * i, y + dy * i, i === n && !BS.hard);
+	sheet(x, y, !BS.hard && n === 0);
+	const bh = BS.bind || 0;
+	if (bh) { c.save(); rr(c, x, y, S, S, 6); c.clip(); c.fillStyle = tab; c.fillRect(x, y, S, bh); c.restore(); c.beginPath(); c.moveTo(x, y + bh); c.lineTo(x + S, y + bh); c.strokeStyle = rgba(hue === 'weiss' ? '#6f6f6d' : col[1], .35); c.lineWidth = 1; c.stroke();
+		if (BS.perf) { c.save(); c.setLineDash([4, 4]); c.beginPath(); c.moveTo(x + 8, y + bh + 6); c.lineTo(x + S - 8, y + bh + 6); c.strokeStyle = rgba(hue === 'weiss' ? '#6f6f6d' : col[1], .4); c.stroke(); c.restore(); }
+		if (b.title && z >= .3) txt(c, ellip(c, b.title, BS.bindFs, 700, S - 24), x + 12, y + bh / 2 + 1, BS.bindFs, 700, hue === 'schwarz' ? '#fff' : INK); }
+	if (BS.strip && b.title && z >= .3) { const sy = y + S + dy * n + 12; rr(c, x, sy, S, 32, 6); c.fillStyle = '#e4e6e9'; c.fill(); txt(c, ellip(c, b.title, 18, 400, S - 16), x + S / 2, sy + 16, 18, 400, INK, 'center'); }
+	if (b.sel) { selection(c, x, y, S, S); }
+}
+/* ── Frame (Reiter A2 bleibt) ── */
+function framePath(c, x, y, w, h, r, tw, th) {
+	c.beginPath();
+	if (!tw) { rr(c, x, y, w, h, r); return; }
+	c.moveTo(x, y + h - r); c.lineTo(x, y - th + r); c.arcTo(x, y - th, x + r, y - th, r); c.lineTo(x + tw - r, y - th); c.arcTo(x + tw, y - th, x + tw, y - th + r, r); c.lineTo(x + tw, y); c.lineTo(x + w - r, y); c.arcTo(x + w, y, x + w, y + r, r); c.lineTo(x + w, y + h - r); c.arcTo(x + w, y + h, x + w - r, y + h, r); c.lineTo(x + r, y + h); c.arcTo(x, y + h, x, y + h - r, r); c.closePath();
+}
+function frameFill(hue, RS) { const l = PAL[hue][0]; return RS.fill === 'soft' && hue !== 'weiss' && hue !== 'schwarz' ? mix(l, BG, .5) : l; }
+function frameBorder(hue, RS) { if (!RS.border) return null; if (RS.border === 'tab') return TAB[hue]; if (RS.border === 'strong') return hue === 'weiss' ? '#6f6f6d' : hue === 'grau' ? '#6f6f6d' : PAL[hue][1]; return LINE0; }
+function tabW(c, f, w) { return f.title ? Math.min(textW(c, f.title, 22, 600) + 28, w - 24) : 0; }
+function frame(c, f, RS) {
+	const { x, y, w, h } = f, hue = f.color || 'weiss', r = RS.radius, th = 40, z = c.Z, tw = tabW(c, f, w);
+	const fill = frameFill(hue, RS), border = frameBorder(hue, RS);
+	if (RS.shadow && z >= .3) withShadow(c, RS.shadow, () => { framePath(c, x, y, w, h, r, tw, th); c.fillStyle = fill; c.fill(); });
+	framePath(c, x, y, w, h, r, tw, th); c.fillStyle = fill; c.fill();
+	if (tw) { c.save(); framePath(c, x, y, w, h, r, tw, th); c.clip(); c.fillStyle = f.sel && RS.selTab ? mix(SEL, TAB[hue], .22) : TAB[hue]; c.fillRect(x, y - th, tw, th); c.restore(); }
+	f.inside && f.inside(c);
+	if (border) { framePath(c, x, y, w, h, r, tw, th); c.strokeStyle = border; c.lineWidth = (RS.bw || 1.5) / z; c.stroke(); }
+	if (tw) txt(c, ellip(c, f.title, 22, 600, tw - 28), x + 14, y - th / 2 + 1, 22, 600, hue === 'schwarz' ? '#fff' : INK);
+	else if (f.sel) { const hw = textW(c, 'Titel hinzufügen…', 22) + 28; c.save(); c.setLineDash([5 / z, 4 / z]); c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - th + r); c.arcTo(x, y - th, x + r, y - th, r); c.lineTo(x + hw - r, y - th); c.arcTo(x + hw, y - th, x + hw, y - th + r, r); c.lineTo(x + hw, y); c.strokeStyle = HINT; c.lineWidth = 1.5 / z; c.stroke(); c.restore(); txt(c, 'Titel hinzufügen…', x + 14, y - th / 2 + 1, 22, 400, HINT); }
+	if (f.sel) frameSel(c, f, RS, tw, th);
+}
+function frameSel(c, f, RS, tw, th) {
+	const { x, y, w, h } = f, z = c.Z, s = f.selStyle || RS.sel || 'today', o = 4 / z, big = f.pen ? 14 : 10;
+	if (s === 'today') { selRect(c, x, y, w, h); for (const [a, b] of [[x - o, y - o], [x + w + o, y - o], [x - o, y + h + o], [x + w + o, y + h + o]]) handle(c, a, b, 'square', big); return; }
+	/* Umriss folgt Frame und Reiter, 4 px außerhalb */
+	c.save(); framePath(c, x - o, y - o, w + 2 * o, h + 2 * o, RS.radius + o, tw ? tw + 2 * o : 0, th); c.strokeStyle = SEL; c.lineWidth = 2 / z; c.stroke(); c.restore();
+	const kind = s === 'follow' ? 'square' : 'round', px = s === 'follow' ? big : (f.pen ? 16 : 12);
+	const pts = [[x - o, y - o], [x + w + o, y - o], [x - o, y + h + o], [x + w + o, y + h + o]];
+	if (s === 'round-mid') pts.push([x + w / 2, y + h + o], [x + w + o, y + h / 2], [x - o, y + h / 2]);
+	pts.forEach(([a, b]) => handle(c, a, b, kind, px));
+}
+/* ── Swimlanes ── */
+function lanes(c, s, SS) {
+	const { x, y, w, h } = s, hue = s.color || 'weiss', fill = frameFill(hue, SS.frame), tab = TAB[hue], z = c.Z;
+	const lanesN = s.lanes.length, hw = SS.headW, gw = s.laneGroups ? SS.groupW : 0, left = hw + gw;
+	const ch = s.cols ? SS.colH : 0, cgh = s.colGroups ? SS.cgH : 0, top = ch + cgh, lh = (h - top) / lanesN, cw = s.cols ? (w - left) / s.cols.length : 0;
+	const headFill = SS.head === 'black5' ? 'rgba(0,0,0,0.05)' : SS.head === 'tab' ? tab : SS.head === 'tab45' ? mix(tab, fill, .45) : null;
+	const groupFill = SS.head === 'tab45' ? mix(tab, fill, .75) : headFill;
+	const div = (x1, y1, x2, y2, st) => { if (!st) return; c.save(); c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.strokeStyle = st.col === 'tab' ? mix(tab, '#000000', .85) : st.col; c.globalAlpha = st.a ?? 1; c.lineWidth = st.px / z; if (st.dash) c.setLineDash(st.dash.map(d => d / z)); c.stroke(); c.restore(); };
+	frame(c, { ...s, sel: false, inside: c2 => {
+		c.save(); framePath(c, x, y, w, h, SS.frame.radius, 0, 0); c.clip();
+		/* Bahnen im Wechsel getönt (S2) */
+		if (SS.alt) s.lanes.forEach((_, i) => { if (i % 2) { c.fillStyle = 'rgba(0,0,0,0.028)'; c.fillRect(x + left, y + top + i * lh, w - left, lh); } });
+		if (SS.head === 'lanes') s.lanes.forEach((_, i) => { c.fillStyle = PAL[['hellblau', 'salbei', 'gelb', 'rosa', 'lila'][i % 5]][0]; c.fillRect(x + gw, y + top + i * lh, hw, lh); });
+		if (headFill && left) { c.fillStyle = headFill; c.fillRect(x + gw, y, hw, h); }
+		if (gw && groupFill) { c.fillStyle = groupFill; c.fillRect(x, y, gw, h); }
+		if (headFill && s.cols) { c.fillStyle = headFill; c.fillRect(x + left, y + cgh, w - left, ch); if (cgh) { c.fillStyle = groupFill; c.fillRect(x + left, y, w - left, cgh); } }
+		/* Trenner */
+		const D = SS.div;
+		if (left) div(x + left, y, x + left, y + h, D.head);
+		if (gw) div(x + gw, y + top, x + gw, y + h, D.head);
+		if (top) div(x + (SS.head === 'none' ? 0 : 0), y + top, x + w, y + top, D.head || D.lanes);
+		if (cgh) div(x + left, y + cgh, x + w, y + cgh, D.head);
+		for (let i = 1; i < lanesN; i++) { const ly = y + top + i * lh, inGroup = s.laneGroups && s.laneGroups.some(g => i > g.from && i <= g.to); div(inGroup ? x + gw : x, ly, x + w, ly, D.lanes); }
+		if (s.cols) for (let j = 1; j < s.cols.length; j++) div(x + left + j * cw, y + (s.colGroups && s.colGroups.some(g => j > g.from && j <= g.to) ? cgh : 0), x + left + j * cw, y + h, D.cols);
+		/* Namen */
+		s.lanes.forEach((n, i) => laneName(c, n, x + gw, y + top + i * lh, hw, lh, SS, hue));
+		if (s.laneGroups) s.laneGroups.forEach(g => { const gy = y + top + g.from * lh, gh = (g.to - g.from + 1) * lh; laneName(c, g.name, x, gy, gw, gh, { ...SS, names: SS.names === 'pill' ? 'rot' : SS.names, group: true }, hue); });
+		if (s.cols) s.cols.forEach((n, j) => { if (z >= .095) drawText(c, n, { x: x + left + j * cw + 12, y: y + cgh + 8, w: cw - 24, h: ch - 16 }, { size: SS.colFs, lh: 1.2, wt: 700, align: SS.names === 'h' ? 'left' : 'center', min: 12 }); });
+		if (s.colGroups) s.colGroups.forEach(g => { const gx = x + left + g.from * cw, gwid = (g.to - g.from + 1) * cw; txt(c, ellip(c, g.name, SS.colFs - 2, 700, gwid - 24), SS.names === 'h' ? gx + 12 : gx + gwid / 2, y + cgh / 2, SS.colFs - 2, 700, INK, SS.names === 'h' ? 'left' : 'center'); });
+		c.restore();
+		s.content && s.content(c, { x: x + left, y: y + top, lh, cw });
+	} }, SS.frame);
+	if (s.sel) {
+		frameSel(c, { ...s, selStyle: SS.frame.sel }, SS.frame, tabW(c, s, w), 40);
+		const big = SS.bigPlus, off = (big ? 36 : 48) / z;
+		plusBtn(c, x + w / 2, y + h + off, big); if (big) txt(c, '+ Bahn', x + w / 2 + 20 / z, y + h + off, 13 / z, 600, SEL);
+		if (s.cols) { plusBtn(c, x + w + off, y + h / 2, big); }
+	}
+}
+function laneName(c, n, x, y, w, h, SS, hue) {
+	if (!n) return;
+	if (SS.names === 'rot') { /* −90°, fett, kleiner bis 12, dann … */ let fs = SS.group ? 18 : 20; while (fs > 12 && textW(c, n, fs, 700) > h - 24) fs -= 2; const t = ellip(c, n, fs, 700, h - 24); c.save(); c.translate(x + w / 2, y + h / 2); c.rotate(-Math.PI / 2); txt(c, t, 0, 0, fs, 700, INK, 'center'); c.restore(); return; }
+	if (SS.names === 'h') { drawText(c, n, { x: x + 12, y: y + 12, w: w - 24, h: Math.min(h - 24, 90) }, { size: SS.group ? 14 : 16, lh: 1.2, wt: 700, align: 'left', valign: 'top', min: 12 }); return; }
+	if (SS.names === 'pill') { const t = ellip(c, n, 15, 700, 170), pw = textW(c, t, 15, 700) + 24; rr(c, x + 12, y + 12, pw, 28, 14); c.fillStyle = TAB[hue]; c.fill(); txt(c, t, x + 24, y + 26.5, 15, 700, hue === 'schwarz' ? '#fff' : INK); }
+}
+/* ── Tabelle ── */
+function rowHeights(c, t, TS) { return t.rows.map(r => Math.max(36, ...r.map((v, j) => { const L = wrapLines(c, String(v), t.cols[j] - 16, 16, 400, true) || ['']; return L.length * 16 * 1.2 + 16; }))); }
+function table(c, t, TS) {
+	const { x, y } = t, z = c.Z, W = t.cols.reduce((a, b) => a + b, 0), RH = rowHeights(c, t, TS), H = RH.reduce((a, b) => a + b, 0), r = TS.radius;
+	const headHue = t.headColor, headFill = headHue ? (TS.headTone ? PAL[headHue][0] : PAL[headHue][0]) : TS.headFill;
+	c.save(); rr(c, x, y, W, H, r); c.clip();
+	c.fillStyle = '#ffffff'; c.fillRect(x, y, W, H);
+	if (t.head !== false && headFill) { c.fillStyle = headFill; c.fillRect(x, y, W, RH[0]); }
+	if (t.headCol) { c.fillStyle = headFill || HEAD0; c.fillRect(x, y, t.cols[0], H); }
+	if (t.edit && TS.cellTint) { const [er, ec] = t.edit; const ex = x + t.cols.slice(0, ec).reduce((a, b) => a + b, 0), ey = y + RH.slice(0, er).reduce((a, b) => a + b, 0); c.fillStyle = rgba(SEL, .08); c.fillRect(ex, ey, t.cols[ec], RH[er]); }
+	/* Linien */
+	const L = (x1, y1, x2, y2, col, w) => { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.strokeStyle = col; c.lineWidth = w; c.stroke(); };
+	let yy = y; RH.forEach((rh, i) => { yy += rh; if (i < RH.length - 1) L(x, yy, x + W, yy, i === 0 && TS.headLine ? TS.headLine : TS.hLine, i === 0 && TS.headLine ? TS.headLineW : TS.lineW); });
+	if (TS.vLine) { let xx = x; t.cols.slice(0, -1).forEach(cw => { xx += cw; L(xx, y, xx, y + H, TS.vLine, TS.lineW); }); }
+	/* Text */
+	if (z >= .3) { let ry = y; RH.forEach((rh, i) => { let cx = x; t.rows[i].forEach((v, j) => { drawText(c, String(v), { x: cx + 8, y: ry + 8, w: t.cols[j] - 16, h: rh - 16 }, { size: 16, lh: 1.2, wt: (i === 0 && t.head !== false) || (j === 0 && t.headCol) ? 700 : 400, align: 'left', valign: 'top', min: 16 }); cx += t.cols[j]; }); ry += rh; }); }
+	c.restore();
+	if (TS.outer) { rr(c, x, y, W, H, r); c.strokeStyle = TS.outer; c.lineWidth = TS.outerPx ? TS.outerPx / z : TS.lineW; c.stroke(); }
+	if (t.edit) { const [er, ec] = t.edit; const ex = x + t.cols.slice(0, ec).reduce((a, b) => a + b, 0), ey = y + RH.slice(0, er).reduce((a, b) => a + b, 0); c.strokeStyle = SEL; c.lineWidth = 2 / z; c.strokeRect(ex + 1 / z, ey + 1 / z, t.cols[ec] - 2 / z, RH[er] - 2 / z); }
+	if (t.sel) { selRect(c, x, y, W, H); const off = (TS.bigPlus ? 36 : 48) / z; plusBtn(c, x + W + off, y + H / 2, TS.bigPlus); plusBtn(c, x + W / 2, y + H + off, TS.bigPlus); }
+	return { W, H };
+}
+/* ── Mindmap ── */
+function mmNodeSize(c, n, lvl, MS) {
+	const style = n.box || (lvl === 1 ? MS.main : MS.deep);
+	const fs = lvl === 1 && MS.mainFs ? MS.mainFs : 16, wt = lvl === 1 && MS.mainWt ? MS.mainWt : 400;
+	const L = wrapLines(c, n.text, 240, fs, wt, true) || [n.text], tw = Math.max(...L.map(l => textW(c, l, fs, wt)));
+	const px = style === 'line' ? 6 : 12, py = style === 'line' ? 4 : 8;
+	return { w: tw + 2 * px, h: L.length * fs * 1.2 + 2 * py, L, fs, wt, style, px, py };
+}
+function mindmap(c, m, MS) {
+	const z = c.Z, cfs = MS.centerFs, cL = wrapLines(c, m.center, 280, cfs, 700, true), cw = Math.max(120, Math.max(...cL.map(l => textW(c, l, cfs, 700))) + 32), chh = cL.length * cfs * 1.2 + 24;
+	const C = { x: m.x - cw / 2, y: m.y - chh / 2, w: cw, h: chh };
+	const lay = []; /* {node, lvl, x, y, w, h, side, color, parent} */
+	const measure = (n, lvl) => { n._s = mmNodeSize(c, n, lvl, MS); const kids = n.collapsed ? [] : (n.kids || []); n._kh = kids.reduce((a, k) => a + measure(k, lvl + 1), 0) + Math.max(0, kids.length - 1) * 10; n._t = Math.max(n._s.h, n._kh); return n._t; };
+	const place = (n, lvl, side, x0, yTop, color, parent) => {
+		const s = n._s, ny = yTop + (n._t - s.h) / 2, nx = side > 0 ? x0 : x0 - s.w; const e = { n, lvl, x: nx, y: ny, w: s.w, h: s.h, side, color, parent }; lay.push(e);
+		let ky = yTop + (n._t - n._kh) / 2; const kx = side > 0 ? nx + s.w + 40 : nx - 40;
+		(n.collapsed ? [] : (n.kids || [])).forEach(k => { place(k, lvl + 1, side, kx, ky, color, e); ky += k._t + 10; });
+	};
+	const sides = [[], []]; m.branches.forEach((b, i) => sides[i < Math.ceil(m.branches.length / 2) ? 0 : 1].push([b, i]));
+	sides.forEach((list, si) => { const side = si === 0 ? 1 : -1; list.forEach(([b]) => measure(b, 1)); const tot = list.reduce((a, [b]) => a + b._t, 0) + (list.length - 1) * 20; let yy = m.y - tot / 2; list.forEach(([b, i]) => { place(b, 1, side, side > 0 ? C.x + C.w + 40 : C.x - 40, yy, STRONG10[i % 10], null); yy += b._t + 20; }); });
+	/* Äste */
+	for (const e of lay) {
+		const par = e.parent, width = e.lvl === 1 ? MS.w1 : e.lvl === 2 ? MS.w2 : MS.w3;
+		let ax, ay; if (!par) { ax = e.side > 0 ? C.x + C.w : C.x; ay = m.y; } else { const ps = par.n._s; ax = e.side > 0 ? par.x + par.w : par.x; ay = ps.style === 'line' ? par.y + par.h : par.y + par.h / 2; }
+		const bx = e.side > 0 ? e.x : e.x + e.w, by = e.n._s.style === 'line' ? e.y + e.h : e.y + e.h / 2;
+		const mx = (ax + bx) / 2;
+		if (MS.taper && z >= .095) { const w0 = par ? (par.lvl === 1 ? MS.w1 : MS.w2) * .9 : MS.w1 * 1.6, w1 = width * .8; taperCurve(c, [ax, ay], [mx, ay], [mx, by], [bx, by], w0, w1, e.color); }
+		else { c.beginPath(); c.moveTo(ax, ay); c.bezierCurveTo(mx, ay, mx, by, bx, by); c.strokeStyle = e.color; c.lineWidth = width; c.lineCap = 'round'; c.stroke(); }
+	}
+	/* Zentrum */
+	if (MS.centerKind === 'pill') { rr(c, C.x, C.y, C.w, C.h, C.h / 2); c.fillStyle = PAL[MS.centerHue][0]; c.fill(); if (MS.centerBorder) { c.strokeStyle = MS.centerBorder; c.lineWidth = 2; c.stroke(); } }
+	else { rr(c, C.x, C.y, C.w, C.h, MS.centerR); c.fillStyle = MS.centerFill || '#fff'; c.fill(); c.strokeStyle = MS.centerBorder; c.lineWidth = 2; c.stroke(); }
+	if (z >= .3) cL.forEach((l, i) => txt(c, l, m.x, C.y + 12 + (i + .5) * cfs * 1.2, cfs, 700, INK, 'center'));
+	/* Knoten */
+	for (const e of lay) {
+		const s = e.n._s, hue = HUE_OF[e.color];
+		if (s.style === 'line') { c.beginPath(); c.moveTo(e.x, e.y + e.h); c.lineTo(e.x + e.w, e.y + e.h); c.strokeStyle = e.color; c.lineWidth = e.lvl === 1 ? MS.w1 : MS.w2; c.lineCap = 'round'; c.stroke(); }
+		else { const rad = s.style === 'pill' ? e.h / 2 : s.style === 'round' ? 8 : 4; rr(c, e.x, e.y, e.w, e.h, rad); c.fillStyle = MS.mainFill === 'tone' && e.lvl === 1 && !e.n.box ? PAL[hue][0] : '#fff'; c.fill(); if (!(MS.mainFill === 'tone' && MS.mainNoBorder && e.lvl === 1)) { c.strokeStyle = e.color; c.lineWidth = 2; c.stroke(); } }
+		if (z >= .3) s.L.forEach((l, i) => txt(c, l, s.style === 'line' ? e.x + s.px : e.x + e.w / 2, e.y + s.py + (i + .5) * s.fs * 1.2, s.fs, s.wt, INK, s.style === 'line' ? 'left' : 'center'));
+		if (e.n.collapsed) collapseMark(c, e, MS);
+		if (m.focus && e.n.text === m.focus) { c.strokeStyle = SEL; c.lineWidth = 2 / z; c.strokeRect(e.x - 3, e.y - 3, e.w + 6, e.h + 6); plusBtn(c, e.side > 0 ? e.x + e.w + 48 / z : e.x - 48 / z, e.y + e.h / 2, MS.bigPlus); plusBtn(c, e.x + e.w / 2, e.y + e.h + 30 / z, MS.bigPlus); }
+	}
+	if (m.sel) { const xs = lay.map(e => e.x).concat(C.x), ys = lay.map(e => e.y).concat(C.y), xe = lay.map(e => e.x + e.w).concat(C.x + C.w), ye = lay.map(e => e.y + e.h).concat(C.y + C.h); const x0 = Math.min(...xs), y0 = Math.min(...ys); selRect(c, x0 - 8, y0 - 8, Math.max(...xe) - x0 + 16, Math.max(...ye) - y0 + 16); }
+	return { lay, C };
+}
+function collapseMark(c, e, MS) {
+	const n = e.n.collapsed, cx = e.side > 0 ? e.x + e.w + 12 : e.x - 12, cy = e.n._s.style === 'line' ? e.y + e.h : e.y + e.h / 2;
+	if (MS.collapse === 'pill') { const t = '+' + n, w = textW(c, t, 12, 700) + 14; rr(c, e.side > 0 ? cx - 4 : cx - w + 4, cy - 10, w, 20, 10); c.fillStyle = e.color; c.fill(); txt(c, t, e.side > 0 ? cx - 4 + w / 2 : cx + 4 - w / 2, cy + .5, 12, 700, '#fff', 'center'); return; }
+	c.beginPath(); c.arc(cx, cy, 7, 0, 7); c.fillStyle = e.color; c.fill(); txt(c, String(n), cx, cy + .5, 8, 700, '#fff', 'center');
+}
+/* sich verjüngender Ast: Fläche zwischen zwei versetzten Bézier-Kurven (Konva: ein Path mit Füllung) */
+function taperCurve(c, p0, p1, p2, p3, w0, w1, col) {
+	const B = t => { const u = 1 - t; return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]; };
+	const N = 24, L = [], R = [];
+	for (let i = 0; i <= N; i++) { const t = i / N, p = B(t), q = B(Math.min(1, t + .01)), o = B(Math.max(0, t - .01)); let dx = q[0] - o[0], dy = q[1] - o[1]; const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d; const hw = (w0 + (w1 - w0) * t) / 2; L.push([p[0] - dy * hw, p[1] + dx * hw]); R.push([p[0] + dy * hw, p[1] - dx * hw]); }
+	c.beginPath(); L.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); R.reverse().forEach(p => c.lineTo(p[0], p[1])); c.closePath(); c.fillStyle = col; c.fill();
+	c.beginPath(); c.arc(p3[0], p3[1], w1 / 2, 0, 7); c.fill();
+}
+/* ── Organigramm und Baum ── */
+function cardSize(c, n, OS) { const W = 200 - 24; const L = wrapLines(c, n.name, W, 16, 700, true) || [n.name], R = n.role ? (wrapLines(c, n.role, W, OS.roleFs, 400, true) || [n.role]) : []; const tw = Math.max(...L.map(l => textW(c, l, 16, 700)), ...R.map(l => textW(c, l, OS.roleFs, 400))); const extra = OS.initials ? 40 : 0; return { w: Math.max(OS.minW, Math.min(224, tw + 24 + extra)), h: (OS.band === 'top' ? 6 : 0) + 16 + L.length * 16 * 1.25 + R.length * OS.roleFs * 1.25, L, R }; }
+function card(c, n, x, y, s, OS, color) {
+	const hue = HUE_OF[color] || 'grau', r = OS.radius;
+	rr(c, x, y, s.w, s.h, r); c.fillStyle = OS.fill === 'tone' ? PAL[hue][0] : '#fff'; c.fill();
+	if (OS.band) { c.save(); rr(c, x, y, s.w, s.h, r); c.clip(); c.fillStyle = color; if (OS.band === 'top') c.fillRect(x, y, s.w, 6); else c.fillRect(x, y, 6, s.h); c.restore(); }
+	if (OS.border) { rr(c, x, y, s.w, s.h, r); c.strokeStyle = OS.border === 'node' ? color : OS.border; c.lineWidth = OS.bw; c.stroke(); }
+	if (c.Z < .3) return;
+	const ty = y + (OS.band === 'top' ? 6 : 0) + 8;
+	if (OS.initials) { const ini = n.name.split(/\s+/).map(p => p[0]).slice(0, 2).join(''); c.beginPath(); c.arc(x + 12 + 14, y + s.h / 2, 14, 0, 7); c.fillStyle = color; c.fill(); txt(c, ini, x + 26, y + s.h / 2 + .5, 12, 700, '#fff', 'center');
+		s.L.forEach((l, i) => txt(c, l, x + 50, ty + (i + .5) * 20, 16, 700, INK)); s.R.forEach((l, i) => txt(c, l, x + 50, ty + s.L.length * 20 + (i + .5) * OS.roleFs * 1.25, OS.roleFs, 400, OS.roleCol)); return; }
+	s.L.forEach((l, i) => txt(c, l, x + s.w / 2, ty + (i + .5) * 20, 16, 700, INK, 'center')); s.R.forEach((l, i) => txt(c, l, x + s.w / 2, ty + s.L.length * 20 + (i + .5) * OS.roleFs * 1.25, OS.roleFs, 400, OS.roleCol, 'center'));
+}
+function polyR(c, pts, r) { c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length - 1; i++) { const p = pts[i], q = pts[i + 1], o = pts[i - 1]; const rr2 = Math.min(r, Math.hypot(p[0] - o[0], p[1] - o[1]) / 2, Math.hypot(q[0] - p[0], q[1] - p[1]) / 2); r ? c.arcTo(p[0], p[1], q[0], q[1], rr2) : c.lineTo(p[0], p[1]); } const e = pts[pts.length - 1]; c.lineTo(e[0], e[1]); }
+function org(c, o, OS) {
+	const meas = n => { n._s = cardSize(c, n, OS); const kids = n.collapsed ? [] : (n.kids || []); n._kw = kids.reduce((a, k) => a + meas(k), 0) + Math.max(0, kids.length - 1) * 20; n._t = Math.max(n._s.w, n._kw); return n._t; };
+	meas(o.root); const cards = [];
+	const rowH = []; const depthH = (n, d) => { rowH[d] = Math.max(rowH[d] || 0, n._s.h); (n.collapsed ? [] : (n.kids || [])).forEach(k => depthH(k, d + 1)); }; depthH(o.root, 0);
+	const rowY = [o.y]; for (let d = 1; d < rowH.length; d++) rowY[d] = rowY[d - 1] + rowH[d - 1] + 40;
+	const place = (n, d, x0, color, parent) => { const s = n._s, nx = x0 + (n._t - s.w) / 2, e = { n, d, x: nx, y: rowY[d], s, color, parent }; cards.push(e); let kx = x0 + (n._t - n._kw) / 2; (n.collapsed ? [] : (n.kids || [])).forEach((k, i) => { place(k, d + 1, kx, d === 0 ? STRONG10[(i * 2) % 10] : color, e); kx += k._t + 20; }); };
+	place(o.root, 0, o.x, '#191b1d', null);
+	for (const e of cards) if (e.parent) { const p = e.parent, px = p.x + p.s.w / 2, py = p.y + p.s.h, cx = e.x + e.s.w / 2, cy = e.y, my = cy - 20; polyR(c, [[px, py], [px, my], [cx, my], [cx, cy]], OS.lineR); c.strokeStyle = OS.lineCol === 'parent' ? p.color : OS.lineCol; c.lineWidth = OS.lineCol === 'parent' ? (p.d === 0 ? 3 : 2) : OS.lineW; c.lineJoin = 'round'; c.lineCap = 'round'; c.stroke(); }
+	for (const e of cards) { card(c, e.n, e.x, e.y, e.s, OS, e.color); if (e.n.collapsed) { const t = '+' + e.n.collapsed, w = textW(c, t, 12, 700) + 14, bx = e.x + e.s.w / 2 - w / 2, by = e.y + e.s.h + 4; rr(c, bx, by, w, 20, 10); c.fillStyle = e.color; c.fill(); txt(c, t, bx + w / 2, by + 10.5, 12, 700, '#fff', 'center'); } }
+	if (o.sel) { const x0 = Math.min(...cards.map(e => e.x)), y0 = o.y, x1 = Math.max(...cards.map(e => e.x + e.s.w)), y1 = Math.max(...cards.map(e => e.y + e.s.h)); selRect(c, x0 - 8, y0 - 8, x1 - x0 + 16, y1 - y0 + 16); }
+	return cards;
+}
+function tree(c, o, OS) {
+	const cards = []; let yy = o.y;
+	const walk = (n, d, color, parent) => { const s = cardSize(c, n, { ...OS, band: OS.band === 'top' ? 'left' : OS.band }); const e = { n, d, x: o.x + d * 250, y: yy, s, color, parent }; cards.push(e); yy += s.h + 12; (n.kids || []).forEach((k, i) => walk(k, d + 1, d === 0 ? STRONG10[(i * 3) % 10] : color, e)); };
+	walk(o.root, 0, '#191b1d', null);
+	for (const e of cards) if (e.parent) { const p = e.parent, sx = p.x + p.s.w, sy = p.y + p.s.h / 2, ex = e.x, ey = e.y + e.s.h / 2; polyR(c, [[sx, sy], [sx + 20, sy], [sx + 20, ey], [ex, ey]], OS.lineR); c.strokeStyle = OS.lineCol === 'parent' ? p.color : OS.lineCol; c.lineWidth = OS.lineCol === 'parent' ? 2 : OS.lineW; c.lineJoin = 'round'; c.stroke(); }
+	for (const e of cards) card(c, e.n, e.x, e.y, e.s, { ...OS, band: OS.band === 'top' ? 'left' : OS.band }, e.color);
+	return cards;
+}
+Object.assign(window, { TAB, N4, F4, V6, notepad, frame, lanes, table, mindmap, org, tree, mix });
+</script>
+<script>/* Runde 4 · Varianten und Kacheln: B Notizblock, R Frames, S Swimlanes, T Tabellen, M Mindmaps, O Organigramm/Baum, D zusammen.
+   Notizen (N4 mit Eselsohr), Formen (F4) und Verbinder (V6) sind aus Runde 3 entschieden und werden überall so gezeichnet. */
+let TILES = [];
+const FULL = 1360, HALF = 670;
+function T(cap, spec, cls = 'full') { const id = TILES.length; TILES.push(spec); return `<figure class="tile ${cls}"><canvas data-t="${id}" role="img" aria-label="${cap.replace(/"/g, '')}"></canvas><figcaption>${cap}</figcaption></figure>`; }
+function row(w, h, items) { const pw = w / items.length; return { w, h, panels: items.map((it, i) => ({ x: i * pw, y: 0, w: pw, h, z: it.z || 1, ox: it.ox || 0, oy: it.oy || 0, draw: it.draw, label: it.label, crop: it.crop })) }; }
+const zoomRow = (w, h, p25, p100, p200) => row(w, h, [{ z: .25, label: '25 %', ...p25 }, { z: 1, label: p100.crop ? '100 % · Ausschnitt' : '100 %', ...p100 }, { z: 2, label: '200 % · Ausschnitt', crop: true, ...p200 }]);
+const n4 = (c, x, y, color, text, size = 200) => note(c, { x, y, color, text, size, fs: size < 200 ? 18 : 22 }, N4);
+
+/* ── Varianten ── */
+const BV = {
+	B0: { name: 'Heute', st: { sheets: 2, dx: 4, dy: 4, hard: true, strip: true, focus: 'bottom' },
+		desc: 'Das oberste Blatt ist der Block, zwei Blätter dahinter je 4 nach rechts unten, alle mit harter schwarzer Kante (35 %), kein Schatten; darunter ein grauer Streifen mit dem Titel. Neben echten Notizen sieht der Block aus wie ein Zettel mit Rahmen, der graue Streifen wirkt fremd.', grip: 'Verschieben am grauen Streifen, Abreißen am Blatt.' },
+	B1: { name: 'Stapel im Look N4', st: { sheets: 4, dx: 0, dy: 3, strip: true, focus: 'bottom' },
+		desc: 'Vier Blätter dahinter, je 3 nach unten versetzt, mit der feinen Kante von N4 (kräftiger Ton 18 %) und dem weichen N4-Schatten unter dem untersten Blatt. Man sieht eine Stapelkante wie bei einem echten Block. Der graue Streifen bleibt und stört weiter. Bauen: vier Rechtecke statt zwei.', grip: 'Verschieben am grauen Streifen, Abreißen am Blatt.' },
+	B2: { name: 'Bindung oben', st: { sheets: 3, dx: 0, dy: 3, bind: 30, bindFs: 15, focus: 'top' },
+		desc: 'Oben eine Leimbindung, 30 hoch, im Reiter-Ton der Blockfarbe (wie bei Frames, A2); darauf steht der Titel fett 15. Kein grauer Streifen mehr, drei Blätter als Stapelkante. Sieht sofort wie ein Haftnotizblock aus. Bauen: ein Rechteck und eine Linie, sehr billig.', grip: 'Verschieben an der Bindung, Abreißen am Blatt darunter.' },
+	B3: { name: 'Reiter wie Frames', st: { sheets: 3, dx: 0, dy: 3, tab: true, focus: 'tab' },
+		desc: 'Der Titel steht in einem Reiter über dem Block (Reiter-Ton, fett 18), wie bei Frames. Einheitlich mit Frames, aber der Block sieht dann aus wie ein kleiner Frame – und ohne Titel gibt es keinen Griff. Bauen: der Reiter-Pfad aus Runde 2.', grip: 'Verschieben am Reiter (ohne Titel: nur am Rand), Abreißen am Blatt.' },
+	B4: { name: 'Vorschlag: Bindung mit Abreißkante', st: { sheets: 4, dx: 0, dy: 3, bind: 36, bindFs: 16, perf: true, focus: 'top' },
+		desc: 'B2 etwas kräftiger: Bindung 36 hoch (gut mit Finger und Stift zu treffen), Titel fett 16, darunter eine gestrichelte Abreißkante, vier Blätter als Stapelkante. Ohne Titel bleibt die Bindung als Griff. Kein Eselsohr – das bleibt das Zeichen des abgerissenen Zettels. Bauen: zwei Rechtecke, zwei Linien.', grip: 'Verschieben an der Bindung, Abreißen unter der gestrichelten Kante.' },
+};
+const RV = {
+	R0: { name: 'Heute', st: { border: 'line0', radius: 6 },
+		desc: 'Rand #67686a, 1,5 px, Ecken 6, volle Fläche, Reiter A2. Der Rand hat gegen die Leinwand 5 : 1 und ist klar; auf Gelb und Blau wirkt das Grau fremd.' },
+	R1: { name: 'Ton-in-Ton-Rand (Reiter-Ton)', st: { border: 'tab', radius: 6 },
+		desc: 'Rand im Reiter-Ton der Fläche. Wirkt weich und einheitlich. Aber: der Reiter-Ton ist hell – gegen die Leinwand erreicht er nur 1,4 bis 2,3 : 1 (heute 5 : 1), der Rand von weißen Frames verschwindet fast. Der Kontrast-Mangel wird damit schlechter, nicht besser.' },
+	R2: { name: 'Fläche leiser', st: { border: 'line0', radius: 6, fill: 'soft' },
+		desc: 'Farbige Flächen als 50 % des hellen Tons auf der Leinwand (Gelb #f7eebd statt #faea89), Reiter bleibt kräftig. Notizen und Formen stehen ruhiger darauf, Notizen derselben Farbe heben sich ab. Weiß bleibt Weiß. Bauen: nur die Farbe.' },
+	R3: { name: 'Ohne Rand', st: { border: null, radius: 6, shadow: { y: 1, blur: 4, a: .10 } },
+		desc: 'Kein Rand, ein leiser Schatten (0/1/4, 10 %). Farbige Frames wirken ruhig und modern. Ein weißer Frame auf #f3f2f0 hat nur 1,1 : 1 – er ist fast nur am Schatten zu erkennen, unter 30 % (ohne Schatten) gar nicht mehr.' },
+	R4: { name: 'Vorschlag: Rand im kräftigen Ton, Ecken 8', st: { border: 'strong', radius: 8, sel: 'round', selTab: true },
+		desc: 'Rand im kräftigen Ton der Fläche (Weiß und Grau: #6f6f6d), 1,5 px. Das ist Ton-in-Ton, das wirklich trägt: gegen die Leinwand mindestens 4,5 : 1, auf der eigenen Fläche 2,8 bis 5 : 1. Ecken 8, eine Stufe weicher als Notizen (6) und Formen (4). Ausgewählt: Umriss folgt Frame und Reiter, runde Griffe 12 px (Stift 16), Reiter leicht in Auswahlfarbe getönt.' },
+};
+const S0st = { frame: RV.R0.st, headW: 48, groupW: 48, colH: 60, cgH: 48, head: 'black5', names: 'rot', colFs: 20, div: { head: { col: LINE0, px: 1.5 }, lanes: { col: LINE0, px: 1.5 }, cols: { col: LINE0, px: 1.5 } } };
+const SV = {
+	S0: { name: 'Heute', st: S0st,
+		desc: 'Kopfspalte 48 breit, Schwarz 5 %, Namen fett 20 um −90° gedreht, alle Trenner #67686a 1,5 px wie der Rand. Wirkt wie eine Tabelle: viele gleich starke Linien, gedrehte Schrift.' },
+	S1: { name: 'Farbige Köpfe', st: { ...S0st, head: 'tab' },
+		desc: 'Köpfe im Reiter-Ton der Frame-Fläche – Kopf und Reiter gehören sichtbar zusammen. Alternative S1b: jede Bahn ihr eigener heller Ton – Bahnen sind leichter zu unterscheiden, aber es wird schnell bunt und beißt sich mit Notizfarben. Linien bleiben wie heute.' },
+	S2: { name: 'Weniger Linien', st: { ...S0st, alt: true, div: { head: null, lanes: { col: LINE0, px: 1, a: .5, dash: [6, 4] }, cols: { col: LINE0, px: 1, a: .35, dash: [6, 4] } } },
+		desc: 'Trenner nur fein gestrichelt (1 px, 50 %), Bahnen im Wechsel ganz leicht getönt, kein Trenner an den Köpfen. Viel ruhiger, wirkt nicht mehr wie eine Tabelle. Dagegen: Grenzen sind bei 25 % kaum noch zu sehen.' },
+	S3: { name: 'Köpfe als Plaketten', st: { ...S0st, headW: 0, head: 'none', names: 'pill', div: { head: null, lanes: { col: LINE0, px: 1, a: .6 }, cols: { col: LINE0, px: 1, a: .4 } } },
+		desc: 'Keine Kopfspalte: der Bahnname steht waagrecht als Plakette (Reiter-Ton, fett 15) oben links in der Bahn. Gut lesbar ohne Kopfdrehen, gewinnt 48 Breite. Dagegen: die Plakette liegt im Inhalt, Notizen können sie verdecken; lange Namen werden abgeschnitten.' },
+	S4: { name: 'Vorschlag: ruhige Köpfe, waagrechte Namen', st: { frame: RV.R4.st, headW: 140, groupW: 120, colH: 56, cgH: 44, head: 'tab45', names: 'h', colFs: 16, bigPlus: true, div: { head: null, lanes: { col: 'tab', px: 1 }, cols: { col: 'tab', px: 1, a: .7 } } },
+		desc: 'Kopfspalte 140 breit, Fläche Reiter-Ton zu 45 % über der Frame-Fläche, Namen waagrecht fett 16 links oben (mit Umbruch). Trenner nur zwischen Bahnen und Spalten, 1 px im Reiter-Ton dunkler – keine Linie an den Köpfen, die Fläche trennt. Gruppen eine Stufe kräftiger (75 %). Rahmen wie R4. „+“-Knöpfe 24 px.' },
+};
+const TV = {
+	T0: { name: 'Heute', st: { radius: 0, headFill: HEAD0, hLine: GRID0, vLine: GRID0, lineW: 1, outer: GRID0 },
+		desc: 'Gitter #c6cacf überall gleich stark, Ecken spitz, Kopf #eef1f5, Text 16 oben links. Klar, aber hart; neben Swimlanes und F4 wirkt sie wie aus einem anderen Programm.' },
+	T1: { name: 'Weicher', st: { radius: 6, headFill: HEAD0, hLine: '#dde0e3', vLine: '#dde0e3', lineW: 1, outer: GRID0, headTone: true },
+		desc: 'Außen Ecken 6, inneres Gitter heller (#dde0e3), Außenrand wie heute. Kopf mit Farbe Ton-in-Ton (heller Ton). Freundlicher, ohne an Klarheit zu verlieren.' },
+	T2: { name: 'Nur waagrechte Linien', st: { radius: 6, headFill: null, hLine: '#dde0e3', vLine: null, lineW: 1, headLine: '#3d4044', headLineW: 2, outer: null },
+		desc: 'Senkrechte Linien weg, Kopf nur fett mit einer kräftigen Linie darunter, kein Außenrand. Modern und leicht; bei vielen schmalen Spalten verrutscht aber das Auge, und auf einem Frame fehlt die Kante.' },
+	T3: { name: 'Vorschlag: weich, waagrecht betont, Zelle sichtbar', st: { radius: 6, headFill: HEAD0, hLine: '#d5d8dc', vLine: '#e9ebee', lineW: 1, outer: '#a9adb2', outerPx: 1.5, cellTint: true, bigPlus: true, headTone: true },
+		desc: 'Ecken 6, Außenrand 1,5 px #a9adb2, waagrechte Linien deutlicher als senkrechte, Kopf getönt. Die Zelle im Bearbeiten bekommt zusätzlich 8 % Auswahlfarbe. Eine Kopfspalte (erste Spalte fett und getönt) als Schalter. „+“-Knöpfe 24 px.' },
+};
+const MV = {
+	M0: { name: 'Heute', st: { centerFs: 20, centerR: 8, centerBorder: '#191b1d', main: 'line', deep: 'line', w1: 3, w2: 2, w3: 2, collapse: 'dot' },
+		desc: 'Zentrum als Kasten mit schwarzem Rand, alle Knoten als „Linie“ (Text über Unterstrich), Äste 3/2. Aufgeräumt, aber Zentrum und Hauptäste heben sich kaum ab.' },
+	M1: { name: 'Knoten mit Charakter', st: { centerFs: 22, centerKind: 'pill', centerHue: 'grau', centerBorder: '#3d4044', main: 'pill', mainFill: 'tone', mainFs: 16, mainWt: 700, deep: 'line', w1: 3, w2: 2, w3: 2, collapse: 'dot' },
+		desc: 'Zentrum als große Pille (Grau hell, Rand #3d4044, fett 22), Hauptäste als Pille im hellen Ton der Astfarbe mit Rand, fett 16; tiefere Ebenen bleiben „Linie“. Die Ebenen sind sofort lesbar.' },
+	M2: { name: 'Äste abgestuft', st: { centerFs: 20, centerR: 8, centerBorder: '#191b1d', main: 'line', deep: 'line', taper: true, w1: 4, w2: 2.5, w3: 1.5, collapse: 'dot' },
+		desc: 'Äste werden zum Rand hin dünner: am Zentrum etwa 6, Hauptast 4, dann 2,5 und 1,5, jeder Ast verjüngt sich. Wirkt organisch wie ein gezeichneter Baum. Bauen: jeder Ast ist ein gefüllter Pfad (zwei versetzte Kurven) statt einer Linie – mittel.' },
+	M3: { name: 'Vorschlag: Pillen + abgestufte Äste', st: { centerFs: 20, centerR: 16, centerBorder: '#3d4044', main: 'pill', mainFill: 'tone', mainNoBorder: true, mainFs: 16, mainWt: 700, deep: 'line', taper: true, w1: 4, w2: 2, w3: 1.5, collapse: 'pill', bigPlus: true },
+		desc: 'Zentrum wie eine F4-Form (Radius 16, Rand #3d4044), Hauptäste als Pille im hellen Ton ohne Rand, verjüngte Äste. Zugeklappt eine Plakette „+3“ in der Astfarbe statt eines 7er-Punkts – mit dem Finger zu treffen.' },
+};
+const OV = {
+	O0: { name: 'Heute', st: { radius: 8, fill: 'white', band: 'top', border: 'node', bw: 2, roleFs: 16, roleCol: INK, minW: 120, lineCol: 'parent', lineR: 0 },
+		desc: 'Weiße Karten mit Rand in der Knotenfarbe und 6 hohem Farbband oben, Name fett, Rolle normal 16; Linien in Elternfarbe mit spitzen Knicken. Bunt und etwas laut.' },
+	O1: { name: 'Karten im Look F4', st: { radius: 8, fill: 'white', band: 'top', border: '#3d4044', bw: 2, roleFs: 16, roleCol: INK, minW: 120, lineCol: '#3d4044', lineW: 2, lineR: 10 },
+		desc: 'Rand #3d4044 wie F4, Farbband oben bleibt die einzige Farbe, Linien #3d4044 mit runden Knicken (10) wie V6. Ruhig, passt zu Formen und Verbindern.' },
+	O2: { name: 'Vorschlag: Fläche im hellen Ton, Initialen', st: { radius: 8, fill: 'tone', band: null, border: null, initials: true, roleFs: 14, roleCol: MUTED, minW: 170, lineCol: '#8a8c8e', lineW: 1.5, lineR: 10 },
+		desc: 'Karten ohne Rand im hellen Ton der Zweigfarbe, ein Initialen-Kreis im kräftigen Ton, Rolle kleiner (14) in Grau, Linien leise (#8a8c8e, 1,5, Radius 10). Freundlich und gut lesbar; dagegen: die Karten sehen Notizen ähnlicher.' },
+};
+
+/* ── Teil B ── */
+function partB(code) {
+	const st = BV[code].st; let t = '';
+	const pad = (c, x, y, color, title, sel) => notepad(c, { x, y, color, title, sel }, st);
+	const yTop = st.tab ? 60 : 30;
+	t += T('Hellblau, Gelb, Weiß · kurzer Titel', row(FULL, 330, ['hellblau', 'gelb', 'weiss'].map(col => ({ z: .95, ox: 120, oy: yTop, draw: c => pad(c, 0, 0, col, 'Ideen') }))));
+	t += T('Kurzer, langer und kein Titel', row(FULL, 330, [['Ideen', 'kurz'], ['Ideen aus dem Kundenworkshop am Dienstag', 'lang'], ['', 'ohne Titel']].map(([ti, l]) => ({ z: .95, ox: 120, oy: yTop, label: l, draw: c => pad(c, 0, 0, 'gelb', ti) }))));
+	t += T(`Ausgewählt, neben zwei abgerissenen Notizen derselben Farbe · ${BV[code].grip}`, { w: FULL, h: 330, z: .9, ox: 40, oy: yTop, draw: c => { pad(c, 0, 0, 'hellblau', 'Ideen', true); n4(c, 330, 0, 'hellblau', 'Mehr Kundeninterviews'); n4(c, 590, 0, 'hellblau', 'Kürzere Releases'); pad(c, 900, 0, 'gelb', 'Fragen'); n4(c, 1170, 0, 'gelb', 'Wer entscheidet?'); } });
+	const f = st.focus, p200 = f === 'bottom' ? { ox: 20, oy: -310 } : f === 'tab' ? { ox: 20, oy: 90 } : { ox: 20, oy: 30 };
+	t += T('Zoom 25 % · 100 % · 200 % (unter 30 % kein Titel)', zoomRow(FULL, 320, { ox: 30, oy: 90, draw: c => [0, 280, 560].forEach((x, i) => pad(c, x, 0, ['hellblau', 'gelb', 'weiss'][i], 'Ideen')) }, { ox: 120, oy: yTop, draw: c => pad(c, 0, 0, 'hellblau', 'Ideen') }, { ...p200, draw: c => pad(c, 0, 0, 'hellblau', 'Ideen') }));
+	return t;
+}
+/* ── Teil R ── */
+function onFrame(c, x, y) { n4(c, x + 30, y + 40, 'hellblau', 'Pairing hilft', 160); n4(c, x + 210, y + 40, 'gelb', 'Tests zu langsam', 160); const A = { k: 'round', x: x + 420, y: y + 60, w: 180, h: 100, text: 'Prüfen' }, B = { k: 'diamond', x: x + 680, y: y + 30, w: 160, h: 160, text: 'OK?' }; shape(c, A, F4); shape(c, B, F4); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l'), label: 'weiter' }, V6); }
+function partR(code) {
+	const st = RV[code].st; let t = '';
+	t += T('Weiß, Gelb, Hellblau, Salbei, Schwarz · mit Titel', row(FULL, 240, ['weiss', 'gelb', 'hellblau', 'salbei', 'schwarz'].map(col => ({ ox: 20, oy: 56, draw: c => frame(c, { x: 0, y: 0, w: 230, h: 150, color: col, title: { weiss: 'Ideen', gelb: 'Retro', hellblau: 'Backlog', salbei: 'Fertig', schwarz: 'Dunkel' }[col] }, st) }))));
+	t += T('Ohne Titel · ohne Titel ausgewählt', row(HALF, 260, [{ ox: 30, oy: 60, draw: c => frame(c, { x: 0, y: 0, w: 260, h: 160, color: 'weiss', inside: c2 => { n4(c2, 20, 20, 'hellblau', 'Notiz', 110); n4(c2, 140, 20, 'gelb', 'Notiz', 110); } }, st) }, { ox: 30, oy: 60, draw: c => frame(c, { x: 0, y: 0, w: 260, h: 160, color: 'gelb', sel: true, inside: c2 => { n4(c2, 20, 20, 'hellblau', 'Notiz', 110); n4(c2, 140, 20, 'salbei', 'Notiz', 110); } }, st) }]), 'half');
+	t += T('Zwei Frames knapp neben- und untereinander (Abstand 16)', { w: HALF, h: 260, z: .7, ox: 20, oy: 50, draw: c => { frame(c, { x: 0, y: 0, w: 420, h: 120, color: 'weiss', title: 'Links' }, st); frame(c, { x: 436, y: 0, w: 420, h: 120, color: 'gelb', title: 'Rechts' }, st); frame(c, { x: 0, y: 136, w: 420, h: 120, color: 'hellblau', title: 'Darunter' }, st); } }, 'half');
+	t += T('Mit Notizen (N4), Formen (F4) und einem Verbinder (V6) · Salbei, ausgewählt', { w: FULL, h: 330, z: .9, ox: 40, oy: 56, draw: c => frame(c, { x: 0, y: 0, w: 900, h: 240, color: 'salbei', title: 'Sprint 12', sel: true, inside: c2 => onFrame(c2, 0, 0) }, st) }, 'full');
+	t += T('Ausgewählt bei 25 % · 100 % · 200 %', zoomRow(FULL, 300, { ox: 40, oy: 90, draw: c => frame(c, { x: 0, y: 0, w: 900, h: 240, color: 'gelb', title: 'Retro', sel: true, inside: c2 => onFrame(c2, 0, 0) }, st) }, { ox: 30, oy: 60, draw: c => frame(c, { x: 0, y: 0, w: 380, h: 180, color: 'gelb', title: 'Retro', sel: true }, st) }, { ox: 40, oy: 100, draw: c => frame(c, { x: 0, y: 0, w: 380, h: 180, color: 'gelb', title: 'Retro', sel: true }, st) }));
+	if (code === 'R4') t += T('Ausgewählt: vier Lösungen · heute · Umriss folgt Frame und Reiter · runde Griffe auch an den Seiten · Reiter in Auswahlfarbe (empfohlen)', row(FULL, 280, [['today', false, 'heute: Kasten, eckige Griffe'], ['follow', false, 'Umriss folgt Reiter und Ecken'], ['round-mid', false, 'runde Griffe, auch Seitenmitten'], ['round', true, 'Empfehlung: rund, Reiter getönt']].map(([s, tab, l]) => ({ ox: 40, oy: 70, label: l, draw: c => frame(c, { x: 0, y: 0, w: 250, h: 150, color: 'gelb', title: 'Retro', sel: true, selStyle: s }, { ...st, selTab: tab }) }))));
+	return t;
+}
+/* ── Teil S ── */
+const FLOW = (c, g) => { const A = { k: 'round', x: g.x + 30, y: g.y + g.lh + (g.lh - 80) / 2, w: 150, h: 80, text: 'Anfrage prüfen' }, B = { k: 'diamond', x: g.x + 250, y: g.y + g.lh + (g.lh - 120) / 2, w: 120, h: 120, text: 'Lager?' }, C = { k: 'round', x: g.x + 440, y: g.y + 2 * g.lh + (g.lh - 80) / 2, w: 150, h: 80, text: 'Versenden', color: 'salbei' }; [A, B, C].forEach(s => shape(c, s, F4)); connector(c, { a: anchor(A, 'r'), b: anchor(B, 'l') }, V6); connector(c, { a: anchor(B, 'b'), b: anchor(C, 'l'), label: 'ja' }, V6); n4(c, g.x + 30, g.y + (g.lh - 120) / 2, 'hellblau', 'Kunde ruft an', 120); };
+function partS(code) {
+	const st = SV[code].st; let t = '';
+	t += T('Standard: 3 Bahnen, keine Spalten, ohne Titel (1200 × 600)', { w: HALF, h: 360, z: .5, ox: 20, oy: 40, draw: c => lanes(c, { x: 0, y: 0, w: 1200, h: 600, lanes: ['Lane 1', 'Lane 2', 'Lane 3'] }, st) }, 'half');
+	t += T('Lange Bahnnamen · ausgewählt mit „+“', { w: HALF, h: 360, z: .5, ox: 20, oy: 40, draw: c => lanes(c, { x: 0, y: 0, w: 1100, h: 480, lanes: ['Kundenservice und Beschwerden', 'Lager', 'Buchhaltung und Controlling'], sel: true }, st) }, 'half');
+	t += T('4 Bahnen × 3 Spalten · Bahngruppe „Team“ und Spaltengruppe „Sprint 12“ · Gelb mit Titel · Notizen und Ablauf darin', { w: FULL, h: 640, z: .78, ox: 20, oy: 50, draw: c => lanes(c, { x: 0, y: 0, w: 1640, h: 700, color: 'gelb', title: 'Bestellprozess', lanes: ['Kunde', 'Shop', 'Lager', 'Versand'], cols: ['Planen', 'Bauen', 'Prüfen'], laneGroups: [{ name: 'Team', from: 1, to: 2 }], colGroups: [{ name: 'Sprint 12', from: 0, to: 1 }], content: FLOW }, st) });
+	if (code === 'S1') t += T('S1b: je Bahn ein eigener heller Ton', { w: HALF, h: 360, z: .5, ox: 20, oy: 40, draw: c => lanes(c, { x: 0, y: 0, w: 1200, h: 600, lanes: ['Kunde', 'Shop', 'Lager'] }, { ...st, head: 'lanes' }) }, 'half');
+	t += T('Zoom 25 % · 100 % · 200 %', zoomRow(FULL, 320, { ox: 30, oy: 60, draw: c => lanes(c, { x: 0, y: 0, w: 1640, h: 700, color: 'gelb', title: 'Bestellprozess', lanes: ['Kunde', 'Shop', 'Lager', 'Versand'], cols: ['Planen', 'Bauen', 'Prüfen'], content: FLOW }, st) }, { ox: 20, oy: 50, crop: true, draw: c => lanes(c, { x: 0, y: 0, w: 1640, h: 700, color: 'gelb', title: 'Bestellprozess', lanes: ['Kunde', 'Shop', 'Lager', 'Versand'], cols: ['Planen', 'Bauen', 'Prüfen'], content: FLOW }, st) }, { ox: 20, oy: 90, draw: c => lanes(c, { x: 0, y: 0, w: 1640, h: 700, color: 'gelb', title: 'Bestellprozess', lanes: ['Kunde', 'Shop', 'Lager', 'Versand'], cols: ['Planen', 'Bauen', 'Prüfen'], content: FLOW }, st) }));
+	return t;
+}
+/* ── Teil T ── */
+const T33 = { cols: [160, 160, 160], rows: [['Aufgabe', 'Wer', 'Bis'], ['Umfrage', 'Lena', 'Fr'], ['Auswertung', 'Ali', 'Mo']] };
+const T56 = { cols: [150, 220, 150, 260, 140], rows: [['Thema', 'Beschreibung', 'Verantwortlich', 'Nächster Schritt', 'Status'], ['Onboarding', 'Neue Kundinnen brauchen zu lange bis zum ersten Board', 'Lena', 'Interviews mit fünf neuen Teams auswerten', 'offen'], ['Suche', 'Treffer in Kommentaren fehlen', 'Ali', 'Index um Kommentare erweitern', 'in Arbeit'], ['Export', 'PDF schneidet breite Swimlanes ab', 'Mira', 'Seitengröße automatisch wählen', 'offen'], ['Tablet', 'Stift trifft kleine Griffe schlecht', 'Jonas', 'Griffe auf 16 px vergrößern und testen', 'fertig'], ['Vorlagen', 'Retro-Vorlage fehlt', 'Lena', 'Entwurf aus Runde 4 übernehmen', 'offen']] };
+function partT(code) {
+	const st = TV[code].st; let t = '';
+	t += T('3 × 3 Standard · Kopf Standard', { w: HALF, h: 200, ox: 40, oy: 40, draw: c => table(c, { x: 0, y: 0, ...T33 }, st) }, 'half');
+	t += T('3 × 3 · Kopf Gelb', { w: HALF, h: 200, ox: 40, oy: 40, draw: c => table(c, { x: 0, y: 0, ...T33, headColor: 'gelb' }, st) }, 'half');
+	t += T('5 Spalten × 6 Zeilen mit langen Texten', { w: FULL, h: 470, ox: 40, oy: 30, draw: c => table(c, { x: 0, y: 0, ...T56 }, st) });
+	t += T('Ausgewählt mit „+“ · eine Zelle im Bearbeiten', { w: HALF, h: 260, ox: 40, oy: 40, draw: c => table(c, { x: 0, y: 0, ...T33, sel: true, edit: [1, 1] }, st) }, 'half');
+	t += T('Auf einem Frame (R4)', { w: HALF, h: 260, ox: 30, oy: 56, draw: c => frame(c, { x: 0, y: 0, w: 600, h: 180, color: 'salbei', title: 'Aufgaben', inside: c2 => table(c2, { x: 30, y: 30, ...T33 }, st) }, RV.R4.st) }, 'half');
+	if (code === 'T3') t += T('Mit Kopfspalte (Schalter) · Kopf Hellblau', { w: HALF, h: 200, ox: 40, oy: 40, draw: c => table(c, { x: 0, y: 0, ...T33, headColor: 'hellblau', headCol: true }, st) }, 'half');
+	t += T('Zoom 25 % · 100 % · 200 % (unter 30 % kein Zellentext)', zoomRow(FULL, 300, { ox: 40, oy: 90, draw: c => table(c, { x: 0, y: 0, ...T56 }, st) }, { ox: 30, oy: 60, draw: c => table(c, { x: 0, y: 0, ...T33, cols: [130, 130, 130] }, st) }, { ox: 30, oy: 40, draw: c => table(c, { x: 0, y: 0, ...T33, edit: [1, 0] }, st) }));
+	return t;
+}
+/* ── Teil M ── */
+const MM = () => ({ center: 'Produktstart Herbst', branches: [
+	{ text: 'Marketing', kids: [{ text: 'Blogartikel' }, { text: 'Newsletter', kids: [{ text: 'Vorlage' }, { text: 'Versand Di' }] }, { text: 'Messe' }] },
+	{ text: 'Support', kids: [{ text: 'FAQ überarbeiten und mit den häufigsten Fragen aus dem Forum ergänzen' }, { text: 'Schulung', box: 'round' }] },
+	{ text: 'Technik', collapsed: 3, kids: [{ text: 'A' }, { text: 'B' }, { text: 'C' }] },
+	{ text: 'Vertrieb', kids: [{ text: 'Preisliste', box: 'rect' }, { text: 'Partner' }] }] });
+function partM(code) {
+	const st = MV[code].st; let t = '';
+	t += T('Zentrum, 4 Hauptäste, Unterknoten, eine Ebene tiefer · „Technik“ zugeklappt · langer Text · gemischt Linie und Kasten', { w: FULL, h: 470, ox: 0, oy: 0, draw: c => mindmap(c, { x: 680, y: 235, ...MM() }, st) });
+	t += T('Ausgewählt, fokussierter Knoten „Support“ mit „+“ für Kind und Geschwister', { w: FULL, h: 470, ox: 0, oy: 0, draw: c => mindmap(c, { x: 680, y: 235, ...MM(), sel: true, focus: 'Support' }, st) });
+	t += T('Zoom 25 % · 100 % · 200 %', zoomRow(FULL, 300, { ox: 226, oy: 150, draw: c => mindmap(c, { x: 0, y: 0, ...MM() }, st) }, { ox: 200, oy: 150, draw: c => mindmap(c, { x: 0, y: 0, center: 'Start', branches: [{ text: 'Marketing' }, { text: 'Support' }] }, st) }, { ox: 226, oy: 150, draw: c => mindmap(c, { x: 0, y: 0, center: 'Produktstart', branches: [{ text: 'Marketing', kids: [{ text: 'Blog' }] }, { text: 'Support' }] }, st) }));
+	return t;
+}
+/* ── Teil O ── */
+const ORG = () => ({ name: 'Mira Schulz', role: 'Leitung', kids: [
+	{ name: 'Ali Demir', role: 'Technik', kids: [{ name: 'Jonas Weber', role: 'Backend' }, { name: 'Sara Kühn', role: 'Frontend' }] },
+	{ name: 'Lena Hoffmann-Wittgenstein', role: 'Produkt und Design', kids: [{ name: 'Tom Berg', role: 'Design' }] },
+	{ name: 'Can Yilmaz', role: 'Support', kids: [{ name: 'Eva Lang', role: 'Erste Hilfe' }, { name: 'Ben Roth', role: 'Schulungen' }] }] });
+function partO(code) {
+	const st = OV[code].st; let t = '';
+	t += T('Organigramm, 3 Ebenen, 1 + 3 + 5 Karten, ein langer Name', { w: FULL, h: 360, ox: 40, oy: 30, draw: c => org(c, { x: 0, y: 0, root: ORG() }, st) });
+	t += T('Ein Zweig zugeklappt · ausgewählt', { w: HALF, h: 300, z: .7, ox: 20, oy: 30, draw: c => { const r = ORG(); r.kids[2].collapsed = 2; delete r.kids[2].kids; r.kids[0].kids = r.kids[0].kids; org(c, { x: 0, y: 0, root: r, sel: true }, st); } }, 'half');
+	t += T('Baum, 3 Ebenen', { w: HALF, h: 330, z: .42, ox: 30, oy: 20, draw: c => tree(c, { x: 0, y: 0, root: ORG() }, st) }, 'half');
+	t += T('Zoom 25 % · 100 % · 200 %', zoomRow(FULL, 300, { ox: 30, oy: 90, draw: c => org(c, { x: 0, y: 0, root: ORG() }, st) }, { ox: 20, oy: 30, draw: c => org(c, { x: 0, y: 0, root: { name: 'Mira Schulz', role: 'Leitung', kids: [{ name: 'Ali Demir', role: 'Technik' }, { name: 'Can Yilmaz', role: 'Support' }] } }, st) }, { ox: -160, oy: 30, draw: c => org(c, { x: 0, y: 0, root: { name: 'Mira Schulz', role: 'Leitung', kids: [{ name: 'Ali Demir', role: 'Technik' }, { name: 'Can Yilmaz', role: 'Support' }] } }, st) }));
+	return t;
+}
+/* ── Teil D ── */
+function board(B, R, S, Tt, M) {
+	return c => {
+		lanes(c, { x: 20, y: 50, w: 900, h: 420, color: 'weiss', title: 'Bestellprozess', lanes: ['Kunde', 'Shop', 'Lager'], content: (c2, g) => { const A = { k: 'round', x: g.x + 30, y: g.y + (g.lh - 70) / 2, w: 150, h: 70, text: 'Bestellung' }, D = { k: 'diamond', x: g.x + 260, y: g.y + g.lh + (g.lh - 110) / 2, w: 110, h: 110, text: 'Bezahlt?' }, E = { k: 'round', x: g.x + 470, y: g.y + 2 * g.lh + (g.lh - 70) / 2, w: 150, h: 70, text: 'Packen', color: 'salbei' }; [A, D, E].forEach(s => shape(c2, s, F4)); connector(c2, { a: anchor(A, 'r'), b: anchor(D, 't') }, V6); connector(c2, { a: anchor(D, 'b'), b: anchor(E, 'l'), label: 'ja' }, V6); } }, S);
+		frame(c, { x: 970, y: 50, w: 600, h: 420, color: 'gelb', title: 'Retro Sprint 12', inside: c2 => { n4(c2, 1000, 90, 'hellblau', 'Deploys laufen automatisch', 170); n4(c2, 1190, 90, 'salbei', 'Pairing hilft', 170); n4(c2, 1000, 280, 'koralle', 'Tests zu langsam', 170); notepad(c2, { x: 1300, y: 275, size: 140, color: 'gelb', title: 'Neue Ideen' }, B); } }, R);
+		table(c, { x: 20, y: 540, cols: [170, 120, 110], rows: [['Aufgabe', 'Wer', 'Bis'], ['Umfrage auswerten', 'Lena', 'Fr'], ['Retro-Vorlage', 'Ali', 'Mo'], ['Tablet testen', 'Jonas', 'Di']] }, Tt);
+		mindmap(c, { x: 1000, y: 650, center: 'Nächster Sprint', branches: [{ text: 'Tests', kids: [{ text: 'schneller' }, { text: 'stabiler' }] }, { text: 'Tablet', kids: [{ text: 'Griffe' }] }, { text: 'Doku', kids: [{ text: 'Vorlagen' }] }, { text: 'Export' }] }, M);
+	};
+}
+function partD() {
+	return T('Heute: B0 · R0 · S0 · T0 · M0 (Notizen, Formen, Verbinder schon wie Runde 3)', { w: FULL, h: 720, z: .84, ox: 10, oy: 10, draw: board(BV.B0.st, RV.R0.st, SV.S0.st, TV.T0.st, MV.M0.st) })
+		+ T('Empfehlung: B4 · R4 · S4 · T3 · M3 (dazu O1 für Organigramme)', { w: FULL, h: 720, z: .84, ox: 10, oy: 10, draw: board(BV.B4.st, RV.R4.st, SV.S4.st, TV.T3.st, MV.M3.st) });
+}
+/* ── Übersichten: Paare heute / anders ── */
+const pair = (cap, a, b, h = 300) => T(cap, row(HALF, h, [a, b]), 'half');
+function overview(p) {
+	if (p === 'B') return pair('Block oder Zettel? heute · B4', { z: .6, ox: 30, oy: 50, label: 'heute', draw: c => { notepad(c, { x: 0, y: 0, color: 'hellblau', title: 'Ideen' }, BV.B0.st); n4(c, 240, 0, 'hellblau', 'Zettel'); } }, { z: .6, ox: 30, oy: 50, label: 'B4', draw: c => { notepad(c, { x: 0, y: 0, color: 'hellblau', title: 'Ideen' }, BV.B4.st); n4(c, 240, 0, 'hellblau', 'Zettel'); } }, 320)
+		+ pair('Blätter dahinter: harte Kante · Stapel im N4-Look', { ox: 60, oy: 40, label: 'heute', draw: c => notepad(c, { x: 0, y: 0, color: 'gelb', title: '' }, BV.B0.st) }, { ox: 60, oy: 40, label: 'B1', draw: c => notepad(c, { x: 0, y: 0, color: 'gelb', title: '' }, { ...BV.B1.st, strip: false }) }, 280)
+		+ T('Alle Varianten nebeneinander', row(FULL, 320, Object.keys(BV).map(k => ({ z: .8, ox: 50, oy: BV[k].st.tab ? 60 : 36, label: k + ' · ' + BV[k].name, draw: c => notepad(c, { x: 0, y: 0, color: 'hellblau', title: 'Ideen' }, BV[k].st) }))));
+	if (p === 'R') return pair('Rand auf Gelb: #67686a · kräftiger Ton', { ox: 40, oy: 60, label: 'heute', draw: c => frame(c, { x: 0, y: 0, w: 250, h: 160, color: 'gelb', title: 'Retro' }, RV.R0.st) }, { ox: 40, oy: 60, label: 'R4', draw: c => frame(c, { x: 0, y: 0, w: 250, h: 160, color: 'gelb', title: 'Retro' }, RV.R4.st) }, 260)
+		+ pair('Weißer Frame: Reiter-Ton (R1) · ohne Rand (R3) – beide fast unsichtbar', { ox: 40, oy: 60, label: 'R1', draw: c => frame(c, { x: 0, y: 0, w: 250, h: 160, color: 'weiss', title: 'Ideen' }, RV.R1.st) }, { ox: 40, oy: 60, label: 'R3', draw: c => frame(c, { x: 0, y: 0, w: 250, h: 160, color: 'weiss', title: 'Ideen' }, RV.R3.st) }, 260)
+		+ T('Alle Varianten nebeneinander · Gelb mit Notizen', row(FULL, 260, Object.keys(RV).map(k => ({ z: .5, ox: 20, oy: 50, label: k + ' · ' + RV[k].name.split(':')[0], draw: c => frame(c, { x: 0, y: 0, w: 480, h: 300, color: 'gelb', title: 'Retro', inside: c2 => { n4(c2, 30, 40, 'hellblau', 'Notiz', 160); n4(c2, 230, 40, 'gelb', 'Gelbe Notiz', 160); } }, RV[k].st) }))));
+	if (p === 'S') return pair('Streng oder ruhig: heute · S4', { z: .38, ox: 20, oy: 40, label: 'heute', draw: c => lanes(c, { x: 0, y: 0, w: 760, h: 420, lanes: ['Kunde', 'Shop', 'Lager'], cols: ['Planen', 'Bauen'], content: FLOW }, SV.S0.st) }, { z: .38, ox: 20, oy: 40, label: 'S4', draw: c => lanes(c, { x: 0, y: 0, w: 760, h: 420, lanes: ['Kunde', 'Shop', 'Lager'], cols: ['Planen', 'Bauen'], content: FLOW }, SV.S4.st) }, 300)
+		+ pair('Gedrehte Schrift (heute) · waagrecht (S4)', { ox: 30, oy: 30, label: 'heute: −90°, fett 20', draw: c => lanes(c, { x: 0, y: 0, w: 280, h: 220, lanes: ['Kundenservice', 'Lager'] }, SV.S0.st) }, { ox: 30, oy: 30, label: 'S4: waagrecht, fett 16', draw: c => lanes(c, { x: 0, y: 0, w: 280, h: 220, lanes: ['Kundenservice', 'Lager'] }, SV.S4.st) }, 300)
+		+ T('Alle Varianten nebeneinander', row(FULL, 240, Object.keys(SV).map(k => ({ z: .22, ox: 14, oy: 30, label: k, draw: c => lanes(c, { x: 0, y: 0, w: 1100, h: 700, lanes: ['Kunde', 'Shop', 'Lager'], cols: ['Planen', 'Bauen'], content: FLOW }, SV[k].st) }))));
+	if (p === 'T') return pair('Tabelle oder Swimlane? T3 · S4 – weiße Zellen mit Gitter gegen getönte Kopfspalte ohne Zellen', { z: .6, ox: 30, oy: 60, label: 'T3', draw: c => table(c, { x: 0, y: 0, ...T33 }, TV.T3.st) }, { z: .6, ox: 20, oy: 50, label: 'S4', draw: c => lanes(c, { x: 0, y: 0, w: 520, h: 300, lanes: ['Aufgabe', 'Wer'] }, SV.S4.st) }, 280)
+		+ pair('Gitter: überall gleich (heute) · waagrecht betont (T3)', { z: .6, ox: 30, oy: 50, label: 'heute', draw: c => table(c, { x: 0, y: 0, ...T33 }, TV.T0.st) }, { z: .6, ox: 30, oy: 50, label: 'T3', draw: c => table(c, { x: 0, y: 0, ...T33 }, TV.T3.st) }, 220)
+		+ T('Alle Varianten nebeneinander', row(FULL, 220, Object.keys(TV).map(k => ({ z: .62, ox: 20, oy: 30, label: k + ' · ' + TV[k].name.split(':')[0], draw: c => table(c, { x: 0, y: 0, ...T33 }, TV[k].st) }))));
+	if (p === 'M') return pair('Ebenen: alles Linie (heute) · Pillen und abgestufte Äste (M3)', { z: .27, ox: 335 / 2, oy: 150, label: 'heute', draw: c => mindmap(c, { x: 0, y: 0, ...MM() }, MV.M0.st) }, { z: .27, ox: 335 / 2, oy: 150, label: 'M3', draw: c => mindmap(c, { x: 0, y: 0, ...MM() }, MV.M3.st) }, 300)
+		+ pair('Zugeklappt: Punkt 7 (heute) · Plakette „+3“ (M3)', { z: 1.5, ox: -60, oy: 150, crop: true, label: 'heute', draw: c => mindmap(c, { x: 0, y: 0, center: 'Start', branches: [{ text: 'Technik', collapsed: 3, kids: [{ text: 'a' }] }] }, MV.M0.st) }, { z: 1.5, ox: -60, oy: 150, crop: true, label: 'M3', draw: c => mindmap(c, { x: 0, y: 0, center: 'Start', branches: [{ text: 'Technik', collapsed: 3, kids: [{ text: 'a' }] }] }, MV.M3.st) }, 300)
+		+ T('Alle Varianten nebeneinander', row(FULL, 260, Object.keys(MV).map(k => ({ z: .26, ox: 170, oy: 130, label: k + ' · ' + MV[k].name.split(':')[0], draw: c => mindmap(c, { x: 0, y: 0, ...MM() }, MV[k].st) }))));
+	if (p === 'O') return pair('Karte: bunter Rand (heute) · F4-Look (O1)', { ox: 20, oy: 40, label: 'heute', draw: c => org(c, { x: 0, y: 0, root: { name: 'Mira Schulz', role: 'Leitung', kids: [{ name: 'Ali Demir', role: 'Technik' }] } }, OV.O0.st) }, { ox: 20, oy: 40, label: 'O1', draw: c => org(c, { x: 0, y: 0, root: { name: 'Mira Schulz', role: 'Leitung', kids: [{ name: 'Ali Demir', role: 'Technik' }] } }, OV.O1.st) }, 260)
+		+ pair('Baum in O1 · in O2', { z: .4, ox: 12, oy: 20, label: 'O1', draw: c => tree(c, { x: 0, y: 0, root: ORG() }, OV.O1.st) }, { z: .4, ox: 12, oy: 20, label: 'O2', draw: c => tree(c, { x: 0, y: 0, root: ORG() }, OV.O2.st) }, 320)
+		+ T('Alle Varianten nebeneinander', row(FULL, 240, Object.keys(OV).map(k => ({ z: .41, ox: 14, oy: 30, label: k + ' · ' + OV[k].name.split(':')[0], draw: c => org(c, { x: 0, y: 0, root: ORG() }, OV[k].st) }))));
+	return '';
+}
+Object.assign(window, { BV, RV, SV, TV, MV, OV, partB, partR, partS, partT, partM, partO, partD, overview, resetTiles: () => { TILES = []; } });
+</script>
+<script>/* Runde 4 · Seite: Umschalter B / R / S / T / M / O / D, Varianten, Links wie #S2 */
+const PARTS = {
+	B: { label: 'B · Notizblock', V: BV, one: partB, title: 'Notizblock', intro: 'Was einen Block vom Zettel unterscheidet: Blätter dahinter (Stapelkante), eine Bindung oben, wo der Titel steht und wo man greift. Kein Eselsohr am Block – das bleibt das Zeichen der abgerissenen Notiz (N4).' },
+	R: { label: 'R · Frames', V: RV, one: partR, title: 'Frames', intro: 'Rand und Fläche, und wie ein ausgewählter Frame aussieht. Der Reiter A2 aus Runde 2 bleibt. Wichtig: Ein Rand im hellen Reiter-Ton (R1) ist auf der hellen Leinwand kaum zu sehen; der kräftige Ton derselben Farbe (R4) trägt.' },
+	S: { label: 'S · Swimlanes', V: SV, one: partS, title: 'Swimlanes', intro: 'Was Swimlanes streng oder ruhig macht: viele gleich starke Linien, gedrehte Schrift und graue Köpfe wirken wie eine Tabelle. Weniger, feinere Linien, getönte Köpfe und waagrechte Namen wirken ruhiger.' },
+	T: { label: 'T · Tabellen', V: TV, one: partT, title: 'Tabellen', intro: 'Tabellen passend zu Swimlanes und F4 – ähnlich weich, aber klar anders: Tabellen haben weiße Zellen mit Gitter und eine getönte Kopfzeile oben, Swimlanes eine getönte Kopfspalte links und keine Zellen.' },
+	M: { label: 'M · Mindmaps', V: MV, one: partM, title: 'Mindmaps', intro: 'Was eine Mindmap lebendig macht: ein Zentrum, das klar anders ist, Hauptäste, die als Fläche hervortreten, und Äste, die nach außen dünner werden.' },
+	O: { label: 'O · Organigramm/Baum', V: OV, one: partO, title: 'Organigramm und Baum', intro: 'Karten und Linien im Look von F4 und V6: ruhiger Rand, eine Farbe pro Zweig, runde Knicke.' },
+	D: { label: 'D · Zusammen', title: 'Zusammen', intro: 'Ein Board-Ausschnitt mit Swimlane und Ablauf, Frame mit Notizen und Notizblock, Tabelle und Mindmap – einmal heute, einmal mit B4, R4, S4, T3 und M3. Sie passen zusammen, weil überall dieselben Regeln gelten: Ränder und Köpfe im Ton der eigenen Farbe statt Grau, Ecken in drei Stufen (Formen 4, Notizen 6, Container 8), wenige feine Linien, waagrechte Schrift, und Schatten nur bei Notizen.' },
+};
+let ST = { p: 'B', v: 'O' };
+function parseHash() {
+	const h = (location.hash || '').slice(1).toUpperCase();
+	if (h === 'D') return { p: 'D', v: 'D' };
+	if (/^[BRSTMO]$/.test(h)) return { p: h, v: 'O' };
+	if (/^[BRSTMO]\d$/.test(h) && PARTS[h[0]].V[h]) return { p: h[0], v: h };
+	return null;
+}
+function go(p, v) { ST = { p, v }; try { history.replaceState(null, '', '#' + (v === 'O' ? p : v)); localStorage.setItem('knorke-r4', JSON.stringify(ST)); } catch (e) { } render(); window.scrollTo(0, 0); }
+function header() {
+	const P = PARTS[ST.p], list = P.V ? Object.keys(P.V) : [];
+	return `<div class="hrow"><div class="brand">Knorke <span>· Runde 4</span></div>
+	<div class="seg" role="tablist" aria-label="Teil">${Object.entries(PARTS).map(([k, v]) => `<button role="tab" aria-selected="${ST.p === k}" data-part="${k}">${v.label}</button>`).join('')}</div>
+	${list.length ? `<nav class="pills" aria-label="Varianten"><button data-v="O" aria-current="${ST.v === 'O'}">Übersicht</button>${list.map(c => `<button data-v="${c}" aria-current="${ST.v === c}" class="code">${c}</button>`).join('')}</nav>` : ''}</div>`;
+}
+const hero = (code, name, desc) => `<div class="hero"><div class="bigcode" aria-label="Variante ${code}">${code}</div><div><h2>${name}</h2><p>${desc}</p></div></div>`;
+function render() {
+	resetTiles();
+	document.getElementById('hdr').innerHTML = header();
+	const P = PARTS[ST.p], m = document.getElementById('main');
+	if (ST.p === 'D') m.innerHTML = hero('D', P.title, P.intro) + `<section class="sec"><div class="tiles">${partD()}</div></section>`;
+	else if (ST.v === 'O') m.innerHTML = hero(ST.p, P.title, P.intro) + `<section class="sec"><h3>Heute und anders, als Paare</h3><div class="tiles">${overview(ST.p)}</div></section>
+		<section class="sec"><h3>Varianten</h3><ul class="vlist">${Object.entries(P.V).map(([k, v]) => `<li><a class="code-s" href="#${k}" data-go="${k}">${k}</a><div><b>${v.name}</b><p>${v.desc}</p></div></li>`).join('')}</ul></section>`;
+	else { const v = P.V[ST.v]; m.innerHTML = hero(ST.v, v.name, v.desc) + `<section class="sec"><h3>Alle Zustände</h3><div class="tiles">${P.one(ST.v)}</div></section>`; }
+	m.querySelectorAll('canvas[data-t]').forEach(cv => paint(cv, TILES[+cv.dataset.t]));
+}
+document.addEventListener('click', e => {
+	const p = e.target.closest('[data-part]'); if (p) return go(p.dataset.part, p.dataset.part === 'D' ? 'D' : 'O');
+	const v = e.target.closest('[data-v]'); if (v) return go(ST.p, v.dataset.v);
+	const g = e.target.closest('[data-go]'); if (g) { e.preventDefault(); return go(g.dataset.go[0], g.dataset.go); }
+});
+document.addEventListener('keydown', e => {
+	if (e.altKey || e.ctrlKey || e.metaKey || ST.p === 'D' || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+	const list = ['O', ...Object.keys(PARTS[ST.p].V)], i = list.indexOf(ST.v);
+	go(ST.p, list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length]);
+});
+window.addEventListener('hashchange', () => { const h = parseHash(); if (h && (h.p !== ST.p || h.v !== ST.v)) { ST = h; render(); } });
+{ let s = parseHash(); if (!s) { try { s = JSON.parse(localStorage.getItem('knorke-r4')); } catch (e) { } } if (s && PARTS[s.p]) ST = s; render(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+	"_": "Factory job 279: the same vectors for src/model/richText.js plainText (tests/js/model/richText.test.mjs) and lib/Service/RichText.php plain (tests/php/unit/RichTextTest.php).",
+	"vectors": [
+		{ "in": "**Ziel** [Doku](https://x.de)", "plain": "Ziel Doku (https://x.de)" },
+		{ "in": "**fett** und *kursiv* ~~weg~~ `co*de`", "plain": "fett und kursiv weg co*de" },
+		{ "in": "- eins\n1. zwei **b *bi* b**", "plain": "- eins\n1. zwei b bi b" },
+		{ "in": "siehe https://a.de/b. und [https://c.de](https://c.de)", "plain": "siehe https://a.de/b. und https://c.de" },
+		{ "in": "5 * 3 * 2 und a - b", "plain": "5 * 3 * 2 und a - b" },
+		{ "in": "[x](javascript:alert(1)) und [y](data:text/html,1)", "plain": "[x](javascript:alert(1)) und [y](data:text/html,1)" },
+		{ "in": "\\*nicht kursiv\\* und \\\\", "plain": "*nicht kursiv* und \\" },
+		{ "in": "** offen** und *zu *", "plain": "** offen** und *zu *" },
+		{ "in": "Grüße **😀 fett** ~~ä~~\n   - drei Leer", "plain": "Grüße 😀 fett ä\n- drei Leer" },
+		{ "in": "[Mail](mailto:a@b.de) xhttps://no", "plain": "Mail (mailto:a@b.de) xhttps://no" }
+	]
+}

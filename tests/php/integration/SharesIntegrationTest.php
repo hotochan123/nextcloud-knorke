@@ -11,6 +11,7 @@ use OCA\Knorke\BackgroundJob\CleanupJob;
 use OCA\Knorke\Db\ShareStore;
 use OCA\Knorke\Exception\HttpError;
 use OCA\Knorke\Service\Access;
+use OCA\Knorke\Service\BoardMarks;
 use OCA\Knorke\Service\BoardService;
 use OCA\Knorke\Service\GuestToken;
 use OCA\Knorke\Service\Limits;
@@ -26,6 +27,7 @@ use OCA\Knorke\Tests\Support\IntegrationCase;
 use OCP\App\IAppManager;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
+use OCP\Comments\ICommentsManager;
 use OCP\Config\IUserConfig;
 use OCP\IAppConfig;
 use OCP\IGroup;
@@ -131,7 +133,7 @@ final class SharesIntegrationTest extends IntegrationCase {
         $boards = new BoardService($this->boards, $this->cache, Server::get(IUserManager::class), Server::get(IURLGenerator::class),
             Server::get(ISecureRandom::class), Server::get(LinkThrottle::class), Server::get(IRequest::class), Server::get(Limits::class),
             Server::get(ITimeFactory::class), $this->db, $linkPolicy, Server::get(MetaService::class), $shares, $policy, $secrets, $access,
-            Server::get(IAppConfig::class), Server::get(LoggerInterface::class));
+            Server::get(IAppConfig::class), Server::get(LoggerInterface::class), Server::get(ICommentsManager::class), Server::get(BoardMarks::class));
         return ['policy' => $policy, 'shares' => $shares, 'access' => $access, 'boards' => $boards, 'secrets' => $secrets];
     }
 

@@ -81,6 +81,8 @@ class FakeItemStore extends ItemStore {
             'rotation' => (float)($item['r'] ?? 0),
             'data' => ItemStore::obj($item['data'] ?? []), 'style' => ItemStore::obj($item['style'] ?? []),
             'version' => 1, 'deleted' => $deleted ? 1 : 0, 'rev' => $rev, 'group_id' => $item['group'] ?? null,
+            // job 275: the creator and the creation time (PrivateWriting)
+            'created_by' => $item['_by'] ?? 'u:alice', 'created_at' => $item['_at'] ?? 0,
         ];
         [$this->items[$board][$id]['start_item'], $this->items[$board][$id]['end_item']] = ItemStore::endItems($item + ['data' => []]);
         if (!$deleted) {
@@ -90,9 +92,12 @@ class FakeItemStore extends ItemStore {
         $this->boards[$board]['rev'] = max($this->boards[$board]['rev'], $rev);
     }
 
-    /** A lock of an existing row (like a lock that happened earlier); $by null = locker unknown. */
-    public function seedLock(int $board, string $id, ?string $by, ?string $name = null): void {
-        $this->items[$board][$id]['locked'] = 1;
+    /**
+     * A lock of an existing row (like a lock that happened earlier); $by null
+     * = locker unknown; $locked 0 = a lock lifted earlier, remembered (job 152).
+     */
+    public function seedLock(int $board, string $id, ?string $by, ?string $name = null, int $locked = 1): void {
+        $this->items[$board][$id]['locked'] = $locked;
         $this->items[$board][$id]['locked_by'] = $by;
         $this->items[$board][$id]['locked_name'] = $name;
     }
@@ -173,11 +178,12 @@ class FakeItemStore extends ItemStore {
         return $b === null ? null : ['rev' => $b['rev'], 'min_rev' => $b['min_rev'], 'meta_rev' => $b['meta_rev']];
     }
 
-    public function snapshotItems(int $board, ?\Closure $pidOf = null): iterable {
+    public function snapshotItems(int $board, ?\Closure $pidOf = null, ?\Closure $cover = null): iterable {
         $this->log[] = 'snapshotItems';
         $rows = array_filter($this->items[$board] ?? [], static fn (array $r): bool => $r['deleted'] === 0);
         ksort($rows, SORT_STRING);
-        return array_values(array_map(static fn (array $r): string => ItemStore::itemJson($r, $pidOf), $rows));
+        return array_values(array_map(static fn (array $r): string => $cover !== null && $cover($r)
+            ? \OCA\Knorke\Service\PrivateWriting::coveredJson($r, $pidOf) : ItemStore::itemJson($r, $pidOf), $rows));
     }
 
     public function itemsSince(int $board, int $since, int $upTo, int $limit): array {
@@ -269,7 +275,7 @@ class FakeItemStore extends ItemStore {
         if (isset($this->items[$board][$id])) {
             throw new \RuntimeException("PK violation: item $id exists");
         }
-        $this->items[$board][$id] = $this->row($id, $item, $rev, 1);
+        $this->items[$board][$id] = $this->row($id, $item, $rev, 1) + ['created_by' => $actor, 'created_at' => $nowMs];
     }
 
     public function updateItem(int $board, string $id, array $cols, int $rev, string $actor, int $nowMs): void {
@@ -292,7 +298,8 @@ class FakeItemStore extends ItemStore {
     public function reviveItem(int $board, string $id, array $item, int $rev, string $actor, int $nowMs): void {
         $this->log[] = "reviveItem $id";
         $old = $this->items[$board][$id] ?? throw new \RuntimeException("no item $id");
-        $this->items[$board][$id] = $this->row($id, $item, $rev, $old['version'] + 1);
+        $this->items[$board][$id] = $this->row($id, $item, $rev, $old['version'] + 1)
+            + ['created_by' => $old['created_by'] ?? $actor, 'created_at' => $old['created_at'] ?? $nowMs];
     }
 
     public function insertChange(int $board, int $rev, string $itemId, string $op, ?string $patch, string $actor, string $client, int $nowMs): void {
@@ -392,7 +399,8 @@ class FakeItemStore extends ItemStore {
         foreach ($this->items as $rows) {
             foreach ($rows as $r) {
                 $by = $r['locked_by'] ?? null;
-                if ((int)($r['locked'] ?? 0) === 1 && is_string($by) && str_starts_with($by, $prefix)) {
+                // like the real query: by locked_by alone, a remembered lock (locked 0, job 152) too
+                if (is_string($by) && str_starts_with($by, $prefix)) {
                     $out[$by] = true;
                 }
             }

@@ -13,6 +13,7 @@
 			@click="$emit('follow')">
 			{{ t('knorke', '{name} is presenting · Follow', { name: chip.name || t('knorke', 'Someone') }) }}
 		</button>
+		<NoticeClose @close="$emit('close')" />
 	</div>
 </template>
 
@@ -22,13 +23,16 @@
  * everyone here" is active, this tab does not follow and the presenter's tab
  * has a fresh presence entry with a viewport, one tap follows again. The
  * whole strip is the button (≥ 44 px high, §6.12 touch target).
+ * Job 228: the strip ends with the close button (NoticeClose, emit close);
+ * the rest of it stays the button.
  */
 import { t } from '../util/l10n.js'
+import NoticeClose from './NoticeClose.vue'
 
 defineProps({
 	/** {pid, client, name} */
 	chip: { type: Object, required: true },
 })
 
-defineEmits(['follow'])
+defineEmits(['follow', 'close'])
 </script>

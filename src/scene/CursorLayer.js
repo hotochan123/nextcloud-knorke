@@ -12,6 +12,11 @@
  *   [data-knorke-cursor=<pid>:<client>] with a child .knorke-cursor-name
  *   [data-knorke-editing=<itemId>]       chip
  *   [data-knorke-action=take-over]       action inside the chip
+ * (Job 173) A table gets one chip per cell someone writes in, with
+ * [data-knorke-cell=<col>.<row>] (RemoteSample.editingCell), at that cell;
+ * itemAnchor, takeOver and onTakeOver name the cell too. (Job 195) A mind
+ * map's node is such a cell (its key, model/mindmap.js NODE_KEY_RE): its
+ * chip carries [data-knorke-node=<key>] instead.
  * Guests carry the class knorke-cursor--guest and the "(guest)" suffix.
  *
  * Names are data, not markup: every text goes through textContent. Styles are
@@ -19,6 +24,7 @@
  * Nextcloud's global button styles with !important.
  */
 import { t } from '../util/l10n.js'
+import { NODE_KEY_RE } from '../model/mindmap.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 /** Arrow pointing up-left; its tip is at (1, 1) of the 14×20 cursor box. */
@@ -68,6 +74,15 @@ export function setStyles(el, styles, important = false) {
 const px = (v) => Math.round(v * 10) / 10
 
 /**
+ * @param {string} id item id
+ * @param {unknown} cell (job 173) the cell of a table, else null
+ * @return {string} the key of an editing chip
+ */
+function chipKey(id, cell) {
+	return typeof cell === 'string' ? id + '#' + cell : id
+}
+
+/**
  * @param {object} s RemoteSample
  * @return {string} label of the name tag
  */
@@ -86,7 +101,7 @@ export class CursorLayer {
 
 	/**
 	 * @param {HTMLElement} root overlay element (pointer-events: none)
-	 * @param {{onTakeOver?:(id:string) => void}} [opts] click on "Take over"
+	 * @param {{onTakeOver?:(id:string, cell:(string|null)) => void}} [opts] click on "Take over" (job 173: of a cell)
 	 */
 	constructor(root, { onTakeOver = () => {} } = {}) {
 		this.#root = root
@@ -104,8 +119,9 @@ export class CursorLayer {
 	 * @param {Array<object>} samples RemoteSample[]
 	 * @param {{x:number, y:number, scale:number}} cam live camera
 	 * @param {object} ctx helpers
-	 * @param {(id:string) => ({x:number, y:number}|null)} ctx.itemAnchor screen anchor (top-left) of an item or null
-	 * @param {{id:string, until:number}|null} [ctx.takeOver] item that offers "Take over" until a time
+	 * @param {(id:string, cell:(string|null)) => ({x:number, y:number}|null)} ctx.itemAnchor screen anchor (top-left) of an
+	 *   item (job 173: of a cell of a table) or null
+	 * @param {{id:string, cell?:(string|null), until:number}|null} [ctx.takeOver] item (cell) that offers "Take over" until a time
 	 * @param {number} [ctx.now] current time (same clock as takeOver.until)
 	 */
 	render(samples, cam, { itemAnchor, takeOver = null, now = 0 }) {
@@ -119,8 +135,10 @@ export class CursorLayer {
 				this.#cursor(s, (c[0] - cam.x) * cam.scale, (c[1] - cam.y) * cam.scale)
 			}
 			if (typeof s.editing === 'string') {
-				const prev = editing.get(s.editing)
-				if (!prev || (!prev.editingHolder && s.editingHolder)) editing.set(s.editing, s)
+				// job 173: one chip per cell of a table
+				const key = chipKey(s.editing, s.editingCell)
+				const prev = editing.get(key)
+				if (!prev || (!prev.editingHolder && s.editingHolder)) editing.set(key, s)
 			}
 		}
 		for (const [key, c] of this.#cursors) {
@@ -130,12 +148,13 @@ export class CursorLayer {
 			}
 		}
 		const chipSeen = new Set()
-		for (const [id, s] of editing) {
-			const at = itemAnchor(id)
+		for (const [key, s] of editing) {
+			const cell = typeof s.editingCell === 'string' ? s.editingCell : null
+			const at = itemAnchor(s.editing, cell)
 			if (!at) continue
-			chipSeen.add(id)
-			const offer = takeOver !== null && takeOver.id === id && now < takeOver.until
-			this.#chip(id, s, at, offer)
+			chipSeen.add(key)
+			const offer = takeOver !== null && takeOver.id === s.editing && (takeOver.cell ?? null) === cell && now < takeOver.until
+			this.#chip(key, s, at, offer)
 		}
 		for (const [id, c] of this.#chips) {
 			if (!chipSeen.has(id)) {
@@ -217,12 +236,16 @@ export class CursorLayer {
 		}
 	}
 
-	#chip(id, s, at, offer) {
-		let c = this.#chips.get(id)
+	#chip(key, s, at, offer) {
+		const id = s.editing
+		const cell = typeof s.editingCell === 'string' ? s.editingCell : null
+		let c = this.#chips.get(key)
 		if (!c) {
 			const el = document.createElement('div')
 			el.className = 'knorke-editing-chip'
 			el.setAttribute('data-knorke-editing', id)
+			// job 195: the "cell" of a mind map is a node key
+			if (cell !== null) el.setAttribute(NODE_KEY_RE.test(cell) ? 'data-knorke-node' : 'data-knorke-cell', cell)
 			setStyles(el, {
 				position: 'absolute', left: '0', top: '0', display: 'flex', 'align-items': 'center', gap: '6px',
 				'white-space': 'nowrap', padding: '2px 4px 2px 8px', 'border-radius': '11px', 'z-index': '4',
@@ -235,7 +258,7 @@ export class CursorLayer {
 			el.appendChild(label)
 			this.#root.appendChild(el)
 			c = { el, label, button: null, sig: '', pos: '' }
-			this.#chips.set(id, c)
+			this.#chips.set(key, c)
 		}
 		const name = typeof s.name === 'string' ? s.name : ''
 		const text = t('knorke', '{name} is editing…', { name })
@@ -267,7 +290,7 @@ export class CursorLayer {
 			b.addEventListener('click', (e) => {
 				e.preventDefault()
 				e.stopPropagation()
-				this.#onTakeOver(id)
+				this.#onTakeOver(id, cell)
 			})
 			c.el.appendChild(b)
 			c.button = b

@@ -54,10 +54,23 @@ import { restoreCalls, SWITCHING, CREATING } from '../lib/switches.mjs'
  * T4-24): a full run of stages 0–3 created 37 boards, E34, E35 and E37 add
  * one each – exactly the old cap of 40 – so the cap was 48. With the cases
  * up to E42 a full run created exactly 48; factory job 032 (M2 privacy
- * notice: E43 one board, E44 two) needs 51, so the cap is 56
- * (dev/e2e/stage2.test.mjs pins it, ENTWICKLUNG §5.2 describes it).
+ * notice: E43 one board, E44 two) needs 51, so the cap was 56; with factory
+ * job 140 (E50, one board) a full run needs 57, so the cap was 64; with
+ * factory job 144 (E51, one board) 58; with factory jobs 155 (E56) and 157
+ * (E58, one board each) a full run needs 65, so the cap was 72; with
+ * factory job 177 (E66, one board) a full run needs 73, so the cap was 80;
+ * with factory job 189 (E73 and its pass E73@820x1180, one board each) a
+ * full run needs 81, so the cap was 88; with factory jobs 198 (E79) and 199
+ * (E80, one board each) a full run needs 89, so the cap was 96; with
+ * factory job 219 (E87, two boards) a full run needs 98, so the cap was
+ * 104; with factory job 228 (E93, one board) a full run needs 105, so the
+ * cap was 112; with factory job 271 (E99, one board) a full run needs 113,
+ * so the cap is 120; factory job 274 (E100, one board) makes it 114, still
+ * within it
+ * (dev/e2e/stage2.test.mjs pins it,
+ * ENTWICKLUNG §5.2 describes it).
  */
-export const MAX_BOARDS_PER_RUN = 56
+export const MAX_BOARDS_PER_RUN = 120
 
 export class World {
 	constructor(browser) {

@@ -38,9 +38,14 @@
  *   release stays; a run without arguments leaves signed/ byte for byte
  * - the host checks the container's work: an extra, linked, changed or
  *   removed file (listed on stderr) or a private key in the signed tree →
- *   exit 1 before check-app; a private key in a runtime folder → exit 1
- *   before any docker call, named by its source path (signing mode only; a
- *   run without arguments stays as it was)
+ *   exit 1 before check-app
+ * - factory job 165: a PEM private key anywhere in the release (also binary
+ *   files and the root files) refuses EVERY run, with or without --key/--cert:
+ *   exit 1, named by its source path, empty stdout, no docker call, no
+ *   release directory, archive or .sha256 of the version (an older clean one
+ *   is gone too), an older signed build byte for byte; a key in what is not
+ *   shipped (src/, EXCLUDE, the target of a symlink) refuses nothing; a search
+ *   that fails (grep 2) never counts as clean
  * - the signed outputs are 0644/0755 also under umask 000, and a setgid bit
  *   the container set on a folder does not reach the archive
  * - factory job 065: the list of differences shows at most 20 lines, then
@@ -391,7 +396,7 @@ test('signing failures: sign-app exit 1, no signature.json, check-app exit 1, ch
 	}
 })
 
-test('the host checks the signed tree: an extra, linked, changed or removed file or a private key from the container → exit 1 before check-app, no signed path; a private key in a runtime folder → exit 1 before docker (rounds 1 and 2, security and UX review)', (t) => {
+test('the host checks the signed tree: an extra, linked, changed or removed file or a private key from the container → exit 1 before check-app, no signed path (rounds 1 and 2, security and UX review)', (t) => {
 	const shown = {
 		file: [/^> f \.\/lib\/extra\.php$/m],
 		link: [/^> x \.\/lib\/info\.php$/m],
@@ -411,28 +416,96 @@ test('the host checks the signed tree: an extra, linked, changed or removed file
 		assert.ok(!dk.calls().some((c) => c.includes('integrity:check-app')), `${extra}: check-app is not called`)
 		assert.ok(fs.existsSync(path.join(out, 'knorke-1.2.3.tar.gz')), `${extra}: the unsigned release stays`)
 	}
-	// a second copy of a key in a runtime folder: refused before the key is mounted anywhere
+})
+
+// ── factory job 165: every release refuses a file with a private key ───────────
+
+/** The FEHLER line of a refused release, for the file rel below the release (= its path in the source tree). */
+const keyRefusal = (rel) => new RegExp(`FEHLER: ${rel.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} enthält einen privaten Schlüssel – aus dem Quellbaum entfernen, kein Release geschrieben`)
+
+/** A refused run: exit 1, empty stdout, no line of the key on stderr, no docker call since `before` calls, no release directory, archive or .sha256 of the version. */
+function assertNoRelease(root, r, dk, what, before = 0) {
+	assert.equal(r.status, 1, `${what}: ${r.stderr}`)
+	assert.equal(r.stdout, '', `${what}: stdout stays empty`)
+	noKeyLine(r.stderr, `${what}: stderr`)
+	assert.deepEqual(dk.calls().slice(before), [], `${what}: no docker call`)
+	const out = path.join(root, 'dev', 'release', 'out')
+	for (const p of ['knorke-1.2.3', 'knorke-1.2.3.tar.gz', 'knorke-1.2.3.tar.gz.sha256']) assert.ok(!fs.existsSync(path.join(out, p)), `${what}: no dev/release/out/${p}`)
+}
+
+test('job 165 AK1: without arguments a private key in the release is refused, named by its source path; an older clean release of the version is gone too', (t) => {
 	const root = fakeRepo(t)
 	const dk = fakeDocker(t)
+	const clean = run(root, dk.env)
+	assert.equal(clean.status, 0, clean.stderr)
+	assert.ok(fs.existsSync(path.join(root, 'dev', 'release', 'out', 'knorke-1.2.3.tar.gz')), 'precondition: a clean release of 1.2.3')
+	fs.copyFileSync(KEYS.key, path.join(root, 'lib', 'knorke.pem'))
+	const r = run(root, dk.env)
+	assertNoRelease(root, r, dk, 'lib/knorke.pem')
+	assert.match(r.stderr, keyRefusal('lib/knorke.pem'))
+	assert.match(r.stderr, /^\[release main\] FEHLER: lib\/knorke\.pem enthält einen privaten Schlüssel – aus dem Quellbaum entfernen, kein Release geschrieben\. War er schon auf try oder Prod, gilt er als offengelegt \(docs\/ENTWICKLUNG\.md §11\)$/m, 'the whole line')
+	assert.doesNotMatch(r.stderr, /fertig:/, 'no fertig line')
+	assert.ok(!fs.existsSync(path.join(root, 'dev', 'release', 'out', 'signed')), 'signed/ untouched')
+	// other PEM headers in a root file, a binary and a translation, each in its own tree
+	const png = (body) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0xff, 0xfe]), Buffer.from(body), Buffer.from([0, 1, 2, 0xff, 0])])
+	for (const kind of ['RSA ', 'OPENSSH ', 'ENCRYPTED ']) {
+		const pem = `-----BEGIN ${kind}PRIVATE KEY-----\nMIIfake\n-----END ${kind}PRIVATE KEY-----\n`
+		for (const [rel, body] of [['CHANGELOG.md', `# Changelog\n\n${pem}`], ['img/x.png', png(pem)], ['l10n/de.json', `{"translations":{"a":"${pem.replace(/\n/g, '\\n')}"}}\n`]]) {
+			const tree = fakeRepo(t)
+			const dk2 = fakeDocker(t)
+			fs.writeFileSync(path.join(tree, rel), body)
+			const what = `${kind.trim()} in ${rel}`
+			const r2 = run(tree, dk2.env)
+			assertNoRelease(tree, r2, dk2, what)
+			assert.match(r2.stderr, keyRefusal(rel), what)
+		}
+	}
+})
+
+test('job 165 AK2: with --key/--cert a private key in the release is refused the same way, before docker; an older signed build keeps its bytes', (t) => {
+	const root = fakeRepo(t)
+	const dk = fakeDocker(t)
+	const signed = path.join(root, 'dev', 'release', 'out', 'signed')
+	const good = run(root, dk.env, signArgs())
+	assert.equal(good.status, 0, good.stderr)
+	const hashes = () => Object.fromEntries(files(signed).map((f) => [f, sha(path.join(signed, f))]))
+	const kept = hashes()
+	assert.ok(Object.keys(kept).includes('knorke-1.2.3.tar.gz.sig'), 'precondition: a signed build of 1.2.3')
+	const before = dk.calls().length
 	fs.copyFileSync(KEYS.key, path.join(root, 'lib', 'knorke.pem'))
 	const r = run(root, dk.env, signArgs())
-	assert.equal(r.status, 1, r.stderr)
-	assert.match(r.stderr, /FEHLER: lib\/knorke\.pem enthält einen privaten Schlüssel – aus dem Quellbaum entfernen\. Das unsignierte Release dev\/release\/out\/knorke-1\.2\.3\/ enthält ihn auch: nicht einspielen\. War er schon auf try oder Prod, gilt er als offengelegt/, 'the source path and what it means for the unsigned release')
-	assert.deepEqual(dk.calls(), [], 'no docker call')
-	assert.ok(!fs.existsSync(path.join(root, 'dev', 'release', 'out', 'signed', 'knorke-1.2.3')), 'no signed build')
-	noKeyLine(r.stderr, 'stderr')
-	// the run without arguments is unchanged by the spec (the scan belongs to the signing mode)
-	assert.equal(run(root, dk.env).status, 0)
-	// a scan that cannot read everything (grep exit 2) stops the run, it never counts as clean
-	const clean = fakeRepo(t)
-	const dk2 = fakeDocker(t)
+	assertNoRelease(root, r, dk, '--key/--cert', before)
+	assert.match(r.stderr, keyRefusal('lib/knorke.pem'))
+	assert.deepEqual(hashes(), kept, 'every file below signed/ has the same SHA-256 as before')
+})
+
+test('job 165 AK3: a key in what is not shipped (src/, an EXCLUDE file, the target of a symlink) refuses nothing', (t) => {
+	for (const [label, rel] of [['src/', 'src/key.pem'], ['EXCLUDE', 'appinfo/signature.json'], ['symlink target', 'src/main.js']]) {
+		const root = fakeRepo(t)
+		const dk = fakeDocker(t)
+		fs.copyFileSync(KEYS.key, path.join(root, rel))
+		if (label === 'symlink target') assert.equal(fs.readlinkSync(path.join(root, 'lib', 'link.js')), '../src/main.js', 'lib/link.js points to the key')
+		const r = run(root, dk.env)
+		assert.equal(r.status, 0, `${label}: ${r.stderr}`)
+		assert.deepEqual(files(path.join(root, 'dev', 'release', 'out', 'knorke-1.2.3')), [...RUNTIME].sort(), `${label}: exactly the runtime files`)
+		assert.ok(!r.stderr.includes('privaten Schlüssel'), `${label}: no word of a private key on stderr`)
+		noKeyLine(r.stderr, `${label}: stderr`)
+	}
+})
+
+test('job 165 AK4: a search that cannot read everything (grep exit 2) stops a run without arguments, it never counts as clean', (t) => {
+	const root = fakeRepo(t)
+	const dk = fakeDocker(t)
 	const realGrep = spawnSync('bash', ['-c', 'command -v grep'], { encoding: 'utf8' }).stdout.trim()
-	const bin = dk2.env.PATH.split(':')[0]
+	const bin = dk.env.PATH.split(':')[0]
 	fs.writeFileSync(path.join(bin, 'grep'), `#!/usr/bin/env bash\nif [ "$1" = -rlE ]; then echo "grep: unreadable" >&2; exit 2; fi\nexec ${realGrep} "$@"\n`, { mode: 0o755 })
-	const g = run(clean, dk2.env, signArgs())
-	assert.equal(g.status, 1, g.stderr)
-	assert.match(g.stderr, /die Suche nach privaten Schlüsseln in .*knorke-1\.2\.3 ist gescheitert \(grep endete mit 2\)/)
-	assert.deepEqual(dk2.calls(), [], 'no docker call')
+	const r = run(root, dk.env)
+	assertNoRelease(root, r, dk, 'grep exit 2')
+	assert.match(r.stderr, /die Suche nach privaten Schlüsseln in .*knorke-1\.2\.3 ist gescheitert \(grep endete mit 2\)/)
+	// the same in signing mode
+	const signedRun = run(root, dk.env, signArgs())
+	assertNoRelease(root, signedRun, dk, 'grep exit 2, --key/--cert')
+	assert.match(signedRun.stderr, /die Suche nach privaten Schlüsseln in .*knorke-1\.2\.3 ist gescheitert \(grep endete mit 2\)/)
 })
 
 test('the signed outputs are 0644 and 0755 also under umask 000, and a setgid bit the container set on a folder is gone (round 2, security review)', (t) => {
@@ -545,5 +618,14 @@ test('P7-06/P7-02: the real appinfo/info.xml names no version or milestone in it
 	}
 	const cmds = xml.match(/<commands>([\s\S]*?)<\/commands>/)?.[1] ?? ''
 	assert.match(cmds, /<command>\s*OCA\\Knorke\\Command\\Orphans\s*<\/command>/, 'occ knorke:orphans is registered')
-	assert.match(xml, /<version>0\.3\.0<\/version>/, 'version 0.3.0 since the M2 data foundation (its migration needs the jump)')
+	assert.match(xml, /<version>0\.4\.0<\/version>/, 'version 0.4.0 since the table of the template suggestions (factory job 182; its migration needs the jump)')
+})
+
+test('factory job 182: the newest migration belongs to the app version (Version000400… ↔ 0.4.0), the migrations of 0.1.0–0.3.0 are still there', () => {
+	const xml = fs.readFileSync(path.join(REPO, 'appinfo', 'info.xml'), 'utf8')
+	const [major, minor, patch] = xml.match(/<version>(\d+)\.(\d+)\.(\d+)<\/version>/).slice(1).map(Number)
+	const migrations = fs.readdirSync(path.join(REPO, 'lib', 'Migration')).filter((f) => /^Version\d{6}Date\d{14}\.php$/.test(f)).sort()
+	assert.deepEqual(migrations, ['Version000100Date20261011000000.php', 'Version000200Date20261012000000.php', 'Version000300Date20261017000000.php', 'Version000400Date20261025000000.php'])
+	const newest = migrations.at(-1).match(/^Version(\d{2})(\d{2})(\d{2})/).slice(1).map(Number)
+	assert.deepEqual(newest, [major, minor, patch], 'the newest migration carries the app version: Nextcloud runs it only with a version jump')
 })

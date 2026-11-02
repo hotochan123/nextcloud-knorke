@@ -18,10 +18,13 @@
  * server allows for the route (JsonBody::read answers 400 for any other):
  *   enableLink/enableVoteLink  rotate, password, expiresAt ("YYYY-MM-DD"|null)
  *   saveShares                 shares
- *   startVote                  per, perItem, scope, types, minutes
+ *   startVote                  per, perItem, scope, types, minutes, live, accountsOnly
  *   updateVote                 action, minutes
  *   timer                      action, ms
  *   summon                     client (required)
+ *   setFavorite                favorite (true|false; route 55, factory job 219)
+ *   markOpened                 none, body {} (route 56, factory job 219)
+ *   boardSketch                none, GET (route 57, factory job 221)
  * The moderation answers are {board: {title, meta, metaRev}, now}; the
  * session merges them through onMeta (SPEC-M1 §4.12, §6.5.1). Route 27 (M2
  * privacy notice, admin page only): savePrivacy sends default and languages.
@@ -227,11 +230,11 @@ export async function searchSharees(id, q) {
  * Starts a dot vote (stage 3).
  *
  * @param {number} id board id
- * @param {{per?: number, perItem?: number, scope?: (string|null), types?: string[], minutes?: (number|null)}} cfg settings
+ * @param {{per?: number, perItem?: number, scope?: (string|null), types?: string[], minutes?: (number|null), live?: boolean, accountsOnly?: boolean}} cfg settings (live: moderators see the live count, job 149; accountsOnly: only accounts vote, job 175)
  * @return {Promise<object>} {board: {title, meta, metaRev}, now}
  */
 export async function startVote(id, cfg) {
-	return (await call(api.startVote(id), pick(cfg, ['per', 'perItem', 'scope', 'types', 'minutes']))) ?? {}
+	return (await call(api.startVote(id), pick(cfg, ['per', 'perItem', 'scope', 'types', 'minutes', 'live', 'accountsOnly']))) ?? {}
 }
 
 /**
@@ -265,8 +268,42 @@ export async function timer(id, action, ms = undefined) {
  * @param {string} client client id of the presenting tab
  * @return {Promise<object>} {board, now}
  */
-export async function summon(id, client) {
-	return (await call(api.summon(id), { client })) ?? {}
+export async function summon(id, client, frame = undefined) {
+	return (await call(api.summon(id), pick({ client, frame }, ['client', 'frame']))) ?? {}
+}
+
+/**
+ * Factory job 272: the frame the running presentation shows.
+ *
+ * @param {number} id board id
+ * @param {string} frame frame id
+ * @return {Promise<object>} {board, now}
+ */
+export async function moveSummon(id, frame) {
+	return (await call(api.moveSummon(id), { frame })) ?? {}
+}
+
+/**
+ * Factory job 272: the saved slide order (meta.slides; [] removes it).
+ *
+ * @param {number} id board id
+ * @param {string[]} order frame ids
+ * @return {Promise<object>} {board, now}
+ */
+export async function saveSlides(id, order) {
+	return (await call(api.saveSlides(id), { order })) ?? {}
+}
+
+/**
+ * Factory job 275: private writing (start for the whole board or a frame, reveal).
+ *
+ * @param {number} id board id
+ * @param {'start'|'reveal'} action action
+ * @param {string|null} [frame] frame id of start (null: the whole board)
+ * @return {Promise<object>} {board, now}
+ */
+export async function privateWriting(id, action, frame = null) {
+	return (await call(api.privateWriting(id), frame ? { action, frame } : { action })) ?? {}
 }
 
 /**
@@ -315,4 +352,41 @@ export async function joinLink(token, password = null) {
 export async function savePrivacy(settings) {
 	const res = await call(api.savePrivacy(), { default: settings?.default ?? {}, languages: settings?.languages ?? {} })
 	return res?.privacy ?? null
+}
+
+/**
+ * Stars or unstars a board for this account (route 55, factory job 219);
+ * the star counts on all of the account's devices.
+ *
+ * @param {number} id board id
+ * @param {boolean} favorite wanted state
+ * @return {Promise<boolean>} the stored state
+ */
+export async function setFavorite(id, favorite) {
+	const res = await call(api.setFavorite(id), { favorite: favorite === true })
+	return res?.favorite === true
+}
+
+/**
+ * This account opened the board now (route 56, factory job 219): the time
+ * the board list sorts by under "Last opened".
+ *
+ * @param {number} id board id
+ * @return {Promise<number|null>} the server time in ms
+ */
+export async function markOpened(id) {
+	const res = await call(api.markOpened(id), {})
+	return Number.isFinite(res?.openedAt) ? res.openedAt : null
+}
+
+/**
+ * The sketch of a board for its row in the board list (route 57, factory
+ * job 221): only numbers and colours, components/sketch.js checks the form.
+ *
+ * @param {number} id board id
+ * @return {Promise<unknown>} the sketch as the server sent it ([] when there is none)
+ */
+export async function boardSketch(id) {
+	const res = await call(api.boardSketch(id))
+	return Array.isArray(res?.sketch) ? res.sketch : []
 }

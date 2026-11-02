@@ -10,7 +10,9 @@
  * unlock and toggleLock (one undo step each), selection v2 with the lock
  * fields, editing actions on mixed selections (only the unlocked items;
  * delete and cut toast lock-delete), select all, and undo/redo over locks
- * (lock-undo, the step moves anyway; undo of the own lock unlocks).
+ * (lock-undo; job 155: a step from which nothing went out vanishes; undo of
+ * the own lock unlocks). The fake server echoes no items: tests that undo
+ * a step echo it first (serverLocks), as the real server does.
  * Job 044: the moderators' "Unlock all" and "Unlock all in this frame" (the
  * menu payload's unlockAll / unlockFrame, one undo step, batches of MAX_OPS,
  * busy retried, the toast unlock-all; nothing for others, in mode view or
@@ -20,11 +22,17 @@
  * unlockBy / unlockByName, unlockByIds, unlockBy(pid): the locker's locks
  * only, the moderation's own stay), the toast unlock-none for a set that is
  * empty by the click, and lockStep as the one path of every lock step.
+ * Job 151: a guest's lock in the menu payload (unlockByGuest) and the labels
+ * with "(guest)"; a guest locks with {by, name, guest: true}.
+ * Job 155 (AK6): undo after the safety net keeps other people's changes
+ * (the toasts lock-undo and undo-changed, the lock first), the restore of
+ * an unlock only on a free item, the own lock the moderation lifted.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { BoardSession, KNOWN_CODES } from '../../../src/board/BoardSession.js'
-import { menuEntries } from '../../../src/components/contextbar.js'
+import { lockBadgeText, menuEntries, menuLabel } from '../../../src/components/contextbar.js'
+import { lockSummary, lockValue } from '../../../src/model/locks.js'
 import { MAX_OPS } from '../../../src/sync/Replica.js'
 import { FakeClock } from '../sync/fakeClock.mjs'
 import { FakeModel, FakeScene, ID, frame, memoryStorage, sticky } from './fakes.mjs'
@@ -206,10 +214,12 @@ test('AK9 toggleLock: a mixed selection locks only the free items (one undo step
 	assert.deepEqual(await opsAfter(h, n), [{ o: 'patch', id: A, p: { lock: { by: BOB.pid, name: 'Bob Berg' } } }])
 	assert.deepEqual(h.s.selection, [A, B], 'the selection stays')
 	assert.equal(h.s.undoStack.done.length, 1)
+	serverLocks(h, { [A]: { by: BOB.pid, name: 'Bob Berg' } })
 	n = h.tr.calls.length
 	h.s.undo()
 	assert.deepEqual(await opsAfter(h, n), [{ o: 'patch', id: A, p: { lock: null } }])
 	assert.deepEqual(h.infos, [], 'no toast for the own lock')
+	serverLocks(h, { [A]: null })
 	n = h.tr.calls.length
 	h.s.redo()
 	assert.deepEqual(await opsAfter(h, n), [{ o: 'patch', id: A, p: { lock: { by: BOB.pid, name: 'Bob Berg' } } }], 'redo locks again')
@@ -246,7 +256,7 @@ test('AK9 lockSelection/unlockSelection (bar and menu): one step each; nothing i
 	assert.equal(h.s.undoStack.done.length, 1)
 	assert.equal(h.s.undoStack.done[0].ops.length, 2)
 	h.s.onIntent({ type: 'contextMenu', id: A, at: [1, 1] })
-	assert.deepEqual(menuEntries(h.s.selectionInfo(), A), ['copy', 'connect', 'group', 'unlock', 'zoom-selection'], 'own locks: copy, connect, group (blocked, job 026), unlock, zoom')
+	assert.deepEqual(menuEntries(h.s.selectionInfo(), A), ['copy', 'connect', 'group', 'frame-around', 'unlock', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv'], 'own locks: copy, connect, group (blocked, job 026), unlock (job 230: no zoom entry)')
 	assert.equal(h.s.menuAction('unlock'), true)
 	assert.equal(h.model.get(A).lock, null)
 	assert.equal(h.s.undoStack.done.length, 2)
@@ -272,7 +282,9 @@ test('selection v2 (AK9): style fields describe only the unlocked items; ids, co
 	select(h, [B])
 	const only = lastSel(h)
 	assert.deepEqual([only.count, [...only.types], only.fields, only.box, only.alignable], [1, [], [], null, 0], 'a fully locked selection has no style fields')
-	assert.deepEqual(menuEntries(only, B), ['copy', 'zoom-selection'], 'foreign lock without mod')
+	// job 172: a locked note takes reactions (its "Add reaction" stays)
+	// job 189: one note of the five types gets "Comment" (locked too)
+	assert.deepEqual(menuEntries(only, B), ['copy', 'frame-around', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv'], 'foreign lock without mod (job 230: react and comment are in the bar)')
 	// a lock change of a selected item reports the selection again
 	const before = h.ui.selection.length
 	serverLocks(h, { [B]: null })
@@ -367,7 +379,7 @@ test('select all skips locked items; edit-text and the label editor never open o
 	h.s.destroy()
 })
 
-test('AK11 undo: move A, someone locks A, undo → nothing sent, toast lock-undo 1, the step is on the redo stack', async () => {
+test('AK11 undo: move A, someone locks A, undo → nothing sent, toast lock-undo 1; job 155: the step vanishes (nothing went out)', async () => {
 	const h = await open()
 	let n = h.tr.calls.length
 	h.s.commit({ ops: [{ o: 'patch', id: A, p: { x: 50, y: 0, parent: null } }], inverse: [{ o: 'patch', id: A, p: { x: 0, y: 0, parent: null } }] })
@@ -377,13 +389,12 @@ test('AK11 undo: move A, someone locks A, undo → nothing sent, toast lock-undo
 	h.s.undo()
 	assert.deepEqual(await opsAfter(h, n), [])
 	assert.deepEqual(h.infos, [['1 locked item was skipped.', 'lock-undo']])
-	assert.equal(h.s.undoStack.canRedo(), true, 'the step moved to the redo stack')
+	assert.equal(h.s.undoStack.canRedo(), false, 'job 155: nothing went out, so the step vanishes')
 	assert.equal(h.s.undoStack.canUndo(), false)
-	assert.deepEqual(h.ui.undo.at(-1), { canUndo: false, canRedo: true })
-	// redo: skipped again with the toast
+	assert.deepEqual(h.ui.undo.at(-1), { canUndo: false, canRedo: false })
 	h.s.redo()
-	assert.deepEqual(h.infos.at(-1), ['1 locked item was skipped.', 'lock-undo'])
-	assert.equal(h.s.undoStack.canUndo(), true)
+	assert.deepEqual(await opsAfter(h, n), [], 'nothing to redo')
+	assert.equal(h.infos.length, 1)
 	h.s.destroy()
 })
 
@@ -401,6 +412,8 @@ const MOD = { pid: 'pidmona00000001', name: 'Mona Moder', role: 'edit', guest: f
 const lastMenu = (h) => h.ui.menu.at(-1)
 const unlockOps = (ids) => ids.map((id) => ({ o: 'patch', id, p: { lock: null } }))
 const lockOps = (ids, lock) => ids.map((id) => ({ o: 'patch', id, p: { lock } }))
+/** (job 152) the undo of lifting someone else's lock: that lock as it was, restore: true */
+const restoreOp = (id, lock) => ({ o: 'patch', id, p: { lock }, restore: true })
 const unlockToasts = (h) => h.infos.filter((x) => Array.isArray(x) && x[1] === 'unlock-all')
 
 /** What the scene does for a right click: an item outside the selection becomes it, the empty canvas clears it; then the intent. */
@@ -463,7 +476,7 @@ test('job 044 AK3: the menu payload counts what a moderator may unlock – board
 	b.s.destroy()
 })
 
-test('job 044 AK4: "Unlock all" as ALICE sends one {lock: null} for A, B, D and N1 each (nothing for C, F, N2), one undo step with her lock as the inverse, unlocked at once, the toast unlock-all; undo locks again in her name, redo unlocks, neither toasts', async () => {
+test('job 044 AK4: "Unlock all" as ALICE sends one {lock: null} for A, B, D and N1 each (nothing for C, F, N2), one undo step, unlocked at once, the toast unlock-all; undo locks again (job 152: each for its locker, her own B in her name), redo unlocks, neither toasts', async () => {
 	const h = await open({ me: ALICE, items: ak3Board() })
 	rightClick(h, null)
 	const focus = h.scene.callsOf('focusCanvas').length
@@ -476,15 +489,17 @@ test('job 044 AK4: "Unlock all" as ALICE sends one {lock: null} for A, B, D and 
 	}
 	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
 	assert.deepEqual(h.s.undoStack.done[0].ops, unlockOps([A, B, D, N1]))
-	assert.deepEqual(h.s.undoStack.done[0].inverse, lockOps([A, B, D, N1], byAlice), 'the inverse locks in her name')
+	const inverse = [restoreOp(A, byCarol), ...lockOps([B], byAlice), restoreOp(D, unknownLock), restoreOp(N1, byCarol)]
+	assert.deepEqual(h.s.undoStack.done[0].inverse, inverse, 'the inverse restores Carol\'s and the unknown lock, her own B with her')
 	assert.deepEqual(h.infos.at(-1), ['4 items unlocked', 'unlock-all'])
 	assert.deepEqual(h.s.selection, [], 'the selection stays (the board menu cleared it)')
 	assert.deepEqual(await opsAfter(h, n), unlockOps([A, B, D, N1]), 'each once, in model order')
+	serverLocks(h, { [A]: null, [B]: null, [D]: null, [N1]: null })
 	n = h.tr.calls.length
 	h.s.undo()
-	// (before the fake server's ack: it sends no echo, so the settled state is the snapshot's)
-	assert.deepEqual(h.model.get(A).lock, byAlice, 'shown locked by ALICE at once')
-	assert.deepEqual(await opsAfter(h, n), lockOps([A, B, D, N1], byAlice), 'undo: locked again in ALICE\'s name')
+	assert.deepEqual([h.model.get(A).lock, h.model.get(B).lock], [byCarol, byAlice], 'shown locked by Carol and ALICE at once')
+	assert.deepEqual(await opsAfter(h, n), inverse, 'undo: exactly the inverse')
+	serverLocks(h, { [A]: byCarol, [B]: byAlice, [D]: unknownLock, [N1]: byCarol })
 	n = h.tr.calls.length
 	h.s.redo()
 	assert.deepEqual(await opsAfter(h, n), unlockOps([A, B, D, N1]), 'redo: unlocked again')
@@ -627,7 +642,7 @@ test('job 044 AK5: "Unlock all in this frame" as ALICE: F (locked by BOB), N1 (C
 	assert.equal(lastMenu(h).unlockFrame, 3)
 	// job 062: F is locked by BOB, so his entry shows as well (only F is his)
 	assert.deepEqual([lastMenu(h).unlockBy, lastMenu(h).unlockByName], [1, 'Bob Berg'])
-	assert.deepEqual(menuEntries(h.s.selectionInfo(), F, lastMenu(h)), ['copy', 'unlock', 'unlock-by', 'unlock-frame', 'zoom-selection'])
+	assert.deepEqual(menuEntries(h.s.selectionInfo(), F, lastMenu(h)), ['copy', 'frame-around', 'unlock', 'unlock-by', 'unlock-frame', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv'])
 	let n = h.tr.calls.length
 	assert.equal(h.s.menuAction('unlock-frame'), true)
 	assert.deepEqual(await opsAfter(h, n), unlockOps([F, N1, N3]), 'the frame and its locked children')
@@ -739,13 +754,14 @@ test('job 062 AK4: "Unlock all in this frame" from the board menu inside F – t
 	const h = await open({ me: ALICE, items })
 	rightClick(h, null, [600, 450])
 	assert.deepEqual([lastMenu(h).id, lastMenu(h).unlockFrame, lastMenu(h).unlockAll], [null, 3, 4])
-	assert.deepEqual(menuEntries(h.s.selectionInfo(), null, lastMenu(h)).slice(-2), ['unlock-frame', 'unlock-all'])
+	// job 230: the mass unlocks before "Show grid", the last entry
+	assert.deepEqual(menuEntries(h.s.selectionInfo(), null, lastMenu(h)).filter((e) => e !== 'wheel'), ['unlock-frame', 'unlock-all', 'grid'])
 	const n = h.tr.calls.length
 	assert.equal(h.s.menuAction('unlock-frame'), true)
 	assert.equal(lastMenu(h), null, 'the menu is closed')
 	assert.deepEqual(await opsAfter(h, n), unlockOps([F, N1, N3]), 'exactly F, N1 and N3')
 	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
-	assert.deepEqual(h.s.undoStack.done[0].inverse, lockOps([F, N1, N3], byAlice))
+	assert.deepEqual(h.s.undoStack.done[0].inverse, [restoreOp(F, byBob), restoreOp(N1, byCarol), restoreOp(N3, unknownLock)], 'job 152: each lock as it was')
 	assert.deepEqual(h.infos.at(-1), ['3 items unlocked', 'unlock-all'])
 	assert.deepEqual([h.model.get(N2).lock ?? null, h.model.get(O).lock], [null, byCarol], 'N2 free, O stays locked')
 	h.s.destroy()
@@ -766,11 +782,11 @@ const ak5Board = () => [
 	sticky(C, { x: 800, y: 0, z: 'a5' }),
 ]
 
-test('job 062 AK5: "Unlock all locked by Carol" on A as ALICE – {lock: null} for A and N1 only (not T, B, D, C), one undo step, the toast unlock-all, the selection stays; undo locks in ALICE\'s name, redo unlocks, neither toasts', async () => {
+test('job 062 AK5: "Unlock all locked by Carol" on A as ALICE – {lock: null} for A and N1 only (not T, B, D, C), one undo step, the toast unlock-all, the selection stays; undo locks for Carol again (job 152), redo unlocks, neither toasts', async () => {
 	const h = await open({ me: ALICE, items: ak5Board() })
 	rightClick(h, A)
 	assert.deepEqual([lastMenu(h).unlockBy, lastMenu(h).unlockByName], [2, 'Carol'])
-	assert.deepEqual(menuEntries(h.s.selectionInfo(), A, lastMenu(h)), ['copy', 'unlock', 'unlock-by', 'zoom-selection'])
+	assert.deepEqual(menuEntries(h.s.selectionInfo(), A, lastMenu(h)), ['copy', 'frame-around', 'unlock', 'unlock-by', 'export-png', 'export-svg', 'export-pdf', 'export-bpmn', 'export-csv'])
 	const focus = h.scene.callsOf('focusCanvas').length
 	let n = h.tr.calls.length
 	assert.equal(h.s.menuAction('unlock-by'), true)
@@ -778,13 +794,15 @@ test('job 062 AK5: "Unlock all locked by Carol" on A as ALICE – {lock: null} f
 	assert.equal(h.scene.callsOf('focusCanvas').length, focus + 1, 'the canvas gets the focus back')
 	assert.deepEqual(await opsAfter(h, n), unlockOps([A, N1]), 'A and N1, in model order, nothing else')
 	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
-	assert.deepEqual(h.s.undoStack.done[0].inverse, lockOps([A, N1], byAlice))
+	assert.deepEqual(h.s.undoStack.done[0].inverse, [restoreOp(A, byCarol), restoreOp(N1, byCarol)])
 	assert.deepEqual(h.infos.at(-1), ['2 items unlocked', 'unlock-all'])
 	assert.deepEqual([h.model.get(T).lock, h.model.get(B).lock, h.model.get(D).lock], [byAlice, byBob, unknownLock], 'the template, BOB\'s and the unknown lock stay')
 	assert.deepEqual(h.s.selection, [A], 'the selection stays')
+	serverLocks(h, { [A]: null, [N1]: null })
 	n = h.tr.calls.length
 	h.s.undo()
-	assert.deepEqual(await opsAfter(h, n), lockOps([A, N1], byAlice), 'undo: locked again in ALICE\'s name')
+	assert.deepEqual(await opsAfter(h, n), [restoreOp(A, byCarol), restoreOp(N1, byCarol)], 'undo: Carol\'s locks again, never ALICE\'s')
+	serverLocks(h, { [A]: byCarol, [N1]: byCarol })
 	n = h.tr.calls.length
 	h.s.redo()
 	assert.deepEqual(await opsAfter(h, n), unlockOps([A, N1]), 'redo: unlocked again')
@@ -913,5 +931,184 @@ test('job 086 AK3: unlockByIds(pid) is unlockAllIds() filtered by lock.by – on
 	}
 	const b = await open({ me: BOB, items: withF })
 	assert.deepEqual(b.s.unlockByIds(CAROL), [], 'BOB does not moderate')
+	b.s.destroy()
+})
+
+// ---- Job 151: a guest's lock says "(guest)" ----------------------------------------------
+
+const GINA = { pid: 'pidgina000000001', name: 'Gina', role: 'edit', guest: true, mod: false, source: 'guest' }
+const byGina = { by: GINA.pid, name: 'Gina', guest: true }
+
+test('job 151 AK6: the session\'s menu and bar for a guest\'s lock say "(guest)" (unlockByGuest), an account\'s do not', async () => {
+	const h = await open({ me: ALICE, items: [sticky(A, { lock: byGina }), sticky(B, { x: 400, lock: byCarol })] })
+	rightClick(h, A)
+	const m = lastMenu(h)
+	assert.deepEqual([m.unlockBy, m.unlockByName, m.unlockByGuest], [1, 'Gina', true])
+	assert.deepEqual(h.s.menu.locker, byGina)
+	const sel = h.s.selectionInfo()
+	assert.deepEqual(sel.lockedBy, { kind: 'name', name: 'Gina', guest: true })
+	const labels = menuEntries(sel, A, m).map((name) => menuLabel(name, sel, m))
+	assert.ok(labels.includes('Unlock (locked by Gina (guest))'), labels.join(' | '))
+	assert.ok(labels.includes('Unlock all locked by Gina (guest)'), labels.join(' | '))
+	assert.equal(lockBadgeText(sel), 'Locked by Gina (guest)')
+	h.s.closeMenu()
+	rightClick(h, B)
+	const mb = lastMenu(h)
+	assert.deepEqual([mb.unlockBy, mb.unlockByName], [1, 'Carol'])
+	assert.equal('unlockByGuest' in mb, false, 'an account\'s lock: the payload as before')
+	const sb = h.s.selectionInfo()
+	assert.ok(menuEntries(sb, B, mb).map((name) => menuLabel(name, sb, mb)).every((l) => !l.includes('(guest)')))
+	assert.equal(lockBadgeText(sb), 'Locked by Carol')
+	h.s.destroy()
+})
+
+test('job 151: a guest locks with {by, name, guest: true}, the value the server echoes', async () => {
+	const h = await open({ me: GINA })
+	select(h, [A])
+	const n = h.tr.calls.length
+	h.scene.callbacks.onIntent({ type: 'toggleLock' })
+	assert.deepEqual(h.model.get(A).lock, byGina, 'shown at once')
+	assert.deepEqual(Object.keys(h.model.get(A).lock), ['by', 'name', 'guest'], 'in the order of the echo')
+	assert.deepEqual(await opsAfter(h, n), [{ o: 'patch', id: A, p: { lock: byGina } }])
+	h.s.destroy()
+})
+
+// ---- Job 152: undo of an unlock restores the original locker ----------------------------
+
+/**
+ * The board of job 152 AK6 in model order: frame F (free) holding A locked
+ * by BOB, B by Gina (a guest), D by an unknown locker and N1 by ALICE
+ * herself; C free outside.
+ *
+ * @return {object[]} WireItems
+ */
+const ak6Board = () => [
+	frame(F, { x: 1200, y: 0 }),
+	sticky(A, { x: 20, y: 30, z: 'a1', parent: F, lock: byBob }),
+	sticky(B, { x: 300, y: 30, z: 'a2', parent: F, lock: byGina }),
+	sticky(D, { x: 20, y: 300, z: 'a3', parent: F, lock: unknownLock }),
+	sticky(N1, { x: 300, y: 300, z: 'a4', parent: F, lock: byAlice }),
+	sticky(C, { x: 0, y: 0, z: 'a5' }),
+]
+/** The inverse of lifting the four locks of ak6Board as ALICE. */
+const ak6Inverse = [
+	restoreOp(A, { by: BOB.pid, name: 'Bob Berg' }),
+	restoreOp(B, { by: GINA.pid, name: 'Gina', guest: true }),
+	restoreOp(D, { by: null, name: null }),
+	{ o: 'patch', id: N1, p: { lock: lockValue(ALICE) } },
+]
+
+test('job 152 AK6: "Unlock all" as ALICE – one undo step whose inverse restores BOB\'s, Gina\'s and the unknown lock (restore: true) and locks her own with her; undo sends exactly that, BOB\'s item shows "Bob Berg" at once; redo sends {lock: null}', async () => {
+	const h = await open({ me: ALICE, items: ak6Board() })
+	let n = h.tr.calls.length
+	assert.equal(h.s.unlockAll(), true)
+	assert.equal(h.s.undoStack.done.length, 1, 'one undo step')
+	assert.deepEqual(h.s.undoStack.done[0].ops, unlockOps([A, B, D, N1]))
+	assert.deepEqual(h.s.undoStack.done[0].inverse, ak6Inverse)
+	assert.deepEqual(await opsAfter(h, n), unlockOps([A, B, D, N1]))
+	// the server's echo: all four free
+	serverLocks(h, { [A]: null, [B]: null, [D]: null, [N1]: null })
+	n = h.tr.calls.length
+	h.s.undo()
+	assert.deepEqual(lockSummary([h.model.get(A)], ALICE).lockedBy, { kind: 'name', name: 'Bob Berg' }, 'BOB\'s lock shown at once')
+	assert.deepEqual(lockSummary([h.model.get(B)], ALICE).lockedBy, { kind: 'name', name: 'Gina', guest: true })
+	assert.deepEqual(lockSummary([h.model.get(D)], ALICE).lockedBy, { kind: 'unknown' })
+	assert.deepEqual(lockSummary([h.model.get(N1)], ALICE).lockedBy, { kind: 'mine' })
+	assert.deepEqual(await opsAfter(h, n), ak6Inverse, 'undo: exactly the inverse, restore goes out as it is')
+	assert.deepEqual(h.infos.filter((x) => Array.isArray(x) && x[1] === 'lock-undo'), [], 'never skipped by the safety net')
+	serverLocks(h, Object.fromEntries(ak6Inverse.map((op) => [op.id, op.p.lock])))
+	n = h.tr.calls.length
+	h.s.redo()
+	assert.deepEqual(await opsAfter(h, n), unlockOps([A, B, D, N1]), 'redo: {lock: null} as before')
+	h.s.destroy()
+})
+
+test('job 152 AK6: unlockSelection, unlockFrame and unlockBy give the same inverses', async () => {
+	const sel = await open({ me: ALICE, items: ak6Board() })
+	select(sel, [A, B, D, N1, C])
+	assert.equal(sel.s.unlockSelection(), true)
+	assert.deepEqual(sel.s.undoStack.done.at(-1).inverse, ak6Inverse, 'unlockSelection')
+	sel.s.destroy()
+	const fr = await open({ me: ALICE, items: ak6Board() })
+	assert.equal(fr.s.unlockFrame(F), true)
+	assert.deepEqual(fr.s.undoStack.done.at(-1).inverse, ak6Inverse, 'unlockFrame')
+	fr.s.destroy()
+	const by = await open({ me: ALICE, items: ak6Board() })
+	assert.equal(by.s.unlockBy(BOB.pid), true)
+	assert.deepEqual(by.s.undoStack.done.at(-1).inverse, [ak6Inverse[0]], 'unlockBy BOB')
+	assert.equal(by.s.unlockBy(GINA.pid), true)
+	assert.deepEqual(by.s.undoStack.done.at(-1).inverse, [ak6Inverse[1]], 'unlockBy Gina')
+	assert.equal(by.s.undoStack.done.length, 2, 'one undo step each')
+	by.s.destroy()
+	// MOD (edit with "Can moderate") lifts BOB's lock: the same restore op
+	const m = await open({ me: MOD, items: ak6Board() })
+	select(m, [A])
+	assert.equal(m.s.unlockSelection(), true)
+	assert.deepEqual(m.s.undoStack.done.at(-1).inverse, [ak6Inverse[0]])
+	m.s.destroy()
+})
+
+// ---- Job 155: undo keeps other people's changes, after the safety net ----------------------
+
+const byDave = { by: 'piddave000000001', name: 'Dave' }
+const CHANGED1 = ['1 item was skipped because someone else changed it.', 'undo-changed']
+/** the server's echo of the own pending ops on these items */
+const echo = (h, ids) => h.s.onChanges(ids.map((id) => structuredClone(h.s.replica.visible(id))), [])
+
+test('job 155 AK6: one step moves A, B and C; Bob moves A and B, then Carol locks A – undo sends only C\'s placement, with the notices lock-undo 1 and undo-changed 1 (A only for the lock); the step moves trimmed to C', async () => {
+	const h = await open()
+	let n = h.tr.calls.length
+	const r = {
+		ops: [A, B, C].map((id, i) => ({ o: 'patch', id, p: { x: i * 400 + 50, y: 0, parent: null } })),
+		inverse: [A, B, C].map((id, i) => ({ o: 'patch', id, p: { x: i * 400, y: 0, parent: null } })),
+	}
+	h.s.commit(r)
+	echo(h, [A, B, C])
+	assert.equal((await opsAfter(h, n)).length, 3)
+	h.s.onChanges([A, B].map((id) => ({ ...structuredClone(h.model.get(id)), x: 999 })), [])
+	serverLocks(h, { [A]: byCarol })
+	n = h.tr.calls.length
+	h.s.undo()
+	assert.deepEqual(await opsAfter(h, n), [{ o: 'patch', id: C, p: { x: 800, y: 0, parent: null } }], 'only C')
+	assert.deepEqual(h.infos, [['1 locked item was skipped.', 'lock-undo'], CHANGED1], 'the lock first, an item in one notice only')
+	assert.equal(h.s.undoStack.canRedo(), true)
+	assert.deepEqual(h.s.undoStack.undone.at(-1).ops, [r.ops[2]], 'the step on the redo stack holds only C')
+	h.s.destroy()
+})
+
+test('job 155 AK6 (job 152): the restore of an unlock goes out while the item is free; locked by someone else meanwhile → nothing, the notice undo-changed 1, no lock-undo; undo of the own lock the moderation lifted → nothing, no notice', async () => {
+	const unlocked = async () => {
+		const h = await open({ me: ALICE, items: [sticky(A, { lock: byCarol })] })
+		select(h, [A])
+		assert.equal(h.s.unlockSelection(), true)
+		assert.deepEqual(await opsAfter(h, 0), unlockOps([A]))
+		serverLocks(h, { [A]: null })
+		return h
+	}
+	const f = await unlocked()
+	let n = f.tr.calls.length
+	f.s.undo()
+	assert.deepEqual(await opsAfter(f, n), [restoreOp(A, byCarol)], 'free: the restore goes out')
+	f.s.destroy()
+	const d = await unlocked()
+	serverLocks(d, { [A]: byDave })
+	n = d.tr.calls.length
+	d.s.undo()
+	assert.deepEqual(await opsAfter(d, n), [], 'Dave locked it meanwhile: nothing')
+	assert.deepEqual(d.infos.filter((x) => Array.isArray(x) && x[1] !== 'unlock-all'), [CHANGED1])
+	assert.deepEqual([d.s.undoStack.canUndo(), d.s.undoStack.canRedo()], [false, false])
+	d.s.destroy()
+	// BOB locks A himself; a moderator lifts it; his undo has nothing left to do
+	const b = await open()
+	select(b, [A])
+	b.s.toggleLock()
+	assert.deepEqual(await opsAfter(b, 0), lockOps([A], byBob))
+	serverLocks(b, { [A]: byBob })
+	serverLocks(b, { [A]: null })
+	n = b.tr.calls.length
+	b.s.undo()
+	assert.deepEqual(await opsAfter(b, n), [])
+	assert.deepEqual(b.infos, [], 'no notice')
+	assert.deepEqual([b.s.undoStack.canUndo(), b.s.undoStack.canRedo()], [false, false])
 	b.s.destroy()
 })

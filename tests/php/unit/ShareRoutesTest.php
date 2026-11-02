@@ -11,9 +11,11 @@ use OCA\Knorke\Controller\BoardApiController;
 use OCA\Knorke\Controller\PageController;
 use OCA\Knorke\Controller\PublicPageController;
 use OCA\Knorke\Controller\ShareApiController;
+use OCA\Knorke\Db\VoteStore;
 use OCA\Knorke\Service\LinkThrottle;
 use OCA\Knorke\Tests\Support\AccessHarness;
 use OCA\Knorke\Tests\Support\Fake;
+use OCA\Knorke\Tests\Support\SqliteDb;
 use OCP\AppFramework\Http\JSONResponse;
 use OCP\AppFramework\Http\Response;
 use OCP\AppFramework\Services\IInitialState;
@@ -80,7 +82,7 @@ final class ShareRoutesTest extends TestCase {
     }
 
     private function boardApi(IRequest $r): BoardApiController {
-        return new BoardApiController($r, $this->h->service, $this->session(), $this->limiter(), PageControllerTest::limits(), Fake::of(LoggerInterface::class));
+        return new BoardApiController($r, $this->h->service, $this->session(), $this->limiter(), PageControllerTest::limits(), Fake::of(LoggerInterface::class), $this->h->sketches());
     }
 
     /** A header set by the controller (Response::getHeaders() needs the server). */
@@ -232,9 +234,12 @@ final class ShareRoutesTest extends TestCase {
 
     /** @var array<string, string> provided initial state, JSON-encoded */
     private array $state = [];
+    /** Vote sessions of the boards (job 184), on a real SQL engine. */
+    private ?VoteStore $votes = null;
 
-    public function testPublicPageExpiredAndLinkInfo(): void {
-        $page = fn (): PublicPageController => new PublicPageController(
+    private function publicPage(): PublicPageController {
+        $this->votes ??= new VoteStore((new SqliteDb())->connection());
+        return new PublicPageController(
             Fake::of(IRequest::class, ['getRemoteAddress' => fn (): string => '10.0.0.1']),
             Fake::of(IUserSession::class, ['isLoggedIn' => fn (): bool => false]),
             Fake::of(IURLGenerator::class),
@@ -248,7 +253,12 @@ final class ShareRoutesTest extends TestCase {
             PageControllerTest::limits(),
             Fake::of(ITimeFactory::class, ['now' => fn (): \DateTimeImmutable => new \DateTimeImmutable('@' . $this->h->time)]),
             PageControllerTest::privacy('en', []),
+            $this->votes,
         );
+    }
+
+    public function testPublicPageExpiredAndLinkInfo(): void {
+        $page = fn (): PublicPageController => $this->publicPage();
         $edit = $this->h->service->enableLink('alice', $this->b, 'edit', ['password' => 'pw']);
         $vote = $this->h->service->enableLink('alice', $this->b, 'vote', ['expiresAt' => '2025-10-10']);
         $page()->show($edit['token']);
@@ -262,5 +272,66 @@ final class ShareRoutesTest extends TestCase {
         $this->h->service->disableLink('alice', $this->b, 'edit');
         $page()->show($edit['token']);
         $this->assertSame(['"revoked"', 'null'], [$this->state['linkState'], $this->state['linkInfo']]);
+    }
+
+    /** linkInfo of the edit and the voting link, JSON text as the page provides it. */
+    private function linkInfos(string $edit, string $vote): array {
+        $out = [];
+        foreach ([$edit, $vote] as $token) {
+            $this->state = [];
+            $this->publicPage()->show($token);
+            $this->assertSame(PageController::INITIAL_STATE_KEYS, array_keys($this->state), 'the 12 keys');
+            $out[] = $this->state['linkInfo'];
+        }
+        return $out;
+    }
+
+    /**
+     * Job 184 (AK1): a link without a password says accountsOnlyVote: true
+     * while an open, unexpired session for accounts only runs; every other
+     * case keeps linkInfo byte for byte, and the page closes nothing.
+     */
+    public function testPublicPageAccountsOnlyVote(): void {
+        $nowMs = $this->h->time * 1000;
+        $cfg = ['per' => 5, 'perItem' => 1, 'scope' => null, 'types' => ['sticky']];
+        $edit = $this->h->service->enableLink('alice', $this->b, 'edit', [])['token'];
+        $vote = $this->h->service->enableLink('alice', $this->b, 'vote', [])['token'];
+        $plain = ['{"role":"edit","password":false}', '{"role":"vote","password":false}'];
+        $hint = ['{"role":"edit","password":false,"accountsOnlyVote":true}', '{"role":"vote","password":false,"accountsOnlyVote":true}'];
+        $this->publicPage();
+        $votes = $this->votes;
+
+        $this->assertSame($plain, $this->linkInfos($edit, $vote), 'no session');
+        $sid = $votes->insert($this->b, $cfg, 'u:alice', $nowMs, null);
+        $this->assertSame($plain, $this->linkInfos($edit, $vote), 'a session without the option');
+        $votes->close($sid, [], 0, $nowMs);
+
+        $sid = $votes->insert($this->b, $cfg + ['accountsOnly' => true], 'u:alice', $nowMs, null);
+        $this->assertSame($hint, $this->linkInfos($edit, $vote), 'accounts only, no time limit');
+        $other = $this->h->service->create('alice', 'B')['id'];
+        $otherEdit = $this->h->service->enableLink('alice', $other, 'edit', [])['token'];
+        $otherVote = $this->h->service->enableLink('alice', $other, 'vote', [])['token'];
+        $this->assertSame($plain, $this->linkInfos($otherEdit, $otherVote), 'the session of another board');
+        $votes->close($sid, [], 0, $nowMs);
+        $this->assertSame($plain, $this->linkInfos($edit, $vote), 'a closed session for accounts only');
+
+        $sid = $votes->insert($this->b, $cfg + ['accountsOnly' => true], 'u:alice', $nowMs, $nowMs + 1);
+        $this->assertSame($hint, $this->linkInfos($edit, $vote), 'accounts only, ends in 1 ms');
+        $votes->setEndsAt($sid, $nowMs);
+        $this->assertSame($plain, $this->linkInfos($edit, $vote), 'accounts only, ends_at = now: expired');
+        $this->assertSame([$sid, 'open'], [$votes->open($this->b)['id'] ?? null, $votes->find($this->b, $sid)['state'] ?? null], 'show closes nothing');
+        $votes->close($sid, [], 0, $nowMs);
+
+        $votes->insert($this->b, $cfg + ['accountsOnly' => true], 'u:alice', $nowMs, null);
+        $pw = $this->h->service->enableLink('alice', $this->b, 'edit', ['password' => 'pw'])['token'];
+        $this->assertSame(['{"role":"edit","password":true}', $hint[1]], $this->linkInfos($pw, $vote), 'a link with a password tells nothing');
+
+        $this->h->service->disableLink('alice', $this->b, 'edit');
+        $this->state = [];
+        $this->publicPage()->show($pw);
+        $this->assertSame(['"revoked"', 'null', 'null'], [$this->state['linkState'], $this->state['linkInfo'], $this->state['boardId']]);
+        $this->state = [];
+        $this->publicPage()->show('Nn3dEf6hIj9kLm2nOp5qRs8t');
+        $this->assertSame(['"invalid"', 'null', 'null'], [$this->state['linkState'], $this->state['linkInfo'], $this->state['boardId']]);
     }
 }

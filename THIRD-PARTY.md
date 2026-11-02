@@ -18,93 +18,195 @@ The JavaScript bundle contains third-party code under these licences:
 | [Vue](https://vuejs.org/) 3.5 | MIT |
 | @nextcloud/vue | AGPL-3.0-or-later |
 | @nextcloud/l10n, @nextcloud/router, @nextcloud/initial-state, @nextcloud/auth | GPL-3.0-or-later |
+| [emoji-mart-vue-fast](https://github.com/serebrov/emoji-mart-vue) 15.0.5 (in the emoji picker, loaded on demand) | BSD-3-Clause |
 
-Most icons in `src/components/icons.js` are SVG path data copied unchanged
-from [Material Design Icons](https://pictogrammers.com/library/mdi/) 7.4.47
-(Pictogrammers), licensed under the
-[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0); the rest are
-simple outlines drawn for Knorke itself (AGPL-3.0-or-later like the rest of the
-code). They end up in the JavaScript bundle. Each MDI key is one MDI icon:
+The icons of the bars, menus and tool variants in `src/components/icons.js`
+and the 20 symbols of the shapes panel are SVG path data copied unchanged from
+[Phosphor Icons](https://phosphoricons.com/) (`@phosphor-icons/core` 2.1.1),
+licensed under the MIT License. The path data sits in `src/model/phosphor.js`
+(on Phosphor's 256 × 256 grid, scaled to 24 × 24 when the module loads) and ends
+up in the JavaScript bundle. Each key is one Phosphor icon, weight Regular:
 
-| Key in `icons.js` | MDI icon |
+| Key in `icons.js` | Phosphor icon |
 |---|---|
-| `plus` | `mdi-plus` |
-| `minus` | `mdi-minus` |
-| `pencil` | `mdi-pencil` |
-| `trash` | `mdi-trash-can-outline` |
-| `share` | `mdi-share-variant` |
-| `back` | `mdi-arrow-left` |
-| `select` | `mdi-cursor-default` |
-| `hand` | `mdi-hand-back-right` |
-| `sticky` | `mdi-sticker-outline` |
-| `frame` | `mdi-rectangle-outline` |
-| `undo` | `mdi-undo` |
-| `redo` | `mdi-redo` |
-| `fit` | `mdi-fit-to-screen-outline` |
-| `front` | `mdi-arrange-bring-to-front` |
-| `back2` | `mdi-arrange-send-to-back` |
-| `copy` | `mdi-content-copy` |
-| `refresh` | `mdi-refresh` |
-| `link` | `mdi-link-variant` |
-| `board` | `mdi-view-dashboard-outline` |
-| `account` | `mdi-account-outline` |
-| `cut` | `mdi-content-cut` |
-| `duplicate` | `mdi-content-duplicate` |
-| `chevronDown` | `mdi-chevron-down` |
-| `check` | `mdi-check` |
-| `lock` | `mdi-lock` |
-| `unlock` | `mdi-lock-open-variant` |
-| `groupItems` | `mdi-group` |
-| `ungroup` | `mdi-ungroup` |
-| `alignLeft` | `mdi-format-align-left` |
-| `alignCenter` | `mdi-format-align-center` |
-| `alignRight` | `mdi-format-align-right` |
-| `alignItemsLeft` | `mdi-align-horizontal-left` |
-| `alignItemsCenter` | `mdi-align-horizontal-center` |
-| `alignItemsRight` | `mdi-align-horizontal-right` |
-| `alignItemsTop` | `mdi-align-vertical-top` |
-| `alignItemsMiddle` | `mdi-align-vertical-center` |
-| `alignItemsBottom` | `mdi-align-vertical-bottom` |
-| `distributeHorizontal` | `mdi-distribute-horizontal-center` |
-| `distributeVertical` | `mdi-distribute-vertical-center` |
-| `tidyUp` | `mdi-view-grid` |
-| `connector` | `mdi-arrow-top-right` |
-| `qrcode` | `mdi-qrcode` |
-| `group` | `mdi-account-group` |
-| `eye` | `mdi-eye` |
-| `eyeOff` | `mdi-eye-off` |
-| `close` | `mdi-close` |
-| `dotsVertical` | `mdi-dots-vertical` |
-| `timer` | `mdi-timer-outline` |
+| `plus` | `plus` |
+| `tag` | `tag` |
+| `comment` | `chat` |
+| `cluster` | `squares-four` |
+| `table` | `table` |
+| `mindmap` | `tree-structure` |
+| `mmTree` | `tree-view` |
+| `minus` | `minus` |
+| `pencil` | `pencil-simple` |
+| `pen` | `pencil-simple` |
+| `trash` | `trash` |
+| `share` | `share-network` |
+| `back` | `arrow-left` |
+| `select` | `cursor` |
+| `hand` | `hand` |
+| `sticky` | `note` |
+| `frame` | `frame-corners` |
+| `undo` | `arrow-u-up-left` |
+| `redo` | `arrow-u-up-right` |
+| `fit` | `corners-out` |
+| `front` | `selection-foreground` |
+| `back2` | `selection-background` |
+| `copy` | `copy` |
+| `refresh` | `arrow-clockwise` |
+| `link` | `link` |
+| `board` | `squares-four` |
+| `cut` | `scissors` |
+| `duplicate` | `copy-simple` |
+| `chevronDown` | `caret-down` |
+| `chevronRight` | `caret-right` |
+| `check` | `check` |
+| `lock` | `lock` |
+| `unlock` | `lock-open` |
+| `groupItems` | `selection-plus` |
+| `ungroup` | `selection-slash` |
+| `alignLeft` | `text-align-left` |
+| `alignCenter` | `text-align-center` |
+| `alignRight` | `text-align-right` |
+| `valignTop` | `arrow-line-up` |
+| `valignMiddle` | `arrows-in-line-vertical` |
+| `valignBottom` | `arrow-line-down` |
+| `alignItemsLeft` | `align-left` |
+| `alignItemsCenter` | `align-center-horizontal` |
+| `alignItemsRight` | `align-right` |
+| `alignItemsTop` | `align-top` |
+| `alignItemsMiddle` | `align-center-vertical` |
+| `alignItemsBottom` | `align-bottom` |
+| `tidyUp` | `grid-four` |
+| `sortColors` | `palette` |
+| `shape` | `shapes` |
+| `text` | `text-t` |
+| `rect` | `rectangle` |
+| `roundRect` | `square` |
+| `ellipse` | `circle` |
+| `diamond` | `diamond` |
+| `triangle` | `triangle` |
+| `arrowRight` | `arrow-fat-right` |
+| `arrange` | `arrows-out-cardinal` |
+| `account` | `user` |
+| `connector` | `arrow-up-right` |
+| `label` | `textbox` |
+| `connect` | `line-segment` |
+| `swapDirection` | `arrows-left-right` |
+| `emoticonPlus` | `smiley` |
+| `qrcode` | `qr-code` |
+| `group` | `users-three` |
+| `team` | `users` |
+| `present` | `presentation` |
+| `eye` | `eye` |
+| `eyeOff` | `eye-slash` |
+| `close` | `x` |
+| `download` | `download-simple` |
+| `upload` | `upload-simple` |
+| `image` | `image` |
+| `timer` | `timer` |
+| `vote` | `check-square` |
+| `facilitate` | `flag` |
+| `zoomSelection` | `scan` |
+| `dice` | `dice-five` |
+| `star` | `star` |
+| `starOutline` | `star` |
+| `sort` | `funnel-simple` |
+| `chevronLeft` | `caret-left` |
+| `keyboard` | `keyboard` |
+| `legal` | `scales` |
+| `exportTo` | `tray-arrow-down` |
+| `insertFrom` | `tray-arrow-up` |
+| `moreTools` | `plus-square` |
+| `importShapes` | `folder-simple-plus` |
+| `zoom100` | `magnifying-glass` |
+| `search` | `magnifying-glass` |
+| `caretUp` | `caret-up` |
+| `caretDown` | `caret-down` |
+| `dotsHorizontal` | `dots-three` |
+| `routes` | `path` |
+| `tips` | `arrow-right` |
+| `headerRow` | `browser` |
+| `branch` | `git-branch` |
+| `viewGrid` | `squares-four` |
+| `viewList` | `list` |
 
-Own drawings:
+The symbols (the shape kinds `iconPerson` … `iconCloud` in
+`src/model/shapes.js`) draw the Regular icon as their line and the light layer
+of the Duotone weight of the same icon (the path its `-duotone` file draws at
+opacity 0.2) as their fill:
+
+| Shape kind | Phosphor icon |
+|---|---|
+| `iconPerson` | `user` |
+| `iconPeople` | `users` |
+| `iconPlace` | `map-pin` |
+| `iconClock` | `clock` |
+| `iconWarning` | `warning` |
+| `iconInfo` | `info` |
+| `iconQuestion` | `question` |
+| `iconDone` | `check-circle` |
+| `iconError` | `x-circle` |
+| `iconStar` | `star` |
+| `iconHeart` | `heart` |
+| `iconIdea` | `lightbulb` |
+| `iconFlag` | `flag` |
+| `iconCalendar` | `calendar-blank` |
+| `iconMail` | `envelope-simple` |
+| `iconPhone` | `phone` |
+| `iconHome` | `house` |
+| `iconSettings` | `gear` |
+| `iconLock` | `lock` |
+| `iconCloud` | `cloud` |
+
+Licence of Phosphor Icons:
+
+> MIT License
+>
+> Copyright (c) 2023 Phosphor Icons
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+The preview of the image shape (`IMAGE_PREVIEW` in `src/model/shapes.js`) is
+SVG path data copied unchanged from
+[Material Design Icons](https://pictogrammers.com/library/mdi/) 7.4.47
+(Pictogrammers, `mdi-image-outline`), licensed under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+The markers of the BPMN shapes (the `mark` and `badge` of the kinds `bpmn…`
+in the same file) are MDI 7.4.47 path data, too: `mdi-email-outline`,
+`mdi-email`, `mdi-clock-outline`, `mdi-flash`, `mdi-circle`, `mdi-account`,
+`mdi-cog-outline`, `mdi-hand-back-right-outline`, `mdi-script-text-outline`,
+`mdi-table-large`, `mdi-plus-box-outline`, `mdi-close-thick`,
+`mdi-plus-thick`, `mdi-circle-outline`, `mdi-arrow-right-bold-outline` and
+`mdi-arrow-right-bold`.
+
+Own drawings (AGPL-3.0-or-later like the rest of the code), where Phosphor has
+nothing fitting:
 
 | Key in `icons.js` | Origin |
 |---|---|
-| `team` | own drawing |
-| `vote` | own drawing |
-| `facilitate` | own drawing |
-| `zoomSelection` | own drawing |
-| `present` | own drawing |
-| `dice` | own drawing |
-| `shape` | own drawing |
-| `text` | own drawing |
-| `rect` | own drawing |
-| `roundRect` | own drawing |
-| `ellipse` | own drawing |
-| `diamond` | own drawing |
-| `triangle` | own drawing |
-| `arrowRight` | own drawing |
-| `arrange` | own drawing |
-| `valignTop` | own drawing |
-| `valignMiddle` | own drawing |
-| `valignBottom` | own drawing |
+| `mmBoth` | own drawing |
+| `laser` | own drawing |
+| `distributeHorizontal` | own drawing |
+| `distributeVertical` | own drawing |
 | `dashSolid` | own drawing |
 | `dashDashed` | own drawing |
 | `dashDotted` | own drawing |
-| `fill` | own drawing |
-| `border` | own drawing |
-| `textColor` | own drawing |
 | `routeStraight` | own drawing |
 | `routeElbow` | own drawing |
 | `routeCurved` | own drawing |
@@ -113,9 +215,18 @@ Own drawings:
 | `capTriangle` | own drawing |
 | `capDot` | own drawing |
 | `capDiamond` | own drawing |
-| `label` | own drawing |
-| `connect` | own drawing |
-| `lineWidth` | own drawing |
+| `capCircleOpen` | own drawing |
+| `capTriangleOpen` | own drawing |
+| `notePad` | own drawing |
+| `lanes` | own drawing |
+| `sparkle` | own drawing |
+| `marker` | own drawing |
+| `eraser` | own drawing |
+| `widthThin` | own drawing |
+| `widthMedium` | own drawing |
+| `widthThick` | own drawing |
+| `listBullets` | own drawing |
+| `linkOut` | own drawing |
 
 The validity check for z-order keys in `lib/Service/ZOrder.php` and
 `src/model/zorder.js` is a port of `validateOrderKey` from fractional-indexing

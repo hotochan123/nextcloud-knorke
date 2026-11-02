@@ -49,7 +49,7 @@
  */
 import {
 	K, APP, PHONE, CANVAS, api, put, ulid, seedOps, serverMap, itemMap, openBoard, waitReady, until, sleep, centerOf, selectItem,
-	dragPath, settle, TRANSFORM_HANDLES,
+	dragPath, settle, TRANSFORM_HANDLES, barMore,
 } from '../lib/harness.mjs'
 
 /** Longer than the double-click time of the browsers (500 ms): two clicks, no double click. */
@@ -216,11 +216,14 @@ async function steps(t, pa, pb, board, { A, B, C, F }) {
 	await pa.mouse.click(cc.x, cc.y)
 	await pa.keyboard.up('Shift')
 	t.must(sameIds((await K.selection(pa)) || [], [A, B, C]), '[S] (4) die Gruppe und C sind gewählt', await K.selection(pa))
-	t.must(await appears(pa, '[data-knorke-action=group]'), '[C] (4) Group items ist in der Leiste')
-	const disabled = await pa.locator('[data-knorke-action=group]').first().getAttribute('aria-disabled')
-	t.check(disabled === 'true', '[C] (4) [data-knorke-action=group] trägt aria-disabled="true"', disabled)
-	const hint = await pa.locator('[data-knorke-action=group]').first().getAttribute('title')
+	// job 230: "Group items" is an entry of the bar's "…"; blocked, it stays with its reason (title and description)
+	const group4 = await barMore(pa, 'group').catch(() => null)
+	t.must(group4 !== null, '[C] (4) Group items ist im Menü „…“')
+	const blocked = await pa.locator('.knorke-menus [data-knorke-action=group]').first().evaluate((li) => li.classList.contains('knorke-more--blocked'))
+	t.check(blocked, '[C] (4) der Eintrag ist als gesperrt markiert (knorke-more--blocked)', blocked)
+	const hint = await group4.getAttribute('title')
 	t.check(typeof hint === 'string' && hint.includes('same frame'), '[C] (4) der title nennt den Grund', hint)
+	await pa.keyboard.press('Escape')
 	await pa.locator(CANVAS).first().focus()
 	await pa.keyboard.press('Control+g')
 	t.check(await appears(pa, '[data-knorke-toast=group-blocked]', 3000), '[C] (4) Strg+G zeigt [data-knorke-toast=group-blocked]')
@@ -248,8 +251,11 @@ async function steps(t, pa, pb, board, { A, B, C, F }) {
 	await selectItem(pa, A)
 	await secondClick(pa, A)
 	t.must(sameIds((await K.selection(pa)) || [], [A]), '[S] (6) nur A ist gewählt', await K.selection(pa))
-	const barOf = async () => ({ group: await pa.locator('[data-knorke-action=group]').count(), ungroup: await pa.locator('[data-knorke-action=ungroup]').count() })
+	// job 230: the entries of "…" (opened once; it stays open while the selection stays)
+	await barMore(pa, 'copy').catch(() => null)
+	const barOf = async () => ({ group: await pa.locator('.knorke-menus [data-knorke-action=group]').count(), ungroup: await pa.locator('.knorke-menus [data-knorke-action=ungroup]').count() })
 	t.check(await until(async () => deepEqual(await barOf(), { group: 0, ungroup: 1 }), { timeout: 3000 }), '[C] (6) bei [A] zeigt die Leiste Ungroup und kein Group items (round 1)', await barOf())
+	await pa.keyboard.press('Escape')
 	await pa.locator(CANVAS).first().focus()
 	await pa.keyboard.press('Delete')
 	await settle([pa, pb])
@@ -327,12 +333,20 @@ export const E42_PHONE = {
 			t.must(await canvasAt(p, ca.x, ca.y), '[D] die Mitte von A liegt frei auf der Leinwand', ca)
 			await cdpTap(cdp, ca.x, ca.y)
 			t.check(await until(async () => sameIds((await K.selection(p)) || [], [A, B]), { timeout: 3000 }), '[S] ein Tipp auf A wählt A und B', await K.selection(p))
-			t.must(await appears(p, '[data-knorke-action=ungroup]', 3000), '[C] Ungroup ist in der Leiste sichtbar')
-			const ub = await p.locator('[data-knorke-action=ungroup]').first().boundingBox()
+			// job 230: "…" opens with a tap, then Ungroup
+			const more = p.locator('.knorke-contextbar [data-knorke-menu=selection] button').first()
+			t.must(await more.waitFor({ state: 'visible', timeout: 3000 }).then(() => true, () => false), '[C] „…“ ist in der Leiste sichtbar')
+			const mb = await more.boundingBox()
+			await cdpTap(cdp, Math.round(mb.x + mb.width / 2), Math.round(mb.y + mb.height / 2))
+			const ungroupBtn = p.locator('.knorke-menus [data-knorke-action=ungroup] button').first()
+			t.must(await ungroupBtn.waitFor({ state: 'visible', timeout: 3000 }).then(() => true, () => false), '[C] Ungroup ist im Menü „…“ sichtbar')
+			// the popover scales in (floating-vue): measure once it stands
+			await sleep(500)
+			const ub = await ungroupBtn.boundingBox()
 			const vp = await p.evaluate(() => ({ vw: document.documentElement.clientWidth, vh: document.documentElement.clientHeight }))
 			t.check(ub && ub.x >= 0 && ub.y >= 0 && ub.x + ub.width <= vp.vw && ub.y + ub.height <= vp.vh, '[C] [data-knorke-action=ungroup] liegt ganz im Viewport', { ub, vp })
 			t.check(ub && ub.width >= 44 && ub.height >= 44, '[C] [data-knorke-action=ungroup] ist mindestens 44 × 44 CSS-px groß', ub)
-			await p.locator('[data-knorke-action=ungroup]').first().tap()
+			await cdpTap(cdp, Math.round(ub.x + ub.width / 2), Math.round(ub.y + ub.height / 2))
 			await K.waitIdle(p)
 			const s = await serverMap('alice', board)
 			t.check(deepEqual(groupsIn(s, [A, B]), [null, null]), '[B] ein Tipp auf Ungroup löst die Gruppe', groupsIn(s, [A, B]))

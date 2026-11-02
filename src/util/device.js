@@ -25,6 +25,34 @@ export function isViewOnlyDevice(win = globalThis.window) {
 }
 
 /**
+ * Touch screen (factory jobs 145, 161: the shortcuts overview shows the
+ * finger gestures first): the device has a touch screen at all, also a
+ * laptop with a touch screen or a computer with a touch monitor, whatever
+ * its primary pointer. navigator.maxTouchPoints > 0 or (any-pointer: coarse);
+ * a part that is missing or throws counts as false. Some Windows computers
+ * report touch points through a pen driver: only the overview's order
+ * changes there.
+ *
+ * @param {Window|undefined} [win] window (tests)
+ * @return {boolean} true when the device has a touch screen
+ */
+export function hasTouchScreen(win = globalThis.window) {
+	let points = false
+	try {
+		points = Number(win?.navigator?.maxTouchPoints) > 0
+	} catch (e) {
+		points = false
+	}
+	let coarse = false
+	try {
+		coarse = typeof win?.matchMedia === 'function' && win.matchMedia('(any-pointer: coarse)').matches === true
+	} catch (e) {
+		coarse = false
+	}
+	return points || coarse
+}
+
+/**
  * @param {Window|undefined} [win] window (tests)
  * @return {boolean} true in a secure context (clipboard, randomUUID available)
  */

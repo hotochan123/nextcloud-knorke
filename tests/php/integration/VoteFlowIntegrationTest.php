@@ -147,7 +147,7 @@ final class VoteFlowIntegrationTest extends IntegrationCase {
         $this->assertSame(['sid' => $sid, 'seq' => 2], $this->cache->getVoteSeq($b));
         // Only live items count (R16): remove item 0 through the object path.
         $this->sync->applyOps($p, $b, 'cIT', [['o' => 'remove', 'id' => $items[0]]], self::nowMs());
-        $this->assertSame(['sid' => $sid, 'mine' => [$items[1] => 2], 'left' => 2], $this->votes->mine($b, 'kt-voter-a00001'));
+        $this->assertSame(['sid' => $sid, 'mine' => [$items[1] => 2], 'left' => 2], $this->votes->mine($b, 'kt-voter-a00001', false));
         $this->assertSame(['sid' => $sid, 'voters' => 2, 'vt' => 2], $this->votes->progress($p, $b, 0, self::nowMs()));
         $ok = $this->votes->apply(self::voter('kt-voter-a00001'), $b, [self::op($sid, $items[0], 0)], self::nowMs());
         $this->assertSame(['ok'], $ok['res'], 'n = 0 on the deleted item');

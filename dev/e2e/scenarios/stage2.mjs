@@ -446,7 +446,8 @@ export const E28 = {
 			await vsec.locator('[data-knorke-action=link-qr]').first().click()
 			const vqr = await until(async () => vsec.locator('[data-knorke-qr-value]').first().getAttribute('data-knorke-qr-value', { timeout: 1000 }).catch(() => null), { timeout: 5000 })
 			t.check(typeof voteUrl === 'string' && vqr === voteUrl, '[C] Stufe 3: QR-Code des Abstimm-Links = links.vote.url', { vqr, voteUrl })
-			await vsec.locator('[data-knorke-action=link-present]').first().click()
+			// job 228: „Dem Raum zeigen“ is the third section, one button per active link
+			await a.page.locator('.knorke-share [data-knorke-share-room] [data-knorke-present=vote]').first().click()
 			const vpres = a.page.locator('[data-knorke-dialog=present-link]').first()
 			t.check(await vpres.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] Stufe 3: „Dem Raum zeigen“ des Abstimm-Links offen')
 			const vtxt = await textOf(vpres)
@@ -459,7 +460,7 @@ export const E28 = {
 		const qr = await until(async () => sec.locator('[data-knorke-qr-value]').first().getAttribute('data-knorke-qr-value', { timeout: 1000 }).catch(() => null), { timeout: 5000 })
 		t.check(qr === editUrl, '[C] [data-knorke-qr-value] = links.edit.url', { qr, editUrl })
 		t.check(await sec.locator('[data-knorke-qr-value] path, svg[data-knorke-qr-value] path').count() > 0, '[C] QR-Code als <svg> mit Pfaden')
-		await sec.locator('[data-knorke-action=link-present]').first().click()
+		await a.page.locator('.knorke-share [data-knorke-share-room] [data-knorke-present=edit]').first().click()
 		const pres = a.page.locator('[data-knorke-dialog=present-link]').first()
 		t.check(await pres.waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false), '[C] [data-knorke-dialog=present-link] offen')
 		const ptxt = await textOf(pres)
@@ -796,9 +797,9 @@ export const E36 = {
 		t.step('Auswahl per Klick bei 5 % (auf eine Notiz oder Form, nie auf einen Verbinder)')
 		const box = await p.locator(CANVAS).first().boundingBox()
 		const items = await itemMap(p)
-		// LOD-2 rule (c), SPEC-M1 §6.3 (R13): click and marquee skip connectors at
-		// LOD 2, so a click on a connector line selects nothing by design. The
-		// target is therefore a note or a shape (seed-board makes notes only).
+		// The target is a note or a shape (seed-board makes notes only): the step
+		// checks the selection of a note at LOD 2; (factory job 209) a click on a
+		// connector line selects the connector there too (tests/js/scene/lod2Scene).
 		const CLICK_TYPES = new Set(['sticky', 'shape'])
 		t.note(`Objektarten: ${[...new Set([...items.values()].map((it) => it.t))].join(', ')}`)
 		let target = null

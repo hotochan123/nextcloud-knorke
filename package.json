@@ -35,5 +35,10 @@
     "sass": "1.105.1",
     "typescript": "^6.0.3",
     "vite": "7.3.7"
+  },
+  "overrides": {
+    "webdav": {
+      "minimatch": "^11.0.3"
+    }
   }
 }

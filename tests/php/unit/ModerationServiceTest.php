@@ -68,6 +68,70 @@ final class ModerationServiceTest extends TestCase {
         self::expectHttp(409, 'timer_state', static fn () => M::timerAfter(['state' => 'weird'], 'add', 1000, $now, 'A'));
     }
 
+    /** Factory job 272: the slide order (meta.slides). */
+    public function testSlideOrder(): void {
+        $a = '01HZZZZZZZZZZZZZZZZZZZZZZA';
+        $b = '01HZZZZZZZZZZZZZZZZZZZZZZB';
+        $this->assertSame([$a, $b], M::slideOrder([$a, $b]));
+        $this->assertSame([], M::slideOrder([]));
+        $max = array_map(static fn (int $i): string => '01H' . str_pad(strtoupper(base_convert((string)$i, 10, 32)), 23, '0', STR_PAD_LEFT), range(1, Limits::SLIDES_MAX));
+        $max = array_map(static fn (string $id): string => strtr($id, ['I' => 'X', 'L' => 'Y', 'O' => 'Z', 'U' => 'W']), $max);
+        $this->assertCount(Limits::SLIDES_MAX, M::slideOrder($max));
+        foreach ([null, 'x', ['k' => $a], [$a, $a], [$a, 'nope'], [7], array_merge($max, [$a])] as $bad) {
+            self::expectHttp(400, 'bad_request', static fn () => M::slideOrder($bad));
+        }
+    }
+
+    public function testFramesThroughTheMetaPath(): void {
+        $h = new H();
+        $b = $h->board(0);
+        $alice = H::user();
+        $f = '01HZZZZZZZZZZZZZZZZZZZZZZA';
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->summon($alice, $b, 'cTabA', self::NOW, 'bad'));
+        self::expectHttp(409, 'no_summon', static fn () => $h->moderation->moveSummon($b, $f, self::NOW));
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->moveSummon($b, null, self::NOW));
+        $this->assertSame(0, $h->rev($b), 'refusals write nothing');
+        $s = $h->moderation->summon($alice, $b, 'cTabA', self::NOW, $f)['meta']['summon'];
+        $this->assertSame(['pid' => $alice->pid, 'client' => 'cTabA', 'name' => 'Alice Adler', 'seq' => 1, 'at' => self::NOW, 'frame' => $f], $s);
+        $g = '01HZZZZZZZZZZZZZZZZZZZZZZB';
+        $s2 = $h->moderation->moveSummon($b, $g, self::NOW + 5)['meta']['summon'];
+        $this->assertSame(array_merge($s, ['frame' => $g]), $s2);
+        $rev = $h->rev($b);
+        $h->moderation->moveSummon($b, $g, self::NOW + 6);
+        $this->assertSame($rev, $h->rev($b), 'same frame: no write');
+        $this->assertSame([$f, $g], $h->moderation->slides($b, [$f, $g], self::NOW)['meta']['slides']);
+        $this->assertArrayNotHasKey('slides', $h->moderation->slides($b, [], self::NOW)['meta']);
+        $rev = $h->rev($b);
+        $h->moderation->slides($b, [], self::NOW);
+        $this->assertSame($rev, $h->rev($b), 'removing nothing writes nothing');
+        $this->assertTrue($h->allOutsideTransactions());
+    }
+
+    /** Factory job 275: private writing through the meta path (frame live under the lock, vote conflicts). */
+    public function testPrivateWriting(): void {
+        $h = new H();
+        $b = $h->board(2, 1);
+        $f = '01JVFRAME0000000000000000F';
+        $alice = H::user();
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->privateWriting($alice, $b, 'nope', null, self::NOW));
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->privateWriting($alice, $b, 'start', 'bad', self::NOW));
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->privateWriting($alice, $b, 'start', H::ulid(1), self::NOW), 'a note, no frame');
+        self::expectHttp(400, 'bad_request', static fn () => $h->moderation->privateWriting($alice, $b, 'start', H::ulid(99), self::NOW));
+        $this->assertSame(0, $h->rev($b), 'refusals write nothing');
+        $rev = $h->rev($b);
+        $h->moderation->privateWriting($alice, $b, 'reveal', null, self::NOW);
+        $this->assertSame($rev, $h->rev($b), 'reveal without private writing: no write');
+        $m = $h->moderation->privateWriting($alice, $b, 'start', $f, self::NOW)['meta'];
+        $this->assertSame(['scope' => 'frame', 'frame' => $f, 'at' => self::NOW, 'by' => 'Alice Adler', 'seq' => 1], $m['private']);
+        self::expectHttp(409, 'private_on', static fn () => $h->moderation->privateWriting($alice, $b, 'start', null, self::NOW));
+        self::expectHttp(409, 'private_on', static fn () => $h->votes->start($alice, $b, [], self::NOW));
+        $m = $h->moderation->privateWriting($alice, $b, 'reveal', null, self::NOW + 1)['meta'];
+        $this->assertSame(['privateSeq' => 1], $m);
+        $h->votes->start($alice, $b, [], self::NOW + 2);
+        self::expectHttp(409, 'vote_open', static fn () => $h->moderation->privateWriting($alice, $b, 'start', null, self::NOW + 3));
+        $this->assertTrue($h->allOutsideTransactions());
+    }
+
     public function testMsRanges(): void {
         $this->assertSame(1000, M::msFor('start', 1000));
         $this->assertSame(Limits::TIMER_MAX_MS, M::msFor('start', 5999000.0));

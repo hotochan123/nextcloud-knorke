@@ -52,6 +52,13 @@
 				:data-knorke-error="generalError.code">
 				{{ generalError.text }}
 			</p>
+			<p v-for="name in stillInByLink"
+				:key="'via-link:' + name"
+				class="knorke-people__note"
+				role="status"
+				data-knorke-note="via-link-removed">
+				{{ t('knorke', '{name} stays on the board through a link. Renew the links to take that access away too.', { name }) }}
+			</p>
 			<p v-if="shares.length === 0" class="knorke-people__empty">
 				{{ t('knorke', 'Not shared with anyone yet.') }}
 			</p>
@@ -69,6 +76,7 @@
 						<span class="knorke-people__name">{{ s.name }}</span>
 						<span class="knorke-people__kind">{{ kindLabel(s) }}</span>
 						<span v-if="s.appAccess === false" class="knorke-people__noapp" data-knorke-note="app-access">{{ t('knorke', 'Cannot open Knorke') }}</span>
+						<span v-if="s.viaLink" class="knorke-people__vialink" data-knorke-note="via-link">{{ t('knorke', 'Also in through a link') }}</span>
 					</span>
 					<NcSelect class="knorke-people__role"
 						:model-value="roleOption(s.role)"
@@ -161,6 +169,12 @@
  *   option, as a freshly added row and as a saved row. Only text, not grey:
  *   it stays selectable and savable, and the share works once an admin lets
  *   the account in. Groups and teams are never marked.
+ * - Job 248: an account row with viaLink (the account is also a member
+ *   through a valid link) says "Also in through a link"
+ *   ([data-knorke-note=via-link]). Removing such a saved row from the draft
+ *   shows above the list that the person stays on the board through the
+ *   link ([data-knorke-note=via-link-removed], share.js viaLinkRemoved) until
+ *   the row is back or the draft is saved.
  * - An error of the save with `at` sits at that row ([data-knorke-error]);
  *   others above the list. policy.sharing === false (sharing turned off for
  *   the owner): a note with the text of sharing_disabled instead of the
@@ -183,7 +197,7 @@ import { appUrl, pages } from '../util/routes.js'
 import { showSuccess } from '../util/toast.js'
 import { copyText } from './copyText.js'
 import { icons } from './icons.js'
-import { SEARCH_DEBOUNCE_MS, addSharee, errorText, removeShare, roleChoices, roleLabel, sameShares, setShareRole, shareKey, shareeOptions } from './share.js'
+import { SEARCH_DEBOUNCE_MS, addSharee, errorText, removeShare, roleChoices, roleLabel, sameShares, setShareRole, shareKey, shareeOptions, viaLinkRemoved } from './share.js'
 
 const props = defineProps({
 	boardId: { type: Number, required: true },
@@ -215,6 +229,7 @@ let seq = 0
 const keepServerHits = () => true
 const sharingOff = computed(() => props.policy?.sharing === false)
 const unchanged = computed(() => sameShares(props.shares, props.stored))
+const stillInByLink = computed(() => viaLinkRemoved(props.stored, props.shares))
 const rowError = computed(() => (props.error && Number.isInteger(props.error.at) && props.error.at < props.shares.length ? props.error : null))
 const generalError = computed(() => (props.error && !rowError.value ? props.error : null))
 const roleOptions = computed(() => roleChoices(FEATURES.voting).map((role) => ({ id: role, role, label: roleLabel(role) })))

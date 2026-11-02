@@ -572,7 +572,7 @@ await C('C05', 'put ok; derselbe put → dup', async (t) => {
 
 await C('C06', "put t:'pen' (unbekannter Typ; SPEC-M1 §12.3: shape/text/connector sind jetzt bekannt) → bad", async (t) => {
 	const b = await newBoard('C06')
-	const d = await ops(alice, b, [{ o: 'put', id: ulid(), t: 'pen', p: { x: 0, y: 0, w: 100, h: 100, z: nextZ() } }])
+	const d = await ops(alice, b, [{ o: 'put', id: ulid(), t: 'brush', p: { x: 0, y: 0, w: 100, h: 100, z: nextZ() } }])
 	resIs(t, d, ['bad'], 'put pen')
 })
 
@@ -724,7 +724,7 @@ await C('C17', 'Frame entfernen mit 2 Kindern (DB + im Batch verschoben) → fre
 await C('C18', 'Batch nur aus bad → acks.rev null, Board-rev unverändert', async (t) => {
 	const b = await newBoard('C18')
 	const b0 = await stack.boardRow(b)
-	const d = await ops(alice, b, [{ o: 'put', id: ulid(), t: 'pen', p: { z: 'i0' } }, { o: 'patch', id: 'kein-ulid', p: { x: 1 } }, sticky(ulid(), { z: 'a' })])
+	const d = await ops(alice, b, [{ o: 'put', id: ulid(), t: 'brush', p: { z: 'i0' } }, { o: 'patch', id: 'kein-ulid', p: { x: 1 } }, sticky(ulid(), { z: 'a' })])
 	resIs(t, d, ['bad', 'bad', 'bad'], 'Ergebnis')
 	t.check(d.acks.rev === null, 'acks.rev === null', d.acks)
 	const b1 = await stack.boardRow(b)
@@ -2634,7 +2634,7 @@ await C('C59', 'Rückwärts-Verträglichkeit (SPEC-M1 §3.10, §4.7 Regel 18): M
 	await ops(alice, b, [sticky(S, { data: { text: 'M0' } }), frame(F, { x: 1000 })])
 	resIs(t, await ops(alice, b, [patch(S, { 'data.text': 'noch M0', 'style.fill': '#FFADAD', 'style.fontSize': 32 }), patch(S, { x: 20, y: 30, parent: F }), patch(F, { 'data.title': 'Phase 1', 'style.fill': '#FFFFFF' }), patch(S, { w: 250, h: 250, r: 5 })]),
 		['ok', 'ok', 'ok', 'ok'], 'M0-Notiz und -Frame: Text, Farbe, Schrift, Lage, Größe, Drehung')
-	resIs(t, await ops(alice, b, [{ o: 'put', id: ulid(), t: 'pen', p: { x: 0, y: 0, w: 100, h: 100, r: 0, z: nextZ(), parent: null, data: { points: [[0, 0], [10, 10]] }, style: {} } }]), ['bad'], 'put t pen (unbekannter Typ, §12.3) → bad')
+	resIs(t, await ops(alice, b, [{ o: 'put', id: ulid(), t: 'brush', p: { x: 0, y: 0, w: 100, h: 100, r: 0, z: nextZ(), parent: null, data: { points: [[0, 0], [10, 10]] }, style: {} } }]), ['bad'], 'put t brush (unbekannter Typ, §12.3) → bad')
 	// an item of a later version, written into the database directly
 	rawBoards.add(b)
 	const rev = (await stack.boardRow(b)).rev
@@ -4941,7 +4941,7 @@ async function whoOf(c, b) {
 /** The comparable parts of an item: placement, size, z, data, style (the lock left out). */
 const bodyOf = (it) => (it ? JSON.stringify([it.x, it.y, it.w, it.h, it.r, it.z, it.parent, it.data, it.style]) : null)
 
-await C('C84', 'Rechte-Matrix Sperren (Job 023, M2 R20): (a) owner, „Darf moderieren“, edit und Gast des Bearbeitungslinks sperren → ok, jede Rolle (auch vote, view, Gast) sieht lock {by: pid, name}; vote/view → denied; (b) jeder entsperrt die eigene Sperre; (c) fremde Sperre: edit/Gast → itemlocked, owner/Moderation → ok, vote/view → denied; (d) jede Änderung (Lage, Größe, Stil, Text, z, remove) an einer gesperrten Notiz → itemlocked für alle, Objekt unverändert; (e) Gast-Identität weg (neuer Browser) → itemlocked, owner → ok; Wiederbeitritt mit altem Token nach erneuertem Link → dieselbe gid, eigene Sperre → ok; (f) Recht verloren (bob → view) → denied, carol entsperrt; (g) gesperrter Frame als Elternteil, gesperrte Notiz als Verbinder-Ende, Stimme auf gesperrte Notiz → ok', async (t) => {
+await C('C84', 'Rechte-Matrix Sperren (Job 023, M2 R20): (a) owner, „Darf moderieren“, edit und Gast des Bearbeitungslinks sperren → ok, jede Rolle (auch vote, view, Gast) sieht lock {by: pid, name}, Ginas Sperre {by, name, guest: true} auch bei gesendetem guest: false (Job 151); vote/view → denied; (b) jeder entsperrt die eigene Sperre; (c) fremde Sperre: edit/Gast → itemlocked, owner/Moderation → ok, vote/view → denied; (d) jede Änderung (Lage, Größe, Stil, Text, z, remove) an einer gesperrten Notiz → itemlocked für alle, Objekt unverändert; (e) Gast-Identität weg (neuer Browser) → itemlocked, owner → ok; Wiederbeitritt mit altem Token nach erneuertem Link → dieselbe gid, eigene Sperre → ok; (f) Recht verloren (bob → view) → denied, carol entsperrt; (g) gesperrter Frame als Elternteil, gesperrte Notiz als Verbinder-Ende, Stimme auf gesperrte Notiz → ok', async (t) => {
 	const temps = await tempUsers('cl', 2)
 	try {
 		const carol = await carolClient()
@@ -4960,18 +4960,23 @@ await C('C84', 'Rechte-Matrix Sperren (Job 023, M2 R20): (a) owner, „Darf mode
 		resIs(t, await opsNoSnap(bob, b, [sticky(NB, { x: 900 }), sticky(NP, { x: 1200 })]), ['ok', 'ok'], 'bob legt NB und NP an')
 		resIs(t, await opsNoSnap(gina, b, [sticky(NG, { x: 1500 }), sticky(NM, { x: 1800 })]), ['ok', 'ok'], 'Gina legt NG und NM an')
 		const lockers = [['alice', alice, NA], ['carol', carol, NC], ['bob', bob, NB], ['Gina', gina, NG]]
-		// (a)
-		for (const [who, c, id] of lockers) resIs(t, await opsNoSnap(c, b, [lockOp(id)]), ['ok'], `(a) ${who} sperrt die eigene Notiz`)
+		// (a); job 151: Gina's op sends guest: false, the server still marks her lock (only locked_by counts)
+		const lockAs = (who, id) => (who === 'Gina' ? patch(id, { lock: { by: 'not-read', name: 'not read', guest: false } }) : lockOp(id))
+		for (const [who, c, id] of lockers) resIs(t, await opsNoSnap(c, b, [lockAs(who, id)]), ['ok'], `(a) ${who} sperrt die eigene Notiz`)
 		for (const [who, c] of [['vote', voter], ['view', viewer]]) resIs(t, await opsNoSnap(c, b, [lockOp(N0), unlockOp(NA)]), ['denied', 'denied'], `(a) ${who} sperrt und entsperrt → denied`)
 		const want = {}
-		for (const [, c, id] of lockers) want[id] = await whoOf(c, b)
+		for (const [who, c, id] of lockers) {
+			const w = await whoOf(c, b)
+			want[id] = who === 'Gina' ? { by: w.pid, name: w.name, guest: true } : { by: w.pid, name: w.name }
+		}
 		for (const [who, c] of [['alice', alice], ['carol', carol], ['bob', bob], ['Gina', gina], ['vote', voter], ['view', viewer]]) {
 			const s = await snap(c, b)
 			const got = Object.fromEntries(Object.keys(want).map((id) => [id, itemIn(s, id)?.lock ?? null]))
-			const ok = Object.entries(want).every(([id, w]) => deepEq(got[id], { by: w.pid, name: w.name }))
-			t.check(ok && itemIn(s, N0)?.lock === null, `(a) der Snapshot von ${who} zeigt lock.by = pid und lock.name = Anzeigename des Sperrenden; N0 bleibt null`, { got, want, N0: itemIn(s, N0)?.lock })
+			const ok = Object.entries(want).every(([id, w]) => deepEq(got[id], w))
+			t.check(ok && itemIn(s, N0)?.lock === null, `(a) der Snapshot von ${who} zeigt lock.by = pid und lock.name = Anzeigename des Sperrenden, bei Ginas Sperre dazu guest: true (Job 151); N0 bleibt null`, { got, want, N0: itemIn(s, N0)?.lock })
 		}
 		t.check(deepEq(Object.keys(itemIn(await snap(alice, b), NA)?.lock ?? {}), ['by', 'name']), '(a) lock hat die Schlüssel in der Reihenfolge by, name')
+		t.check(deepEq(Object.keys(itemIn(await snap(alice, b), NG)?.lock ?? {}), ['by', 'name', 'guest']), '(a) Ginas lock hat die Schlüssel by, name, guest (Job 151)')
 		// (b)
 		for (const [who, c, id] of lockers) resIs(t, await opsNoSnap(c, b, [unlockOp(id)]), ['ok'], `(b) ${who} entsperrt die eigene Sperre`)
 		const sb = await snap(alice, b)
@@ -5036,7 +5041,7 @@ await C('C84', 'Rechte-Matrix Sperren (Job 023, M2 R20): (a) owner, „Darf mode
 	}
 })
 
-await C('C85', 'Sperrender wird geleert (Job 023, M2 R20): (a) ein Temp-Konto mit edit sperrt eine Notiz, occ user:delete → Snapshot von alice zeigt lock {by: null, name: null}, rev des Objekts höher, Sync mit altem since liefert es; bob entsperrt → itemlocked, alice → ok; (b) Sperre eines Kontos, das es nicht gibt (SQL): occ knorke:orphans --dry-run → Exit 0, fünf Zeilen + Dry-run-Zeile, Zeile unverändert; occ knorke:orphans → Exit 0, genau fünf Zeilen, danach locked_by/locked_name NULL, locked 1, Snapshot {by: null, name: null}', async (t) => {
+await C('C85', 'Sperrender wird geleert (Job 023, M2 R20): (a) ein Temp-Konto mit edit sperrt eine Notiz, occ user:delete → Snapshot von alice zeigt lock {by: null, name: null}, rev des Objekts höher, Sync mit altem since liefert es; bob entsperrt → itemlocked, alice → ok; (b) Sperre eines Kontos, das es nicht gibt (SQL): occ knorke:orphans --dry-run → Exit 0, sieben Zeilen (Job 247) + Dry-run-Zeile, Zeile unverändert; occ knorke:orphans → Exit 0, genau sieben Zeilen, danach locked_by/locked_name NULL, locked 1, Snapshot {by: null, name: null}', async (t) => {
 	const temps = await tempUsers('ck', 1)
 	let dropped = false
 	try {
@@ -5066,15 +5071,15 @@ await C('C85', 'Sperrender wird geleert (Job 023, M2 R20): (a) ein Temp-Konto mi
 		const rowOf = async () => await stack.sqlRow(`SELECT locked, locked_by, locked_name, rev FROM oc_knorke_items WHERE board_id = ${b} AND id = '${G}';`)
 		const g0 = await rowOf()
 		const lines = (out) => out.split('\n').map((l) => l.trim()).filter((l) => l !== '')
-		const KINDS = ['user-shares', 'group-shares', 'link-members', 'open-votes', 'owned-boards']
-		const fiveOk = (ls) => ls.length >= 5 && KINDS.every((k, i) => new RegExp(`^${k}: \\d+$`).test(ls[i]))
+		const KINDS = ['user-shares', 'group-shares', 'link-members', 'open-votes', 'owned-boards', 'shape-libraries', 'template-suggestions']
+		const fiveOk = (ls) => ls.length >= 7 && KINDS.every((k, i) => new RegExp(`^${k}: \\d+$`).test(ls[i]))
 		const dry = await run('docker', ['exec', '-u', 'www-data', env.containers.nc, 'php', 'occ', 'knorke:orphans', '--dry-run'], { timeoutMs: 120000 })
 		const dl = lines(dry.out)
-		t.check(dry.ok && dl.length === 6 && fiveOk(dl) && dl[5] === 'Dry run: nothing was changed.', '(b) occ knorke:orphans --dry-run: Exit 0, die fünf Zeilen plus "Dry run: nothing was changed."', { ok: dry.ok, out: dl, err: dry.err })
+		t.check(dry.ok && dl.length === 8 && fiveOk(dl) && dl[7] === 'Dry run: nothing was changed.', '(b) occ knorke:orphans --dry-run: Exit 0, die sieben Zeilen (Job 247) plus "Dry run: nothing was changed."', { ok: dry.ok, out: dl, err: dry.err })
 		t.check(deepEq(await rowOf(), g0), '(b) die Zeile ist nach dem Trockenlauf unverändert', { vorher: g0, nachher: await rowOf() })
 		const real = await run('docker', ['exec', '-u', 'www-data', env.containers.nc, 'php', 'occ', 'knorke:orphans'], { timeoutMs: 120000 })
 		const rl = lines(real.out)
-		t.check(real.ok && rl.length === 5 && fiveOk(rl), '(b) occ knorke:orphans: Exit 0, genau fünf Zeilen', { ok: real.ok, out: rl, err: real.err })
+		t.check(real.ok && rl.length === 7 && fiveOk(rl), '(b) occ knorke:orphans: Exit 0, genau sieben Zeilen', { ok: real.ok, out: rl, err: real.err })
 		const g1 = await rowOf()
 		t.check(g1 && Number(g1[0]) === 1 && g1[1] === null && g1[2] === null && Number(g1[3]) > Number(g0?.[3]), '(b) danach: locked 1, locked_by und locked_name NULL, rev höher', { vorher: g0, nachher: g1 })
 		t.check(deepEq(itemIn(await snap(alice, b), G)?.lock, { by: null, name: null }), '(b) der Snapshot zeigt {"by":null,"name":null}')

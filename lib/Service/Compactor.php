@@ -21,7 +21,7 @@ use OCP\IDBConnection;
  *  1. tombstone blocks: each ONE transaction with the board row lock first
  *     (BoardStore::lockBoard, serialised with the write path), then
  *     ItemStore::purgeTombstones (X, at most PURGE_CHUNK rows plus the rows
- *     of rev X, min_rev = max(min_rev, X)); after COMMIT FastCache::setGens
+ *     of rev X, min_rev = max(min_rev, X)); after COMMIT FastCache::raiseMinRev
  *     with the new min_rev (the fast path sees it at once). min_rev rises
  *     monotonically in steps, every intermediate state is correct on its
  *     own: a client with since < min_rev resyncs (the slow path reads
@@ -66,7 +66,6 @@ class Compactor {
         private ItemStore $items,
         private BoardStore $boards,
         private FastCache $cache,
-        private LinkPolicy $policy,
         private Limits $limits,
         private IDBConnection $db,
         private IAppConfig $appConfig,
@@ -162,9 +161,11 @@ class Compactor {
             if ($x === null) {
                 break;
             }
-            // After COMMIT: the new minRev on the fast path at once (§5.3).
+            // After COMMIT: the new minRev on the fast path at once (§5.3),
+            // and only minRev: the row's generations may be older than a
+            // revocation that committed after this block.
             $minRev = max((int)$row['min_rev'], $x);
-            $this->cache->setGens($b, $row['acl_gen'], $row['link_gen'], $minRev, $this->policy->allows((string)$row['owner']), $row['vote_link_gen']);
+            $this->cache->raiseMinRev($b, $minRev);
             $line['blocks']++;
             $line['tombstones'] += $deleted;
         }

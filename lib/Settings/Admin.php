@@ -9,6 +9,7 @@ namespace OCA\Knorke\Settings;
 
 use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\Controller\PageController;
+use OCA\Knorke\Service\AiService;
 use OCA\Knorke\Service\Limits;
 use OCA\Knorke\Service\PrivacyNotice;
 use OCP\AppFramework\Http\TemplateResponse;
@@ -28,13 +29,15 @@ final class Admin implements ISettings {
         private IConfig $config,
         private Limits $limits,
         private PrivacyNotice $privacy,
+        private AiService $ai,
     ) {
     }
 
     public function getForm(): TemplateResponse {
         PageController::provideState($this->initialState, PageController::initialStateFor($this->config, $this->limits, [
             'page' => 'admin',
-            'privacyAdmin' => $this->privacy->adminState(),
+            // factory job 267: the AI settings ride along under privacyAdmin.ai (no new initial-state key)
+            'privacyAdmin' => $this->privacy->adminState() + ['ai' => $this->ai->adminState()],
         ]));
         return new TemplateResponse(Application::APP_ID, 'admin', [], '');
     }

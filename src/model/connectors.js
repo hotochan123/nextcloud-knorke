@@ -34,19 +34,23 @@
  *   rotated or interior anchor), then the inner path with the fewest bends
  *   (ties: the shorter one, then the first in a fixed candidate order that
  *   starts with the balanced Z through the middle, the M0 elbow) that keeps
- *   out of both end boxes; obstacles are only the end boxes (§12.1). All 16
- *   side combinations, U-turns and S-turns included; at most 4 bends.
+ *   out of both end boxes (§12.1). All 16 side combinations, U-turns and
+ *   S-turns included; at most 4 bends.
+ *   (Job 197) With the option `obstacles` (the other items of the board) the
+ *   route runs around the items between its ends: when that route crosses
+ *   one, a search over a grid along their edges takes over (elbowPlan); a
+ *   route that crosses nothing stays exactly the one above.
  * - 'curved': cubic bezier [p0, p0 + n0·d, p1 + n1·d, p1] with
- *   d = max(40, 0.4·|p1 − p0|), hitPts = sampleBezier(points, 16).
+ *   d = curveHandle(|p1 − p0|) = max(60, 0.6·|p1 − p0|) (job 261), hitPts = sampleBezier(points, 16).
  * Cap angles point away from the line (bezier: end − last control point,
  * like Konva's Arrow); labelAt is the middle of hitPts by arc length.
  */
-import { pointsBBox, q, rotatedBBox, sampleBezier } from './geometry.js'
+import { curveHandle, pointsBBox, q, rotatedBBox, sampleBezier } from './geometry.js'
 import { ULID_RE } from './ids.js'
-import { shapeOf } from './shapes.js'
+import { BPMN_GROUPS, shapeOf } from './shapes.js'
 import { wrapLabel } from './text.js'
 import {
-	CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_MAX_W, CONNECTOR_LABEL_MIN_W, CONNECTOR_LABEL_PAD, LINE_HEIGHT,
+	CONNECTOR_LABEL_FONT_SIZE, CONNECTOR_LABEL_MAX_W, CONNECTOR_LABEL_MIN_W, CONNECTOR_LABEL_PAD, CONNECTOR_LABEL_PAD_X, LINE_HEIGHT,
 } from './tokens.js'
 
 /** Grid of stored anchor coordinates ax/ay (§3.10): q(v, ANCHOR_GRID). */
@@ -63,6 +67,10 @@ const EXIT_EPS = 0.5
 const LEN_EPS = 1e-6
 /** Segments of the bezier hit polyline (§6.2). */
 const BEZIER_STEPS = 16
+/** (Job 197) Most items an elbow route runs around; beyond that it may cross items. */
+export const OBSTACLE_MAX = 32
+/** (Job 197) Rounds of "find the crossed items, route around them" per elbow route. */
+export const PASS_MAX = 4
 
 /**
  * @typedef {{item:string}|{item:string,ax:number,ay:number}|{x:number,y:number}} Endpoint
@@ -81,7 +89,14 @@ const BEZIER_STEPS = 16
  *   polyline for hit tests (sampleBezier(points, 16) for 'bezier'); bbox: of
  *   hitPts, unpadded (SceneModel pads with cap size, stroke and label box);
  *   angle: radians, the direction the cap at that end points to (away from
- *   the line); labelAt: middle of the line by arc length
+ *   the line); labelAt: middle of the line by arc length; watch (job 197,
+ *   elbow routed with `obstacles` only): [x0, y0, x1, y1] around every route
+ *   tried, widened by stub/2 – an item whose box changes inside it can
+ *   change the route
+ * @typedef {[number, number, number, number]} Rect [x0, y0, x1, y1], x0 ≤ x1, y0 ≤ y1
+ * @typedef {((x0:number, y0:number, x1:number, y1:number) => Rect[])|Rect[]} Obstacles
+ *   (job 197) the items an elbow route keeps out of besides its end boxes:
+ *   a query giving the boxes that touch a rectangle, or the boxes themselves
  * @typedef {{x:number, y:number, w:number, h:number, lines:number}} LabelBox
  */
 
@@ -223,16 +238,48 @@ export function anchorPoint(box, ep) {
 }
 
 /**
- * Size of an end cap (arrow, triangle, dot, diamond) for a stroke width:
- * 3·strokeWidth + 4. A missing or invalid width counts as the default 2
- * (style.strokeWidth, §3.10), so capSize() of a default connector is 10.
+ * Length of an end cap (all seven tips) for a stroke width: (job 261,
+ * design round 3 V6) 6 + 4·√strokeWidth (3·strokeWidth + 4 until 0.4.0);
+ * half its breadth on each side is CAP_BREADTH of it. A missing or invalid
+ * width counts as the default 2 (style.strokeWidth, §3.10), so capSize() of
+ * a default connector is 11.66.
  *
  * @param {unknown} strokeWidth style.strokeWidth
  * @return {number}
  */
 export function capSize(strokeWidth) {
 	const sw = isNum(strokeWidth) && strokeWidth >= 0 ? strokeWidth : 2
-	return 3 * sw + 4
+	return 6 + 4 * Math.sqrt(sw)
+}
+
+/** (Job 261, design round 3 V6) Half the breadth of an end cap on each side, as a share of capSize. */
+export const CAP_BREADTH = 0.36
+
+/**
+ * (Job 204) The look of the two BPMN flows (the context bar's panel "Tips"):
+ * line, start tip and end tip.
+ */
+export const FLOWS = Object.freeze({
+	sequence: Object.freeze({ 'style.dash': 'solid', 'style.startCap': 'none', 'style.endCap': 'triangle' }),
+	message: Object.freeze({ 'style.dash': 'dashed', 'style.startCap': 'circleOpen', 'style.endCap': 'triangleOpen' }),
+})
+
+/** (Job 212) The BPMN kinds whose "+" draws a sequence flow: events, tasks and gateways, not data. */
+const FLOW_NODE_KINDS = new Set([...BPMN_GROUPS.events, ...BPMN_GROUPS.tasks, ...BPMN_GROUPS.gateways])
+
+/**
+ * (Job 212) The end tip of a new connector from a "+" of an item of `kind`:
+ * at a BPMN event, task or gateway the usual arrow becomes the filled
+ * triangle of a sequence flow (line and start tip of FLOWS.sequence are the
+ * defaults already); another tip, chosen in the connector tool's menu, and
+ * every other kind keep `endCap`.
+ *
+ * @param {unknown} kind data.kind of the item of the "+" (undefined for a note or text item)
+ * @param {unknown} endCap end tip of the connector tool options
+ * @return {unknown} the end tip of the new connector
+ */
+export function plusEndCap(kind, endCap) {
+	return endCap === 'arrow' && FLOW_NODE_KINDS.has(kind) ? FLOWS.sequence['style.endCap'] : endCap
 }
 
 /**
@@ -565,12 +612,30 @@ function addOnce(out, v) {
  * the boxes. Without a candidate that avoids the boxes the best one ignoring
  * them is taken. A free end (no normal) has no stub and no direction.
  *
+ * (Job 197) With `obstacles` the route also keeps out of the items between
+ * the ends, see elbowPlan.
+ *
  * @param {ResolvedEnd} a resolved start
  * @param {ResolvedEnd} b resolved end
- * @param {{stub?: number}} [opts] stub length
+ * @param {{stub?: number, obstacles?: (Obstacles|null)}} [opts] stub length, other items
  * @return {number[]} flat absolute points from a to b (orthogonal, simplified)
  */
-export function elbowRoute(a, b, { stub = ELBOW_STUB } = {}) {
+export function elbowRoute(a, b, opts = {}) {
+	return elbowPlan(a, b, opts).points
+}
+
+/**
+ * The route of elbowRoute without obstacles, unsimplified, with what the
+ * obstacle search builds on.
+ *
+ * @param {ResolvedEnd} a resolved start
+ * @param {ResolvedEnd} b resolved end
+ * @param {number} stub stub length
+ * @return {{full:number[], s0:{x:number,y:number}, s1:{x:number,y:number}, boxA:(Rect|null), boxB:(Rect|null), blockers:Rect[]}}
+ *   full: a, s0, …, s1, b; boxA/boxB: axis-aligned end boxes; blockers: the
+ *   end boxes widened by stub/2 that contain no stub point
+ */
+function baseRoute(a, b, stub) {
 	const [la, lb] = stubLengths(a, b, stub)
 	const s0 = stubOf(a, la)
 	const s1 = stubOf(b, lb)
@@ -642,7 +707,380 @@ export function elbowRoute(a, b, { stub = ELBOW_STUB } = {}) {
 		if (better(cand, best)) best = cand
 	}
 	const pick = bestFree ?? best
-	return simplify(pick ? pick.full : [a.x, a.y, s0.x, s0.y, s1.x, s0.y, s1.x, s1.y, b.x, b.y])
+	const full = pick ? pick.full : [a.x, a.y, s0.x, s0.y, s1.x, s0.y, s1.x, s1.y, b.x, b.y]
+	return { full, s0, s1, boxA, boxB, blockers: obstacles }
+}
+
+/**
+ * (Job 197) The elbow route around the other items (`obstacles`): first the
+ * route of elbowRoute without them; then up to PASS_MAX rounds of: the items
+ * whose box, widened by stub/2, an inner segment (stub point to stub point)
+ * of the route crosses join the set S, together with every item whose
+ * widened box touches the widened box of one of them (transitively: items
+ * closer than stub to each other form one wall, there is no way between
+ * them); items whose widened box contains a stub point never count (a
+ * background shape under an end). Nothing new: done; more than OBSTACLE_MAX
+ * in S: the route stays; otherwise gridRoute around the end boxes and S,
+ * which keeps the route when it finds no way. Deterministic: S is sorted,
+ * the order of the query's answers does not matter.
+ *
+ * @param {ResolvedEnd} a resolved start
+ * @param {ResolvedEnd} b resolved end
+ * @param {{stub?: number, obstacles?: (Obstacles|null)}} [opts] stub length, other items
+ * @return {{points:number[], watch:(Rect|null)}} simplified points; watch:
+ *   null without obstacles, else the bounds of every rectangle the route
+ *   asked the query about (an item outside it cannot change the route)
+ */
+export function elbowPlan(a, b, { stub = ELBOW_STUB, obstacles = null } = {}) {
+	const base = baseRoute(a, b, stub)
+	if (obstacles === null || obstacles === undefined) {
+		return { points: simplify(base.full), watch: null }
+	}
+	const m = stub / 2
+	const watch = [Infinity, Infinity, -Infinity, -Infinity]
+	const ask = (x0, y0, x1, y1) => {
+		watch[0] = Math.min(watch[0], x0)
+		watch[1] = Math.min(watch[1], y0)
+		watch[2] = Math.max(watch[2], x1)
+		watch[3] = Math.max(watch[3], y1)
+		const got = typeof obstacles === 'function'
+			? obstacles(x0, y0, x1, y1)
+			: obstacles.filter((r) => Array.isArray(r) && r[0] <= x1 && r[2] >= x0 && r[1] <= y1 && r[3] >= y0)
+		return Array.isArray(got) ? got.filter((r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite)) : []
+	}
+	let full = base.full
+	const chosen = new Map()
+	for (let pass = 0; pass < PASS_MAX; pass++) {
+		const fresh = crossedItems(full, ask, base, m, chosen)
+		if (fresh.size === 0) break
+		if (!addWalls(fresh, ask, base, m, chosen)) break
+		for (const [k, r] of fresh) chosen.set(k, r)
+		const keys = [...chosen.keys()].sort()
+		const found = gridRoute(a, b, base, stub, keys.map((k) => chosen.get(k)))
+		if (!found) break
+		full = found
+	}
+	return { points: simplify(full), watch: Number.isFinite(watch[0]) ? watch : null }
+}
+
+/**
+ * @param {number[]} pts flat points
+ * @return {Rect} their bounds
+ */
+function boundsOfPoints(pts) {
+	let x0 = Infinity
+	let y0 = Infinity
+	let x1 = -Infinity
+	let y1 = -Infinity
+	for (let i = 0; i + 1 < pts.length; i += 2) {
+		x0 = Math.min(x0, pts[i])
+		y0 = Math.min(y0, pts[i + 1])
+		x1 = Math.max(x1, pts[i])
+		y1 = Math.max(y1, pts[i + 1])
+	}
+	return [x0, y0, x1, y1]
+}
+
+/**
+ * @param {Rect} r box
+ * @param {number} m widening
+ * @param {{s0:{x:number,y:number}, s1:{x:number,y:number}}} base stub points
+ * @return {boolean} the widened box contains a stub point (never an obstacle)
+ */
+function underStub(r, m, base) {
+	const o = [r[0] - m, r[1] - m, r[2] + m, r[3] + m]
+	return inside(o, base.s0) || inside(o, base.s1)
+}
+
+/**
+ * The items of the query that an inner segment of the route crosses and
+ * that are not chosen yet.
+ *
+ * @param {number[]} full flat points a, s0, …, s1, b
+ * @param {(x0:number, y0:number, x1:number, y1:number) => Rect[]} ask obstacle query
+ * @param {{s0:{x:number,y:number}, s1:{x:number,y:number}}} base stub points
+ * @param {number} m widening
+ * @param {Map<string, Rect>} chosen boxes chosen so far (by key)
+ * @return {Map<string, Rect>} new boxes by key "x0,y0,x1,y1"
+ */
+function crossedItems(full, ask, base, m, chosen) {
+	const fresh = new Map()
+	const n = full.length
+	// inner segments: from s0 (point 1) to s1 (the last point but one)
+	if (n < 8) return fresh
+	const inner = full.slice(2, n - 2)
+	const [qx0, qy0, qx1, qy1] = boundsOfPoints(inner)
+	for (const r of ask(qx0 - m, qy0 - m, qx1 + m, qy1 + m)) {
+		const k = r.join(',')
+		if (chosen.has(k) || fresh.has(k) || underStub(r, m, base)) continue
+		const o = [r[0] - m, r[1] - m, r[2] + m, r[3] + m]
+		for (let i = 0; i + 3 < inner.length; i += 2) {
+			const x0 = inner[i]
+			const y0 = inner[i + 1]
+			const x1 = inner[i + 2]
+			const y1 = inner[i + 3]
+			if (x0 === x1 && y0 === y1) continue
+			if (crosses(x0, y0, x1, y1, o)) {
+				fresh.set(k, [r[0], r[1], r[2], r[3]])
+				break
+			}
+		}
+	}
+	return fresh
+}
+
+/**
+ * Adds to `fresh` every item whose box, widened by m, touches the widened
+ * box of an item in `fresh` (transitively): no way runs between them.
+ *
+ * @param {Map<string, Rect>} fresh new boxes (extended in place)
+ * @param {(x0:number, y0:number, x1:number, y1:number) => Rect[]} ask obstacle query
+ * @param {{s0:{x:number,y:number}, s1:{x:number,y:number}}} base stub points
+ * @param {number} m widening
+ * @param {Map<string, Rect>} chosen boxes chosen before
+ * @return {boolean} false when S would exceed OBSTACLE_MAX
+ */
+function addWalls(fresh, ask, base, m, chosen) {
+	const queue = [...fresh.values()]
+	while (queue.length > 0) {
+		if (chosen.size + fresh.size > OBSTACLE_MAX) return false
+		const r = queue.pop()
+		for (const q of ask(r[0] - 2 * m, r[1] - 2 * m, r[2] + 2 * m, r[3] + 2 * m)) {
+			const k = q.join(',')
+			if (chosen.has(k) || fresh.has(k) || underStub(q, m, base)) continue
+			fresh.set(k, [q[0], q[1], q[2], q[3]])
+			queue.push(q)
+		}
+	}
+	return chosen.size + fresh.size <= OBSTACLE_MAX
+}
+
+/** Most grid points of gridRoute (beyond: no way, the route stays). */
+const GRID_MAX = 1 << 16
+/** Grid directions: +x, −x, +y, −y (d ^ 1 is the opposite of d). */
+const DIRS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1]])
+
+/**
+ * @param {number} nx normal x
+ * @param {number} ny normal y
+ * @return {number} index into DIRS, −1 for no direction
+ */
+function dirOf(nx, ny) {
+	if (nx > 0) return 0
+	if (nx < 0) return 1
+	if (ny > 0) return 2
+	if (ny < 0) return 3
+	return -1
+}
+
+/**
+ * @param {number[]} vals coordinates
+ * @return {number[]} sorted, unique, finite
+ */
+function gridLines(vals) {
+	const out = [...new Set(vals.filter(Number.isFinite))]
+	out.sort((p, q) => p - q)
+	return out
+}
+
+/**
+ * (Job 197) Orthogonal path from s0 to s1 on a grid along the boxes: lines
+ * through the stub points, at stub outside every edge of the end boxes and
+ * of `extra`, and through the middle of every gap narrower than 2·stub
+ * between two boxes. A step is blocked when it crosses an end blocker or a
+ * box of `extra` widened by stub/2. Dijkstra on (point, direction): fewest
+ * bends of the whole path a → s0 → … → s1 → b first, then the shortest; no
+ * turning back; ties go to the path found first (fixed order of directions
+ * and points).
+ *
+ * @param {ResolvedEnd} a resolved start
+ * @param {ResolvedEnd} b resolved end
+ * @param {{s0:{x:number,y:number}, s1:{x:number,y:number}, boxA:(Rect|null), boxB:(Rect|null), blockers:Rect[]}} base
+ * @param {number} stub stub length
+ * @param {Rect[]} extra the other items' boxes (sorted)
+ * @return {number[]|null} flat points a, s0, …, s1, b, or null without a way
+ */
+function gridRoute(a, b, base, stub, extra) {
+	const { s0, s1 } = base
+	const m = stub / 2
+	const boxes = [base.boxA, base.boxB, ...extra].filter((r) => r)
+	const blockers = [...base.blockers, ...extra.map((r) => [r[0] - m, r[1] - m, r[2] + m, r[3] + m])]
+	const xv = [s0.x, s1.x]
+	const yv = [s0.y, s1.y]
+	for (const r of boxes) {
+		xv.push(r[0] - stub, r[2] + stub)
+		yv.push(r[1] - stub, r[3] + stub)
+	}
+	for (const p of boxes) {
+		for (const q of boxes) {
+			if (p[2] < q[0] && q[0] - p[2] < 2 * stub) xv.push((p[2] + q[0]) / 2)
+			if (p[3] < q[1] && q[1] - p[3] < 2 * stub) yv.push((p[3] + q[1]) / 2)
+		}
+	}
+	const xs = gridLines(xv)
+	const ys = gridLines(yv)
+	const nx = xs.length
+	const ny = ys.length
+	if (nx * ny > GRID_MAX) return null
+	const si = xs.indexOf(s0.x)
+	const sj = ys.indexOf(s0.y)
+	const ti = xs.indexOf(s1.x)
+	const tj = ys.indexOf(s1.y)
+	if (si < 0 || sj < 0 || ti < 0 || tj < 0) return null
+	// blocked steps: h[j·nx + i] = (xs[i], ys[j]) → (xs[i + 1], ys[j]); v[i·ny + j] = (xs[i], ys[j]) → (xs[i], ys[j + 1])
+	const hBlock = new Uint8Array(nx * ny)
+	const vBlock = new Uint8Array(nx * ny)
+	for (const o of blockers) {
+		for (let j = 0; j < ny; j++) {
+			const y = ys[j]
+			if (!(y > o[1] && y < o[3])) continue
+			for (let i = 0; i + 1 < nx; i++) {
+				if (xs[i + 1] > o[0] && xs[i] < o[2]) hBlock[j * nx + i] = 1
+			}
+		}
+		for (let i = 0; i < nx; i++) {
+			const x = xs[i]
+			if (!(x > o[0] && x < o[2])) continue
+			for (let j = 0; j + 1 < ny; j++) {
+				if (ys[j + 1] > o[1] && ys[j] < o[3]) vBlock[i * ny + j] = 1
+			}
+		}
+	}
+	const startDir = dirOf(a.nx || 0, a.ny || 0)
+	// the last segment s1 → b runs against b's normal
+	const endDir = dirOf(-(b.nx || 0), -(b.ny || 0))
+	const states = nx * ny * 4
+	const bends = new Int32Array(states).fill(-1)
+	const length = new Float64Array(states)
+	const prev = new Int32Array(states).fill(-1)
+	const heap = new StateHeap()
+	const finish = (d) => (endDir === -1 || d === endDir ? 0 : 1)
+	let best = -1
+	let bestBends = 0
+	let bestLength = 0
+	const relax = (from, i, j, d, nb, nl) => {
+		const k = ((j * nx) + i) * 4 + d
+		if (bends[k] !== -1 && (bends[k] < nb || (bends[k] === nb && length[k] <= nl + LEN_EPS))) return
+		bends[k] = nb
+		length[k] = nl
+		prev[k] = from
+		heap.push(nb, nl, k)
+	}
+	const steps = (from, i, j, d, cb, cl) => {
+		for (let nd = 0; nd < 4; nd++) {
+			if (d !== -1 && nd === (d ^ 1)) continue
+			const [dx, dy] = DIRS[nd]
+			const i2 = i + dx
+			const j2 = j + dy
+			if (i2 < 0 || i2 >= nx || j2 < 0 || j2 >= ny) continue
+			const blocked = dx !== 0 ? hBlock[j * nx + Math.min(i, i2)] : vBlock[i * ny + Math.min(j, j2)]
+			if (blocked) continue
+			const len = Math.abs(xs[i2] - xs[i]) + Math.abs(ys[j2] - ys[j])
+			relax(from, i2, j2, nd, cb + (d !== -1 && nd !== d ? 1 : 0), cl + len)
+		}
+	}
+	steps(-1, si, sj, startDir, 0, 0)
+	while (heap.size > 0) {
+		const [cb, cl, , k] = heap.pop()
+		// a later, better push of this state made the entry stale
+		if (cb !== bends[k] || cl !== length[k]) continue
+		if (best !== -1 && (cb > bestBends || (cb === bestBends && cl >= bestLength - LEN_EPS))) break
+		const d = k & 3
+		const cell = k >> 2
+		const i = cell % nx
+		const j = (cell - i) / nx
+		if (i === ti && j === tj && (endDir === -1 || d !== (endDir ^ 1))) {
+			const fb = cb + finish(d)
+			if (best === -1 || fb < bestBends || (fb === bestBends && cl < bestLength - LEN_EPS)) {
+				best = k
+				bestBends = fb
+				bestLength = cl
+			}
+		}
+		steps(k, i, j, d, cb, cl)
+	}
+	if (best === -1) return null
+	const pts = []
+	for (let k = best; k !== -1; k = prev[k]) {
+		const cell = k >> 2
+		const i = cell % nx
+		pts.push(xs[i], ys[(cell - i) / nx])
+	}
+	const out = [a.x, a.y, s0.x, s0.y]
+	for (let p = pts.length - 2; p >= 0; p -= 2) out.push(pts[p], pts[p + 1])
+	out.push(b.x, b.y)
+	return out
+}
+
+/**
+ * Binary min-heap of entries [bends, length, seq, state], ordered by bends,
+ * then length, then seq (the order of pushing).
+ */
+class StateHeap {
+	constructor() {
+		/** @type {Array<[number, number, number, number]>} */
+		this.items = []
+		this.seq = 0
+	}
+
+	/** @return {number} entries */
+	get size() {
+		return this.items.length
+	}
+
+	/**
+	 * @param {number} bends bends
+	 * @param {number} length length
+	 * @param {number} state state
+	 */
+	push(bends, length, state) {
+		const h = this.items
+		h.push([bends, length, this.seq++, state])
+		let c = h.length - 1
+		while (c > 0) {
+			const p = (c - 1) >> 1
+			if (!before(h[c], h[p])) break
+			const t = h[c]
+			h[c] = h[p]
+			h[p] = t
+			c = p
+		}
+	}
+
+	/** @return {[number, number, number, number]} the lowest entry (removed) */
+	pop() {
+		const h = this.items
+		const top = h[0]
+		const last = h.pop()
+		if (h.length > 0) {
+			h[0] = last
+			let c = 0
+			for (;;) {
+				const l = 2 * c + 1
+				const r = l + 1
+				let s = c
+				if (l < h.length && before(h[l], h[s])) s = l
+				if (r < h.length && before(h[r], h[s])) s = r
+				if (s === c) break
+				const t = h[c]
+				h[c] = h[s]
+				h[s] = t
+				c = s
+			}
+		}
+		return top
+	}
+}
+
+/**
+ * @param {number[]} p heap entry
+ * @param {number[]} q heap entry
+ * @return {boolean} p comes before q
+ */
+function before(p, q) {
+	if (p[0] !== q[0]) return p[0] < q[0]
+	if (p[1] !== q[1]) return p[1] < q[1]
+	return p[2] < q[2]
 }
 
 /**
@@ -704,13 +1142,15 @@ function capAngle(x, y, pts) {
  * towards the other end (measured in the box's rotated frame), its midpoint
  * as docking point and its normal rounded to the nearest axis. Routes:
  * 'straight' (anything unknown, rule 18), 'elbow' (elbowRoute) and 'curved'
- * (cubic bezier, control points p ± n·max(40, 0.4·d), hitPts sampled with
+ * (cubic bezier, control points p ± n·curveHandle(d) (job 261: max(60, 0.6·d)), hitPts sampled with
  * 16 segments; a free end has no normal, its control point is the end).
+ * (Job 197) An elbow route with `obstacles` runs around those items
+ * (elbowPlan) and its geometry carries `watch`.
  *
  * @param {RouteEnd} a start
  * @param {RouteEnd} b end
  * @param {unknown} route data.route
- * @param {{stub?: number}} [opts] elbow stub length (ELBOW_STUB)
+ * @param {{stub?: number, obstacles?: (Obstacles|null)}} [opts] elbow stub length (ELBOW_STUB), other items
  * @return {ConnGeom|null} null while an end has neither box nor point
  *   (unknown target, the connector is not drawn yet)
  */
@@ -725,11 +1165,14 @@ export function routeConnector(a, b, route, opts = {}) {
 	let kind = 'poly'
 	let points
 	let hitPts
+	let watch = null
 	if (route === 'elbow') {
-		points = elbowRoute(pa, pb, opts)
+		const plan = elbowPlan(pa, pb, opts)
+		points = plan.points
 		hitPts = points
+		watch = plan.watch
 	} else if (route === 'curved') {
-		const d = Math.max(40, 0.4 * Math.hypot(pb.x - pa.x, pb.y - pa.y))
+		const d = curveHandle(Math.hypot(pb.x - pa.x, pb.y - pa.y))
 		kind = 'bezier'
 		points = [pa.x, pa.y, pa.x + pa.nx * d, pa.y + pa.ny * d, pb.x + pb.nx * d, pb.y + pb.ny * d, pb.x, pb.y]
 		hitPts = sampleBezier(points, BEZIER_STEPS)
@@ -740,7 +1183,7 @@ export function routeConnector(a, b, route, opts = {}) {
 	const n = points.length
 	const reversed = []
 	for (let i = n - 2; i >= 0; i -= 2) reversed.push(points[i], points[i + 1])
-	return {
+	const geom = {
 		kind,
 		points,
 		hitPts,
@@ -749,6 +1192,8 @@ export function routeConnector(a, b, route, opts = {}) {
 		end: { x: pb.x, y: pb.y, angle: capAngle(pb.x, pb.y, reversed.slice(2)) },
 		labelAt: midpoint(hitPts),
 	}
+	if (watch !== null) geom.watch = watch
+	return geom
 }
 
 // ---------------------------------------------------------------- label box ([S]-internal)
@@ -757,10 +1202,11 @@ export function routeConnector(a, b, route, opts = {}) {
  * Estimated box of a connector label centred at `at` ([S]-internal, §6.3:
  * label on a BOARD_BACKGROUND box at 50 % of the path). No canvas measuring
  * (deterministic on every client, like autoFontSize): the text is wrapped at
- * CONNECTOR_LABEL_MAX_W − 2·pad exactly like Konva.Text wraps it, with an
+ * CONNECTOR_LABEL_MAX_W − 2·CONNECTOR_LABEL_PAD_X exactly like Konva.Text wraps it, with an
  * UPPER BOUND per glyph (text.js wrapLabel, labelGlyphWidth); the box is the
  * widest line (at least CONNECTOR_LABEL_MIN_W) by font size × LINE_HEIGHT
- * per line, CONNECTOR_LABEL_PAD around. Konva then lays the text out at that
+ * per line, CONNECTOR_LABEL_PAD above and below, CONNECTOR_LABEL_PAD_X left and
+ * right (job 261: the pill is at most CONNECTOR_LABEL_MAX_W wide). Konva then lays the text out at that
  * width in at most `lines` lines without cutting a glyph (finding S-1b-01:
  * the old 0.6 em estimate cut 'OK', emoji and CJK). The model uses the box
  * for the hit test and the rbush padding, the node for the background and the
@@ -776,11 +1222,12 @@ export function labelBox(text, at) {
 	}
 	const fs = CONNECTOR_LABEL_FONT_SIZE
 	const pad = CONNECTOR_LABEL_PAD
-	const rows = wrapLabel(text, CONNECTOR_LABEL_MAX_W - 2 * pad, fs)
+	const padX = CONNECTOR_LABEL_PAD_X
+	const rows = wrapLabel(text, CONNECTOR_LABEL_MAX_W - 2 * padX, fs)
 	let widest = CONNECTOR_LABEL_MIN_W
 	for (const r of rows) widest = Math.max(widest, r.width)
 	const lines = rows.length
-	const w = widest + 2 * pad
+	const w = widest + 2 * padX
 	const h = lines * fs * LINE_HEIGHT + 2 * pad
 	return { x: at.x - w / 2, y: at.y - h / 2, w, h, lines }
 }

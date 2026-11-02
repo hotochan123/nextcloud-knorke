@@ -169,7 +169,7 @@ final class SyncHarness {
                 return $this->onProgress === null ? null : ($this->onProgress)($p, $board, $seenSeq, $nowMs);
             }
 
-            public function mine(int $board, string $pid): ?array {
+            public function mine(int $board, string $pid, bool $isGuest): ?array {
                 $this->log[] = "votes.mine $pid";
                 return $this->onMine === null ? null : ($this->onMine)($board, $pid);
             }

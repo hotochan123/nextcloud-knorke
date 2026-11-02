@@ -17,14 +17,18 @@
  * cache-busting reload (same per-version marker as a 409, util/reload.js)
  * instead of mounting; when this version was tried already, the app mounts
  * and the first /sync shows the reload banner.
+ *
+ * Factory job 217: AdminSettings is the lazy part admin (util/parts.js):
+ * the admin page mounts it once loaded; failing, only the toast
+ * part-load-failed. The board and guest pages never load it.
  */
 import './styles/knorke.css'
 import { createApp } from 'vue'
 import App from './App.vue'
 import PublicApp from './PublicApp.vue'
-import AdminSettings from './admin/AdminSettings.vue'
 import { PROTOCOL } from './sync/protocol.js'
 import { n, t } from './util/l10n.js'
+import { loadPart } from './util/parts.js'
 import { hardReload, startupReload, strippedUrl } from './util/reload.js'
 import { readState } from './util/state.js'
 
@@ -41,10 +45,17 @@ if (root) {
 	}
 	const state = readState()
 	if (!startupReload({ pageProtocol: state.protocol, bundleProtocol: PROTOCOL, reload: () => hardReload(window) })) {
-		const app = createApp(state.page === 'public' ? PublicApp : state.page === 'admin' ? AdminSettings : App)
-		app.config.globalProperties.t = t
-		app.config.globalProperties.n = n
-		app.provide('knorke-state', state)
-		app.mount(root)
+		const mount = (page) => {
+			const app = createApp(page)
+			app.config.globalProperties.t = t
+			app.config.globalProperties.n = n
+			app.provide('knorke-state', state)
+			app.mount(root)
+		}
+		if (state.page === 'admin') {
+			loadPart('admin').then((m) => m && mount(m.default))
+		} else {
+			mount(state.page === 'public' ? PublicApp : App)
+		}
 	}
 }

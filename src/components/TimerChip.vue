@@ -15,9 +15,10 @@
 		:aria-label="mod ? t('knorke', 'Timer') : null"
 		:title="t('knorke', 'Timer')"
 		@click="mod && $emit('open')">
+		<NcIconSvgWrapper class="knorke-timerchip__icon" :path="icons.timer" :size="20" aria-hidden="true" />
 		<span role="timer" aria-atomic="true">
-			<span class="hidden-visually">{{ t('knorke', 'Timer') }}</span>
-			{{ view.state === 'done' ? t('knorke', 'Time\'s up') : view.text }}
+			<span class="knorke-timerchip__label">{{ t('knorke', 'Timer') }}</span>
+			<span class="knorke-timerchip__clock">{{ view.state === 'done' ? t('knorke', 'Time\'s up') : view.text }}</span>
 		</span>
 		<span v-if="view.state === 'paused'" class="knorke-timerchip__paused">{{ t('knorke', 'Paused') }}</span>
 	</component>
@@ -26,7 +27,9 @@
 
 <script setup>
 /*
- * Timer chip in the top bar (SPEC-M1 §6.6 TimerChip, §6.8, §6.12): the rest
+ * Timer chip (SPEC-M1 §6.6 TimerChip, §6.8, §6.12; since factory job 233
+ * the timer segment of the session bar: the timer icon and the visible
+ * label "Timer" before the clock): the rest
  * of meta.timer in server time ([data-knorke-timer] with
  * data-knorke-timer-state=running|paused|done and data-knorke-timer-left =
  * the shown rest in ms, rounded up to whole seconds; R16 TST-09). The rest
@@ -37,8 +40,10 @@
  * to the next full second there, never the scene's frames).
  */
 import { computed, ref, watch } from 'vue'
+import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import { t } from '../util/l10n.js'
 import { formatClock, milestone, timerOf, timerView } from './countdown.js'
+import { icons } from './icons.js'
 
 const props = defineProps({
 	/** meta.timer (raw), null/undefined = none */

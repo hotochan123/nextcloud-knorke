@@ -61,7 +61,7 @@ final class OpValidatorTest extends TestCase {
             'id lower case' => [['o' => 'remove', 'id' => strtolower(self::ID)]],
             'id with I' => [['o' => 'remove', 'id' => '01JA2B3C4D5E6F7G8H9J0KMNPI']],
             'id array' => [['o' => 'remove', 'id' => [self::ID]]],
-            'put unknown type' => [self::put([], 'pen')],
+            'put unknown type' => [self::put([], 'brush')],
             'put type array' => [['o' => 'put', 'id' => self::ID, 't' => ['sticky'], 'p' => ['z' => 'i1', 'w' => 50, 'h' => 50]]],
             'put without z' => [['o' => 'put', 'id' => self::ID, 't' => 'sticky', 'p' => ['w' => 50, 'h' => 50]]],
             'put invalid z' => [self::put(['z' => 'a'])],
@@ -191,8 +191,25 @@ final class OpValidatorTest extends TestCase {
         $this->assertSame('put', $c['o']);
         $this->assertSame(['start' => ['item' => self::F, 'ax' => 0.3333, 'ay' => 0.0], 'end' => ['x' => 1.0, 'y' => 2.0]], $c['item']['data'], 'ends normalized before the lock');
         $this->assertSame('bad', self::norm(['o' => 'put', 'id' => self::ID, 't' => 'connector', 'p' => ['z' => 'i1', 'x' => 3, 'data' => ['start' => ['item' => self::F], 'end' => ['x' => 1, 'y' => 2]]]])['o']);
-        $this->assertSame('bad', self::norm(['o' => 'put', 'id' => self::ID, 't' => 'pen', 'p' => ['z' => 'i1']])['o']);
+        $this->assertSame('bad', self::norm(['o' => 'put', 'id' => self::ID, 't' => 'brush', 'p' => ['z' => 'i1']])['o']);
         $this->assertTrue(OpValidator::touchesTextPath([self::patch(['data.label' => 'ja'])]));
+    }
+
+    public function testPenStrokePut(): void {
+        // job 273: a pen stroke is a put type; data.points is required and checked, kind and width too
+        $pen = static fn (array $data, array $style = ['stroke' => '#191B1D', 'strokeWidth' => 4]): array => ['o' => 'put', 'id' => self::ID, 't' => 'pen',
+            'p' => ['x' => 98, 'y' => 98, 'w' => 54, 'h' => 4, 'r' => 0, 'z' => 'i1', 'parent' => null, 'data' => $data, 'style' => $style]];
+        $n = self::norm($pen(['kind' => 'marker', 'points' => [2, 2, 52.5, 2]]));
+        $this->assertSame('put', $n['o']);
+        $this->assertSame(['kind' => 'marker', 'points' => [2, 2, 52.5, 2]], $n['item']['data']);
+        $this->assertSame(['stroke' => '#191b1d', 'strokeWidth' => 4], $n['item']['style']);
+        $this->assertSame('put', self::norm($pen(['points' => array_fill(0, 1000, 1.5)]))['o'], '500 points');
+        $this->assertSame('bad', self::norm($pen(['kind' => 'pen']))['o'], 'without data.points (rule 19)');
+        $this->assertSame('bad', self::norm($pen(['points' => array_fill(0, 1002, 1)]))['o'], '501 points');
+        $this->assertSame('bad', self::norm($pen(['points' => [1, 2, 3]]))['o'], 'odd length');
+        $this->assertSame('bad', self::norm($pen(['points' => [1, 2], 'kind' => 'eraser']))['o'], 'the eraser is no kind');
+        $this->assertSame('bad', self::norm($pen(['points' => [1, 2]], ['strokeWidth' => 65]))['o']);
+        $this->assertSame('denied', self::norm($pen(['points' => [1, 2]]), Role::Vote)['o'], 'vote may not draw');
     }
 
     public function testVoteOp(): void {
@@ -216,6 +233,14 @@ final class OpValidatorTest extends TestCase {
             $this->assertSame(['o' => 'bad'], OpValidator::normalizeVote(self::editor(Role::View), $bad + $vote()), "$case: the form before the role");
         }
         $this->assertSame(['o' => 'bad'], OpValidator::normalizeVote(self::editor(), ['o' => 'vote', 's' => 1, 'id' => self::ID]), 'n missing');
+        // Job 216: the optional base b (0–99, whole numbers) is kept only when it came.
+        $this->assertSame(['o' => 'vote', 's' => 12, 'id' => self::ID, 'n' => 2, 'b' => 0], OpValidator::normalizeVote(self::editor(Role::Vote), $vote(['b' => 0])));
+        $this->assertSame(['o' => 'vote', 's' => 12, 'id' => self::ID, 'n' => 2, 'b' => 99], OpValidator::normalizeVote(self::editor(), $vote(['b' => 99.0])));
+        $this->assertArrayNotHasKey('b', OpValidator::normalizeVote(self::editor(), $vote()));
+        foreach (['b -1' => ['b' => -1], 'b 100' => ['b' => 100], 'b 1.5' => ['b' => 1.5], 'b text' => ['b' => '1'], 'b bool' => ['b' => true], 'b null' => ['b' => null]] as $case => $bad) {
+            $this->assertSame(['o' => 'bad'], OpValidator::normalizeVote(self::editor(), $bad + $vote()), $case);
+            $this->assertSame(['o' => 'bad'], OpValidator::normalizeVote(self::editor(Role::View), $bad + $vote()), "$case: the form before the role");
+        }
         $this->assertTrue(OpValidator::isVote($vote()));
         $this->assertFalse(OpValidator::isVote(self::put()));
         $this->assertFalse(OpValidator::isVote('vote'));
@@ -344,5 +369,101 @@ final class OpValidatorTest extends TestCase {
         $this->assertSame(['o' => 'bad'], self::norm(self::put(['lock' => ['by' => 'x']])));
         $this->assertSame(['o' => 'bad'], self::norm(self::put(['group' => 'G'])));
         $this->assertFalse(OpValidator::touchesTextPath([self::patch(['lock' => ['by' => 'x']])]), 'no text path: no presence read for a lock');
+    }
+
+    /**
+     * Job 152 AK1: the restore op (undo of a foreign unlock) is a lock op
+     * with the restore mark and the expected pid (lock.by; null when null or
+     * missing); name and guest are never read. Without the literal true
+     * restore is ignored (exactly the plain lock), on an unlock too; a `by`
+     * that is no string or null is bad; vote and view are denied.
+     */
+    public function testRestoreLockOp(): void {
+        $restore = static fn (mixed $v, mixed $flag = true): array => ['o' => 'patch', 'id' => self::ID, 'p' => ['lock' => $v], 'restore' => $flag];
+        $want = static fn (?string $by): array => ['o' => 'lock', 'id' => self::ID, 'on' => true, 'restore' => true, 'by' => $by];
+        $this->assertSame($want('pidbob0000000001'), self::norm($restore(['by' => 'pidbob0000000001', 'name' => 'Bob'])));
+        $this->assertSame($want('pidgina000000001'), self::norm($restore(['by' => 'pidgina000000001', 'name' => 'Gina', 'guest' => true])), 'guest is not read');
+        $this->assertSame($want('pidbob0000000001'), self::norm($restore(['by' => 'pidbob0000000001', 'name' => 7])), 'name is not read');
+        $this->assertSame($want(null), self::norm($restore(['by' => null, 'name' => null])), 'by null: an unknown locker is expected');
+        $this->assertSame($want(null), self::norm($restore(['name' => 'Bob'])), 'by missing: the same');
+        $this->assertSame($want('pidbob0000000001'), self::norm($restore(['by' => 'pidbob0000000001']), Role::Owner));
+        // restore other than the literal true, or no restore at all: exactly the plain lock
+        $lock = ['o' => 'lock', 'id' => self::ID, 'on' => true];
+        foreach ([1, 'true', false, null, [true], ['x' => true]] as $flag) {
+            $this->assertSame($lock, self::norm($restore(['by' => 'pidbob0000000001', 'name' => 'Bob'], $flag)), 'restore ' . json_encode($flag));
+        }
+        $this->assertSame($lock, self::norm(self::patch(['lock' => ['by' => 'pidbob0000000001', 'name' => 'Bob']])), 'no restore key');
+        // restore on an unlock: a plain unlock
+        $unlock = ['o' => 'lock', 'id' => self::ID, 'on' => false];
+        foreach ([null, [], new \stdClass()] as $v) {
+            $raw = json_decode(json_encode($restore($v)), true);
+            $this->assertSame($unlock, self::norm($raw), 'restore with lock ' . json_encode($v));
+        }
+        // by of another type: bad with restore, a plain lock without it (its content is not read)
+        foreach ([7, 7.5, true, false, ['a' => 1], ['x']] as $by) {
+            $this->assertSame(['o' => 'bad'], self::norm($restore(['by' => $by, 'name' => 'Bob'])), 'by ' . json_encode($by));
+            $this->assertSame($lock, self::norm(self::patch(['lock' => ['by' => $by, 'name' => 'Bob']])), 'without restore: by ' . json_encode($by));
+        }
+        // the generic rules come first: value rules, lock as the only path
+        $this->assertSame(['o' => 'bad'], self::norm($restore(['by' => "\xff"])));
+        $this->assertSame(['o' => 'bad'], self::norm(['o' => 'patch', 'id' => self::ID, 'p' => ['lock' => ['by' => 'p'], 'w' => 1], 'restore' => true]));
+        $this->assertSame(['o' => 'bad'], self::norm($restore(true)));
+        foreach ([Role::Vote, Role::View] as $role) {
+            $this->assertSame(['o' => 'denied'], self::norm($restore(['by' => 'pidbob0000000001', 'name' => 'Bob']), $role), $role->value);
+            $this->assertSame(['o' => 'denied'], self::norm($restore(['by' => 7]), $role), $role->value . ': the role before the form');
+        }
+    }
+
+    /**
+     * Job 172 (AK2): the reaction op. A patch whose only path is
+     * data.react.<own key> needs owner, edit or vote; a foreign key is
+     * denied; the value is null/{}/[] or an object with a valid e (only e is
+     * read, n comes from the principal); every other patch on data.react is
+     * bad, also beside other paths; a put keeps reactions only with revive
+     * on a sticky.
+     */
+    public function testReactionOp(): void {
+        $own = 'data.react.p3f9a1c0b7d2e4a51';
+        foreach ([Role::Owner, Role::Edit, Role::Vote] as $role) {
+            $this->assertSame(['o' => 'react', 'id' => self::ID, 'key' => 'p3f9a1c0b7d2e4a51', 'e' => '1f44d', 'n' => 'Alice'],
+                self::norm(self::patch([$own => ['e' => '1f44d', 'n' => 'Mallory', 'x' => 1]]), $role), $role->value . ': the sent n does not count');
+        }
+        foreach ([null, [], json_decode('{}', true)] as $v) {
+            $this->assertSame(['o' => 'react', 'id' => self::ID, 'key' => 'p3f9a1c0b7d2e4a51', 'e' => null, 'n' => 'Alice'],
+                self::norm(self::patch([$own => $v]), Role::Vote), 'take back ' . json_encode($v));
+        }
+        $this->assertSame(['o' => 'denied'], self::norm(self::patch([$own => ['e' => '1f44d']]), Role::View), 'view may not react');
+        $this->assertSame(['o' => 'denied'], self::norm(self::patch(['data.react.pbbbbbbbbbbbbbbbb' => ['e' => '1f44d']]), Role::Vote), 'a foreign key');
+        $this->assertSame(['o' => 'denied'], self::norm(self::patch(['data.react.foo' => null]), Role::Owner), 'no key of a pid');
+        foreach (['1F44D', '', 'x', 7, true, ['1f44d'], null] as $e) {
+            $this->assertSame(['o' => 'bad'], self::norm(self::patch([$own => ['e' => $e]]), Role::Vote), 'e ' . json_encode($e));
+        }
+        foreach (['1f44d', 7, true, ['1f44d']] as $v) {
+            $this->assertSame(['o' => 'bad'], self::norm(self::patch([$own => $v]), Role::Vote), 'value ' . json_encode($v));
+        }
+        // every other patch on data.react is bad for an editor, denied for vote (the role first)
+        foreach ([
+            'data.react' => [$own => null] + ['data.react' => ['p3f9a1c0b7d2e4a51' => ['e' => '1f44d', 'n' => 'A']]],
+            'whole map' => ['data.react' => ['p3f9a1c0b7d2e4a51' => ['e' => '1f44d', 'n' => 'A']]],
+            'below a key' => [$own . '.e' => '1f44d'],
+            'beside text' => [$own => ['e' => '1f44d'], 'data.text' => 'x'],
+        ] as $case => $p) {
+            $this->assertSame(['o' => 'bad'], self::norm(self::patch($p), Role::Edit), $case);
+            $this->assertSame(['o' => 'denied'], self::norm(self::patch($p), Role::Vote), $case . ' (vote)');
+        }
+        // vote still sends nothing else
+        $this->assertSame(['o' => 'denied'], self::norm(self::patch(['data.text' => 'x']), Role::Vote));
+        // put: without revive no data.react, with revive the valid entries of a sticky
+        $react = ['p3f9a1c0b7d2e4a51' => ['e' => '1f44d', 'n' => 'Alice'], 'pbbbbbbbbbbbbbbbb' => ['e' => 'nope', 'n' => 'Bob']];
+        $plain = self::norm(self::put(['data' => ['text' => 'A', 'react' => $react]]));
+        $this->assertSame(['text' => 'A'], $plain['item']['data']);
+        $revived = self::norm(self::put(['data' => ['text' => 'A', 'react' => $react]], 'sticky', ['revive' => true]));
+        $this->assertSame(['text' => 'A', 'react' => ['p3f9a1c0b7d2e4a51' => ['e' => '1f44d', 'n' => 'Alice']]], $revived['item']['data']);
+        $shape = self::norm(self::put(['w' => 200, 'h' => 120, 'data' => ['kind' => 'rect', 'react' => $react], 'style' => []], 'shape', ['revive' => true]));
+        $this->assertSame(['kind' => 'rect'], $shape['item']['data']);
+        // without 4-byte text e stays as sent, the name loses its emoji
+        $p = new Principal('u:alice', Role::Vote, '😀Alice', '3f9a1c0b7d2e4a51', false, 'alice', 'share');
+        $this->assertSame(['o' => 'react', 'id' => self::ID, 'key' => 'p3f9a1c0b7d2e4a51', 'e' => '1f3f4-e0067-e0062-e0065-e006e-e0067-e007f', 'n' => "\u{FFFD}Alice"],
+            OpValidator::normalize($p, self::patch([$own => ['e' => '1f3f4-e0067-e0062-e0065-e006e-e0067-e007f']]), false));
     }
 }

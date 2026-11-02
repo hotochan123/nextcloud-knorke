@@ -17,11 +17,14 @@
  *   the focus
  * - text intents of a `text` item carry h, its measured height for the new
  *   text; the text editor grows with the text
+ * - job 135: the note editor writes in the note's text colour (noteTextColor:
+ *   white on a dark fill); a shape editor keeps the shape's text colour
  */
 import { test, describe, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { dispatch } from './fakeDom.mjs'
 import { fakeTextHeight, frameItem, note, setupScene, shapeItem, textItem } from './sceneHarness.mjs'
+import { TEXT_COLOR } from '../../../src/model/tokens.js'
 
 const A = '01JA0000000000000000000001'
 const B = '01JA0000000000000000000002'
@@ -65,7 +68,7 @@ describe('editor kinds', () => {
 	})
 
 	test('layout is inline !important, the look is a default without priority ([C] styles it per kind)', () => {
-		h = setupScene([textItem(C, { style: { fontSize: 30, color: '#e03131', align: 'right' } })])
+		h = setupScene([textItem(C, { style: { fontSize: 30, color: '#c43e45', align: 'right' } })])
 		const props = new Map()
 		h.scene.openTextEditor(C)
 		const ta = editorEl()
@@ -80,9 +83,40 @@ describe('editor kinds', () => {
 		for (const k of ['width', 'height', 'font-size', 'transform', 'text-align']) assert.equal(props.get(k), 'important', k)
 		for (const k of ['background', 'color']) assert.equal(props.get(k), '', k)
 		assert.equal(ta.style.getPropertyValue('text-align'), 'right')
-		assert.equal(ta.style.getPropertyValue('color'), '#e03131')
+		assert.equal(ta.style.getPropertyValue('color'), '#c43e45')
 		assert.equal(ta.style.getPropertyValue('font-size'), '60px')
 		assert.equal(ta.style.getPropertyValue('padding'), '0px')
+	})
+
+	test('job 135 (AK8): the note editor gets the note\'s text colour (white on a dark fill, TEXT_COLOR on a note colour); a shape on a dark fill keeps its text colour', () => {
+		h = setupScene([note(A, { style: { fill: '#191b1d' } }), note(B, { x: 300 }), shapeItem(C, { x: 600, style: { fill: '#191b1d' } })])
+		const colorOf = (id) => {
+			h.scene.openTextEditor(id)
+			h.frame()
+			const ta = editorEl()
+			const c = ta.style.getPropertyValue('color')
+			h.key('Escape', { target: ta })
+			return c
+		}
+		assert.equal(colorOf(A), '#ffffff')
+		assert.equal(colorOf(B), TEXT_COLOR, 'a note colour: TEXT_COLOR')
+		assert.equal(colorOf(C), '#191b1d', 'the shape\'s default text colour, no automatic white')
+	})
+
+	test('job 227 AK3/AK9: the note editor takes the font size of the drawn layout (a long word: 16 at M) and the new tone of an old fill as its background', () => {
+		h = setupScene([note(A, { data: { text: 'Donaudampfschifffahrtsgesellschaftskapitän' }, style: { fill: '#a8d8f8', fontSize: 22 } }), note(B, { x: 300, data: { text: 'Hallo' }, style: { fontSize: 22 } })])
+		const look = (id) => {
+			h.scene.openTextEditor(id)
+			h.frame()
+			const ta = editorEl()
+			const out = [ta.style.getPropertyValue('font-size'), ta.style.getPropertyValue('background')]
+			h.key('Escape', { target: ta })
+			return out
+		}
+		const [size, bg] = look(A)
+		assert.equal(size, '16px')
+		assert.match(bg, /#a2d9fe/)
+		assert.equal(look(B)[0], '22px')
 	})
 
 	test('the text editor grows with the measured text height', () => {
@@ -102,10 +136,10 @@ describe('editor kinds', () => {
 		h.scene.openTextEditor(B)
 		h.frame()
 		const ta = editorEl()
-		// text box [0.25, 0.5, 0.5, 0.45] × 200 → (150, 200, 100, 90)
-		assert.equal(ta.style.getPropertyValue('transform'), 'translate(150px, 200px)')
-		assert.equal(ta.style.getPropertyValue('width'), '100px')
-		assert.equal(ta.style.getPropertyValue('height'), '90px')
+		// job 260: text box [0.21, 0.6, 0.58, 0.4] × 200 → (142, 220, 116, 80)
+		assert.equal(ta.style.getPropertyValue('transform'), 'translate(142px, 220px)')
+		assert.ok(Math.abs(parseFloat(ta.style.getPropertyValue('width')) - 116) < 1e-6, ta.style.getPropertyValue('width'))
+		assert.equal(ta.style.getPropertyValue('height'), '80px')
 		assert.equal(ta.style.getPropertyValue('text-align'), 'center')
 	})
 })

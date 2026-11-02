@@ -76,7 +76,7 @@ final class LinkLimitTest extends TestCase {
         $limits = new Limits(Fake::of(IAppConfig::class, [
             'getValueInt' => fn (string $a, string $k, int $d = 0, ?bool $lazy = false): int => $this->app[$k] ?? $d,
         ]));
-        return new BoardApiController($this->request(['id' => (string)$this->b], $body), $this->h->service, $session, $this->limiter(), $limits, Fake::of(LoggerInterface::class));
+        return new BoardApiController($this->request(['id' => (string)$this->b], $body), $this->h->service, $session, $this->limiter(), $limits, Fake::of(LoggerInterface::class), $this->h->sketches());
     }
 
     /** @return array{0: int, 1: mixed} */

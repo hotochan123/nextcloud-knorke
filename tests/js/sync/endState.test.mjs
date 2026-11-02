@@ -365,10 +365,10 @@ const ROWS = [
 		want: { finalStatus: 'password_required', joins: 1, statuses: ['password_required'] },
 	},
 	{
-		name: 'user: sync not_logged_in twice → logged_out after exactly 2 calls, 1000 ms apart',
+		name: 'user: sync not_logged_in throughout → three bridged, logged_out after exactly 4 calls, 1000/2000/4000 ms apart (job 164)',
 		kind: 'user',
 		sync: () => ({ status: 401, code: 'not_logged_in' }),
-		want: { finalStatus: 'logged_out', joins: 0, statuses: ['logged_out'], syncGaps: [1000] },
+		want: { finalStatus: 'logged_out', joins: 0, statuses: ['offline', 'logged_out'], syncGaps: [1000, 2000, 4000] },
 	},
 ]
 

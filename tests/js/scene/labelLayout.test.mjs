@@ -24,7 +24,7 @@
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { labelBox, routeConnector } from '../../../src/model/connectors.js'
-import { CONNECTOR_LABEL_PAD, LINE_HEIGHT } from '../../../src/model/tokens.js'
+import { CONNECTOR_LABEL_PAD, CONNECTOR_LABEL_PAD_X, LINE_HEIGHT } from '../../../src/model/tokens.js'
 
 /** LiberationSans-Regular.ttf advances (1/2048 em), U+0020–U+007E then U+00A0–U+00FF. */
 const LIB_ASCII = [
@@ -182,7 +182,7 @@ describe('connector label in the real Konva.Text layout (finding S-1b-01)', () =
 			model = m
 			for (const label of FINDING) {
 				const { box, t, rows } = layout(label)
-				const W = box.w - 2 * CONNECTOR_LABEL_PAD
+				const W = box.w - 2 * CONNECTOR_LABEL_PAD_X
 				assert.deepEqual(rows.map((r) => r.text), [label], `${label}: ${JSON.stringify(rows)}`)
 				assert.equal(rows.length, box.lines)
 				assert.ok(rows.every((r) => r.width <= W && !r.text.includes('…')), label)
@@ -190,7 +190,7 @@ describe('connector label in the real Konva.Text layout (finding S-1b-01)', () =
 				assert.equal(t.attrs.height, undefined, 'automatic height')
 				assert.equal(t.width(), W, 'laid out at the box width')
 				// centred: as many lines as estimated → the old top-left (box + pad)
-				assert.equal(t.x(), box.x + CONNECTOR_LABEL_PAD)
+				assert.equal(t.x(), box.x + CONNECTOR_LABEL_PAD_X)
 				assert.ok(Math.abs(t.y() - (box.y + CONNECTOR_LABEL_PAD)) < 1e-9, `${label}: y ${t.y()}`)
 			}
 		})
@@ -199,7 +199,7 @@ describe('connector label in the real Konva.Text layout (finding S-1b-01)', () =
 			model = m
 			for (const label of MORE) {
 				const { box, t, rows } = layout(label)
-				const W = box.w - 2 * CONNECTOR_LABEL_PAD
+				const W = box.w - 2 * CONNECTOR_LABEL_PAD_X
 				assert.ok(rows.length >= 1 && rows.length <= box.lines, `${JSON.stringify(label)}: ${rows.length} rows, box ${box.lines}`)
 				assert.ok(rows.every((r) => r.width <= W + 1e-9 && !r.text.includes('…')), `${JSON.stringify(label)}: ${JSON.stringify(rows)}`)
 				assert.equal(ink(rows.map((r) => r.text).join('')), ink(label), `${JSON.stringify(label)}: every character kept`)
@@ -224,9 +224,9 @@ describe('connector label in the real Konva.Text layout (finding S-1b-01)', () =
 		const { box, t, rows } = layout('👍')
 		assert.deepEqual(rows.map((r) => r.text), ['👍'])
 		assert.equal(t.attrs.width, undefined, 'falls back to the natural width')
-		assert.equal(t.width(), 24)
-		assert.equal(t.x(), box.x + (box.w - 24) / 2)
-		assert.ok(Math.abs(t.y() - (box.y + (box.h - 16 * LINE_HEIGHT) / 2)) < 1e-9)
+		assert.equal(t.width(), 22.5, 'job 261: 1.5 em at 15')
+		assert.equal(t.x(), box.x + (box.w - 22.5) / 2)
+		assert.ok(Math.abs(t.y() - (box.y + (box.h - 15 * LINE_HEIGHT) / 2)) < 1e-9)
 		// a line too narrow for two wide emoji wraps instead (no cut, overflows the box evenly)
 		const two = layout('👍👍')
 		assert.deepEqual(two.rows.map((r) => r.text), ['👍', '👍'])
@@ -242,7 +242,7 @@ describe('connector label in the real Konva.Text layout (finding S-1b-01)', () =
 		connector.place(ctx, e, { ...item, data: { ...item.data, label: 'WICHTIG' } }, next.route)
 		const t = e.parts.text
 		assert.deepEqual(t.textArr.map((r) => r.text), ['WICHTIG'])
-		assert.equal(t.width(), next.route.label.w - 2 * CONNECTOR_LABEL_PAD, 'fixed width again')
-		assert.equal(t.x(), next.route.label.x + CONNECTOR_LABEL_PAD)
+		assert.equal(t.width(), next.route.label.w - 2 * CONNECTOR_LABEL_PAD_X, 'fixed width again')
+		assert.equal(t.x(), next.route.label.x + CONNECTOR_LABEL_PAD_X)
 	})
 })

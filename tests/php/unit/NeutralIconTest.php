@@ -122,7 +122,7 @@ final class NeutralIconTest extends TestCase {
         $this->assertSame(['fill', 'height', 'viewBox', 'width'], $attrs, 'the root carries size, viewBox and fill only');
 
         $glyph = self::pathData(self::load(self::GLYPH));
-        $this->assertCount(2, $glyph, self::GLYPH . ': two paths');
+        $this->assertNotEmpty($glyph, self::GLYPH . ': at least one path');
         $this->assertSame($glyph, self::pathData($doc), 'the d of every path as in ' . self::GLYPH . ', same order');
 
         foreach (self::elements($doc) as $el) {

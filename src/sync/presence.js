@@ -34,19 +34,65 @@
  * youngestViewKey(pid) the key whose v this client saw change last (the
  * arrival time of every v change is kept per key; ties go to the
  * lexicographically smallest key, CLI-16). No new wire field.
+ *
+ * Factory job 171 (laser pointer): l = the sender's trail [[x, y, d], …,
+ * null, [x, y, d], …] (oldest first, d = its age in ms as the server hands
+ * it out, null between two strokes; laserOf, an invalid l counts as none).
+ * Every point gets the time receivedAt − d. Each key keeps one buffer: a new
+ * card keeps the buffered points older than its oldest point (a repeat of a
+ * point lies within LASER_SAME_MS of it: the sender stores points at least
+ * 30 ms apart), with their stroke breaks, and appends its list; a card
+ * without l lets the buffer play to its end; the buffer goes with its key.
+ * sample(now) gives every entry laser: the strokes at the play time P = now −
+ * laserDelayMs (laserDelay: one poll of the own cadence plus 500 ms), each a
+ * list of [x, y, age] with the points of 0 ≤ P − t ≤ LASER_FADE_MS and the
+ * tip interpolated at P (age 0); points more than LASER_GAP_MS apart are not
+ * joined. hasLaser(): the newest card of some entry carries l (the session
+ * keeps the fast cadence meanwhile, like hasDragging()).
+ *
+ * Factory job 173 (tables): ec = "<col>.<row>", the cell of the table e the
+ * entry is editing (anything else counts as none); it comes out as
+ * RemoteSample.editingCell (null without one), and h is the lease of that
+ * cell. leaseHolder(itemId, cell) names the holder per cell (null: the item
+ * itself, a note's text).
  */
+import { CELL_RE } from '../model/table.js'
+import { NODE_KEY_RE } from '../model/mindmap.js'
+import { LASER_FADE_MS, TEN } from '../model/tokens.js'
+import { INTERVALS } from './scheduler.js'
+
+/** (Job 171) Laser points further apart than this (ms) belong to two strokes. */
+export const LASER_GAP_MS = 300
+/** (Job 171) Elements of a valid l (the server's Limits::PRESENCE_LASER). */
+const LASER_MAX = 100
+/** (Job 171) A buffered point that a new card repeats lies within this of the repeat (ms). */
+const LASER_SAME_MS = 15
 
 /**
- * Twelve cursor colors. Each is dark enough for white name tags (contrast
- * ratio ≥ 4.5 against #ffffff, checked in presence.test.mjs).
+ * (Job 171) How far behind the sender a receiver plays the others' laser
+ * trails: one poll of its own cadence plus 500 ms, so the next card is
+ * there before the play time reaches the end of the last one.
+ *
+ * @param {boolean} viewOnly a view-only device (polls every viewMs)
+ * @param {object} [intervals] INTERVALS
+ * @return {number} delay in ms (900; 2500 on a view-only device)
  */
-export const PALETTE = Object.freeze([
-	'#c62828', '#ad1457', '#6a1b9a', '#4527a0', '#283593', '#1565c0',
-	'#00695c', '#2e7d32', '#8d5b00', '#bf360c', '#5d4037', '#37474f',
-])
+export function laserDelay(viewOnly, intervals = INTERVALS) {
+	return (viewOnly ? intervals.viewMs : intervals.activeMs) + 500
+}
 
 /**
- * Stable color of a participant (FNV-1a over the pid).
+ * The colours of people (job 227): the ten strong tones of the one palette
+ * (tokens.TEN), each dark enough for white name tags (contrast ratio ≥ 4.5
+ * against #ffffff, checked in presence.test.mjs).
+ */
+export const PALETTE = TEN
+
+/**
+ * Stable color of a participant (FNV-1a over the pid; job 227: mod 10 over
+ * TEN). The pid is fixed per board and person (a guest: per guest session),
+ * so avatar, cursor, name tag, selection, laser and vote colour agree on
+ * every client.
  *
  * @param {string} pid opaque participant id
  * @return {string} #rrggbb
@@ -84,6 +130,114 @@ function dragList(d) {
 		}
 	}
 	return out
+}
+
+/**
+ * (Job 171) A laser trail from the server: 1–100 elements, each null (never
+ * first, last or twice in a row) or [x, y, d] with finite x, y and an integer
+ * d ≥ 0 that never rises.
+ *
+ * @param {unknown} l presence l
+ * @return {Array<[number, number, number]|null>|null} the trail, or null when missing or invalid
+ */
+export function laserOf(l) {
+	if (!Array.isArray(l) || l.length === 0 || l.length > LASER_MAX) {
+		return null
+	}
+	const out = []
+	let prevD = Infinity
+	for (let i = 0; i < l.length; i++) {
+		const p = l[i]
+		if (p === null) {
+			if (i === 0 || i === l.length - 1 || out[i - 1] === null) {
+				return null
+			}
+			out.push(null)
+			continue
+		}
+		if (!Array.isArray(p) || p.length !== 3 || num(p[0]) === null || num(p[1]) === null || !Number.isInteger(p[2]) || p[2] < 0 || p[2] > prevD) {
+			return null
+		}
+		prevD = p[2]
+		out.push([p[0], p[1], p[2]])
+	}
+	return out
+}
+
+/**
+ * (Job 171) The buffer of one key after a card (header): the buffered points
+ * older than the card's oldest point, with their stroke breaks, then the
+ * card's points at receivedAt − d; points older than `from` go. Without a
+ * card (no l) the buffer stays.
+ *
+ * @param {Array<[number, number, number]|null>} old buffer: points [x, y, t] and null between strokes
+ * @param {Array<[number, number, number]|null>|null} card laserOf(l)
+ * @param {number} at arrival of the card
+ * @param {number} from the oldest time still worth keeping
+ * @return {Array<[number, number, number]|null>} new buffer
+ */
+function mergeLaser(old, card, at, from) {
+	let all = old
+	if (card !== null) {
+		const pts = card.map((p) => (p === null ? null : [p[0], p[1], at - p[2]]))
+		const first = pts[0][2]
+		all = []
+		for (const p of old) {
+			if (p === null) {
+				if (all.length > 0 && all[all.length - 1] !== null) all.push(null)
+			} else if (p[2] < first - LASER_SAME_MS) {
+				all.push(p)
+			} else {
+				break
+			}
+		}
+		all.push(...pts)
+	}
+	const out = []
+	for (const p of all) {
+		if (p === null ? out.length > 0 && out[out.length - 1] !== null : p[2] >= from) out.push(p)
+	}
+	if (out.length > 0 && out[out.length - 1] === null) out.pop()
+	return out
+}
+
+/**
+ * (Job 171) The strokes of a buffer at the play time P (header): per stroke
+ * the points with 0 ≤ P − t ≤ fade as [x, y, P − t], and where the stroke
+ * goes on past P the tip interpolated at P with age 0.
+ *
+ * @param {Array<[number, number, number]|null>} buf buffer
+ * @param {number} P play time
+ * @param {number} fade LASER_FADE_MS
+ * @return {Array<Array<[number, number, number]>>} strokes, oldest first
+ */
+function laserAt(buf, P, fade) {
+	const strokes = []
+	let stroke = []
+	let prev = null
+	const close = () => {
+		if (stroke.length > 0) strokes.push(stroke)
+		stroke = []
+	}
+	for (const p of buf) {
+		if (p === null || (prev !== null && p[2] - prev[2] > LASER_GAP_MS)) {
+			close()
+			prev = null
+			if (p === null) continue
+		}
+		if (p[2] > P) {
+			// the play time lies before this point: the tip between it and the one before, the rest is still to come
+			if (prev !== null && prev[2] < P) {
+				const f = (P - prev[2]) / (p[2] - prev[2])
+				stroke.push([lerp(prev[0], p[0], f), lerp(prev[1], p[1], f), 0])
+			}
+			break
+		}
+		if (P - p[2] <= fade) stroke.push([p[0], p[1], P - p[2]])
+		prev = p
+	}
+	close()
+	return strokes
 }
 
 /** Largest |coordinate| and size of a viewport (SPEC-M1 §4.5 me.v). */
@@ -181,14 +335,16 @@ function dragAt(seg, f) {
 
 export class PresenceModel {
 	/**
-	 * @param {{now?: () => number, staleMs?: number, maxGlideMs?: number, snapAfterMs?: number}} [o] options:
-	 *   maxGlideMs caps one glide, snapAfterMs = longest gap between two maps that still glides
+	 * @param {{now?: () => number, staleMs?: number, maxGlideMs?: number, snapAfterMs?: number, laserDelayMs?: number}} [o] options:
+	 *   maxGlideMs caps one glide, snapAfterMs = longest gap between two maps that still glides,
+	 *   laserDelayMs (job 171) = how far behind the senders the laser trails play (laserDelay)
 	 */
-	constructor({ now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()), staleMs = 10000, maxGlideMs = 3000, snapAfterMs = 4000 } = {}) {
+	constructor({ now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()), staleMs = 10000, maxGlideMs = 3000, snapAfterMs = 4000, laserDelayMs = laserDelay(false) } = {}) {
 		this.now = now
 		this.staleMs = staleMs
 		this.maxGlideMs = maxGlideMs
 		this.snapAfterMs = snapAfterMs
+		this.laserDelayMs = laserDelayMs
 		/** Arrival time of the previous map (the observed cadence). */
 		this.lastMapAt = null
 		/** @type {Map<string, object>} key → state */
@@ -248,6 +404,9 @@ export class PresenceModel {
 			} else {
 				seg = { t0: receivedAt, dur: 0, from: null, to: sample.cursor, viewFrom: null, viewTo: sample.view, drag: sample.drag.map((d) => [d[0], d[1], d[2], null, null]) }
 			}
+			// job 171: the laser buffer of this key (header); what can no longer be shown goes
+			const card = laserOf(e.l)
+			const laser = mergeLaser(prev ? prev.laser : [], card, receivedAt, receivedAt - this.laserDelayMs - LASER_FADE_MS - LASER_GAP_MS)
 			this.entries.set(key, {
 				key,
 				pid: typeof e.k === 'string' ? e.k : key.split(':')[0],
@@ -255,17 +414,23 @@ export class PresenceModel {
 				guest: e.g === 1 || e.g === true,
 				selection: Array.isArray(e.s) ? e.s.filter((id) => typeof id === 'string') : [],
 				editing: typeof e.e === 'string' ? e.e : null,
+				// job 173: the cell of the table e
+				// job 195: or the node of a mind map
+				editingCell: typeof e.e === 'string' && typeof e.ec === 'string' && (CELL_RE.test(e.ec) || NODE_KEY_RE.test(e.ec)) ? e.ec : null,
 				holder: e.h === 1 || e.h === true,
 				seenAt: receivedAt,
 				viewChangedAt,
 				samples,
 				seg,
+				laser,
+				laserOn: card !== null,
 			})
 		}
 	}
 
 	/**
-	 * Interpolated samples for the scene (RemoteSample, §6.3).
+	 * Interpolated samples for the scene (RemoteSample, §6.3); (job 171)
+	 * laser = the entry's laser strokes at nowMs − laserDelayMs (header), [] without.
 	 *
 	 * @param {number} [nowMs] current time
 	 * @return {Array<object>} RemoteSample[]
@@ -290,8 +455,10 @@ export class PresenceModel {
 				selection: e.selection,
 				drag,
 				editing: e.editing,
+				editingCell: e.editingCell,
 				editingHolder: e.holder,
 				view: viewAt(e.seg, f),
+				laser: e.laser.length > 0 ? laserAt(e.laser, nowMs - this.laserDelayMs, LASER_FADE_MS) : [],
 			})
 		}
 		return out
@@ -364,13 +531,25 @@ export class PresenceModel {
 		return false
 	}
 
+	/** @return {boolean} (job 171) the newest card of someone else carries a laser trail */
+	hasLaser() {
+		for (const e of this.entries.values()) {
+			if (e.laserOn) {
+				return true
+			}
+		}
+		return false
+	}
+
 	/**
 	 * @param {string} itemId item id
-	 * @return {{pid: string, name: string}|null} the participant holding the text lease
+	 * @param {string|null} [cell] (job 173) the cell of a table; null: the item's own text
+	 * @return {{pid: string, name: string}|null} the participant holding the text lease (of that cell)
 	 */
-	leaseHolder(itemId) {
+	leaseHolder(itemId, cell = null) {
+		const want = typeof cell === 'string' ? cell : null
 		for (const e of this.entries.values()) {
-			if (e.editing === itemId && e.holder) {
+			if (e.editing === itemId && (e.editingCell ?? null) === want && e.holder) {
 				return { pid: e.pid, name: e.name }
 			}
 		}

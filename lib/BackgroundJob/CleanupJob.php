@@ -25,8 +25,9 @@ use Psr\Log\LoggerInterface;
  *
  * After the clean-up (P7, SPEC-M1 §33.1 e): the orphan reconciliation with
  * the two-run rule (OrphanReconciler::daily, the job's clock) — an account
- * or group that is missing at least 20 h after it was first found missing
- * is treated like the deletion listeners do. occ knorke:compact never runs
+ * or group (job 247: also a shape library folder without owner) that is
+ * missing at least 20 h after it was first found missing is treated like
+ * the deletion listeners do. occ knorke:compact never runs
  * this part (ED-14). A failure there is logged, never thrown.
  */
 class CleanupJob extends TimedJob {

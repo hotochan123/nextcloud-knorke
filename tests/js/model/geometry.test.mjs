@@ -26,16 +26,16 @@ const SPIKE = {
 		{ kind: 'poly', points: [100, 50, 300, 100], bbox: [90, 40, 310, 110] },
 		{ kind: 'poly', points: [100, 50, 200, 50, 200, 100, 300, 100], bbox: [90, 40, 310, 110] },
 		{ kind: 'poly', points: [50, 100, 50, 250, 100, 250, 100, 400], bbox: [40, 90, 110, 410] },
-		{ kind: 'bezier', points: [0, 50, -89.44271909999158, 50, -130.55728090000844, 10, -220, 10], bbox: [-230, 0, 10, 60] },
+		{ kind: 'bezier', points: [0, 50, -134.16407864998735, 50, -85.83592135001265, 10, -220, 10], bbox: [-230, 0, 10, 60] },
 	],
 	dist: [5, 4],
 	bez: [0, 0, 9.0625, 11.25, 20, 15, 30.9375, 11.25, 40, 0],
 }
 
 describe('geometry (spike port regression)', () => {
-	test('exports exactly the ported functions (no bezierPath) plus q (M1)', () => {
+	test('exports exactly the ported functions (no bezierPath) plus q (M1) and curveHandle (job 261)', () => {
 		assert.deepEqual(Object.keys(g).sort(), [
-			'distToPolyline', 'distToSegment', 'pointInPolygon', 'pointsBBox', 'q', 'rotatedBBox', 'routeConnector',
+			'curveHandle', 'distToPolyline', 'distToSegment', 'pointInPolygon', 'pointsBBox', 'q', 'rotatedBBox', 'routeConnector',
 			'sampleBezier', 'shapePolygon', 'toLocal',
 		])
 	})
@@ -110,6 +110,6 @@ describe('geometry (spike port regression)', () => {
 		assert.equal(g.shapePolygon('rect', 10, 10), null)
 		// M1: delegates to shapes.outlinePoints for every polygon kind; box and ellipse kinds stay null
 		assert.deepEqual(g.shapePolygon('arrowRight', 100, 40), outlinePoints('arrowRight', 100, 40))
-		for (const kind of ['roundRect', 'ellipse', 'hexagon', undefined]) assert.equal(g.shapePolygon(kind, 10, 10), null, String(kind))
+		for (const kind of ['roundRect', 'ellipse', 'heptagon', undefined]) assert.equal(g.shapePolygon(kind, 10, 10), null, String(kind))
 	})
 })

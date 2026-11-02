@@ -79,7 +79,7 @@ test('index: E34 and E37 after the passes of E33, before E09; E35 after E16 and 
 	assert.ok(at('E09c') < at('E09') && at('E38') < at('E09'), 'both before E09 (own board, no instance setting)')
 	assert.ok(idx.includes('Flake gate (P7-C, SPEC-M1 §33.1 l): --only E34,E35,E37,E38 --repeat 8.'), 'the flake gate of P7-C is named')
 	assert.doesNotMatch(idx, /--only E34,E35,E37 --repeat 8/, 'the stage-4 gate without E38 is gone')
-	assert.match(read('scenarios/world.mjs'), /^export const MAX_BOARDS_PER_RUN = 56$/m, 'the board cap stayed 48 with E09c and E38 (ED-36); 56 since factory job 032 (E43, E44)')
+	assert.match(read('scenarios/world.mjs'), /^export const MAX_BOARDS_PER_RUN = 120$/m, 'the board cap stayed 48 with E09c and E38 (ED-36); 56 since factory job 032 (E43, E44), 64 since factory job 140 (E50), 72 since factory job 157 (E58), 80 since factory job 177 (E66), 88 since factory job 189 (E73), 96 since factory job 198 (E79), 104 since factory job 219 (E87), 112 since factory job 228 (E93)')
 })
 
 test('stage4.mjs: waits only from Node (CSP, trap 9.10), no dispatched contextmenu, every check label starts with exactly one owner [S], [C], [B] or [D] (§9.6)', () => {
@@ -140,7 +140,7 @@ test('E37 (R19): 1280 × 800, real input, steps (1)–(8), paste-here missing on
 	assert.match(src, /button: 'right'/)
 	for (const key of ["'Shift+F10'", "'ContextMenu'"]) assert.ok(e.includes(key), key)
 	for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) assert.ok(e.includes(`t.step('(${n})`), `step (${n})`)
-	assert.match(e, /!m\.items\.includes\('paste-here'\)/, '(3) paste-here missing (no secure context)')
+	assert.match(e, /\['paste-here', 'note-here', 'select-all', 'fit'\]\.some\(\(x\) => m\.items\.includes\(x\)\)/, '(3) job 230: paste-here, note-here, select-all and fit missing')
 	assert.match(e, /!m\.items\.includes\('connect'\)/, '(1) connect missing on one note')
 	assert.match(e, /e\.dp === false/, '(5) the browser menu in the editor (defaultPrevented false)')
 	assert.match(e, /following === null/, '(7) the right click ends following')

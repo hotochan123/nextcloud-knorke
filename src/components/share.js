@@ -41,6 +41,7 @@
 import { HttpError, isPasswordLock, isSlowDown, lockMinutes } from '../sync/http.js'
 import { FEATURES } from '../util/features.js'
 import { n, t } from '../util/l10n.js'
+import { shortcut } from '../util/shortcuts.js'
 import { accessOf } from '../board/mode.js'
 
 /** Share roles in rank order, highest first (§4.9 SHARE_ROLES). */
@@ -97,10 +98,11 @@ export function shareKey(s) {
 /**
  * Shares of an answer (GET/PUT, §4.10.1) as rows of the draft. A row with
  * `appAccess: false` (an account that cannot open Knorke, job 079) keeps it;
- * any other value gives a row without the key.
+ * any other value gives a row without the key. Likewise `viaLink: true` on an
+ * account row (also a member through a valid link, job 248).
  *
  * @param {unknown} list `shares` of the answer
- * @return {Array<{kind: string, id: string, name: string, role: string, available: boolean, appAccess?: false}>}
+ * @return {Array<{kind: string, id: string, name: string, role: string, available: boolean, appAccess?: false, viaLink?: true}>}
  */
 export function normalizeShares(list) {
 	if (!Array.isArray(list)) {
@@ -126,6 +128,9 @@ export function normalizeShares(list) {
 		}
 		if (s.appAccess === false) {
 			row.appAccess = false
+		}
+		if (s.viaLink === true && s.kind === 'user') {
+			row.viaLink = true
 		}
 		out.push(row)
 	}
@@ -184,6 +189,34 @@ export function addSharee(draft, sharee) {
  */
 export function removeShare(draft, key) {
 	return (draft ?? []).filter((s) => shareKey(s) !== key)
+}
+
+/**
+ * Job 248: saved rows of accounts that are also members through a link
+ * (`viaLink`) and are missing from the draft. Removing the share leaves
+ * them on the board through the link; the "People" tab says so.
+ *
+ * @param {object[]} stored saved rows
+ * @param {object[]} draft rows
+ * @return {string[]} their names, in the order of `stored`
+ */
+export function viaLinkRemoved(stored, draft) {
+	const kept = new Set((draft ?? []).map(shareKey))
+	return (stored ?? []).filter((s) => s?.viaLink === true && !kept.has(shareKey(s))).map((s) => s.name)
+}
+
+/**
+ * Job 248: rows (any kind) that had the role `moderate` before a save and
+ * are missing after it or have another role. Their people still know the
+ * board's links, so the dialog offers to renew them.
+ *
+ * @param {object[]} before saved rows before the PUT
+ * @param {object[]} after saved rows of its answer
+ * @return {string[]} '<kind>:<id>' of each such row, in the order of `before`
+ */
+export function droppedModerators(before, after) {
+	const now = new Map((after ?? []).map((s) => [shareKey(s), s.role]))
+	return (before ?? []).filter((s) => s?.role === 'moderate' && now.get(shareKey(s)) !== 'moderate').map(shareKey)
 }
 
 /**
@@ -730,13 +763,17 @@ export function accessLabel(access, votingEnabled = FEATURES.voting) {
 
 /**
  * R13 (CLI-10): "Mine" = source own, "Shared with me" = source share or link.
+ * Job 219: "Favorites" = the boards the account starred, of any source.
  *
  * @param {object[]} boards list
- * @param {string} filter 'all' | 'mine' | 'shared'
+ * @param {string} filter 'all' | 'favorites' | 'mine' | 'shared'
  * @return {object[]}
  */
 export function filterBoards(boards, filter) {
 	const list = Array.isArray(boards) ? boards : []
+	if (filter === 'favorites') {
+		return list.filter((b) => b.favorite === true)
+	}
 	if (filter === 'mine') {
 		return list.filter((b) => sourceOf(b) === 'own')
 	}
@@ -758,4 +795,16 @@ export function sourceLabel(source) {
 		return t('knorke', 'Joined through a link')
 	}
 	return ''
+}
+
+/**
+ * The prompt of ShareLinks when copying failed and the URL field is
+ * selected instead (job 141): the copy key from the one formatter
+ * (util/shortcuts.js), ⌘C on Apple, else Ctrl+C (German Strg+C).
+ *
+ * @param {boolean} apple Apple platform (util/device.js isApplePlatform)
+ * @return {string} "Link selected. Press Ctrl+C to copy it."
+ */
+export function copyPrompt(apple) {
+	return t('knorke', 'Link selected. Press {shortcut} to copy it.', { shortcut: shortcut('copy', apple).hint })
 }

@@ -130,10 +130,15 @@ export class Actor {
  * drivers), which Chromium cannot emulate otherwise (E39). (M2 privacy
  * notice) locale = the context's locale and Accept-Language (default en-US;
  * E43 opens the guest page as de-DE and fr-FR); user = ENV.admin.user logs
- * in with ENV.admin.pass (E44 opens the admin section).
+ * in with ENV.admin.pass (E44 opens the admin section). (Job 154) wheel =
+ * 'zoom' | 'pan' stores that "Mouse wheel" stage (localStorage knorke.wheel)
+ * before every page (wheelInit): a page.mouse.wheel event of Chromium counts
+ * as a notch under Automatic, so a case that pans with the wheel asks for
+ * 'pan' (E33, E48).
  */
-export async function newActor(browser, name, { user = null, touch = false, viewport = null, colorScheme = null, timeout = 15000, reducedMotion = null, locale = 'en-US', deviceScaleFactor = null, fine = false } = {}) {
+export async function newActor(browser, name, { user = null, touch = false, viewport = null, colorScheme = null, timeout = 15000, reducedMotion = null, locale = 'en-US', wheel = null, deviceScaleFactor = null, fine = false } = {}) {
 	if (typeof locale !== 'string' || !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale)) throw new Error(`newActor: locale '${locale}' ist ungültig`)
+	if (wheel !== null && wheel !== 'zoom' && wheel !== 'pan') throw new Error(`newActor: wheel '${wheel}' ist ungültig`)
 	const opts = { locale, viewport: viewport || (touch ? TABLET : DESKTOP) }
 	if (touch) Object.assign(opts, { hasTouch: true, isMobile: true })
 	if (deviceScaleFactor !== null) opts.deviceScaleFactor = deviceScaleFactor
@@ -146,6 +151,7 @@ export async function newActor(browser, name, { user = null, touch = false, view
 		try { window.localStorage.setItem('nextcloud_vol_Y29yZQ==_unsupported-browser-ignore', 'true') } catch (e) { /* storage blocked */ }
 	})
 	if (fine) await ctx.addInitScript(finePointerInit)
+	if (wheel !== null) await ctx.addInitScript(wheelInit, wheel)
 	const page = await ctx.newPage()
 	page.setDefaultTimeout(timeout)
 	const a = new Actor(name, ctx, page, user ? 'user' : 'guest')
@@ -166,6 +172,16 @@ export function finePointerInit() {
 		}
 		return orig(q)
 	}
+}
+
+/**
+ * Init script of newActor({wheel}) (job 154): the "Mouse wheel" stage in
+ * localStorage knorke.wheel before the app reads it on opening a board.
+ *
+ * @param {'zoom'|'pan'} stage the stage
+ */
+export function wheelInit(stage) {
+	try { window.localStorage.setItem('knorke.wheel', stage) } catch (e) { /* storage blocked */ }
 }
 
 /** Password of a harness account: the admin's own (ENV.admin.pass), else the common user password. */
@@ -304,6 +320,27 @@ export async function until(fn, { timeout = 5000, every = 100 } = {}) {
 	return v
 }
 
+/**
+ * (Job 281) Opens a collapsible section of the admin page /settings/admin/knorke
+ * (templates | shapelibs | ai | privacy): waits until both lists have loaded
+ * (the page opens sections by itself then), clicks the head while it is closed.
+ *
+ * @return {Promise<boolean>} the section is open
+ */
+export async function openAdminSection(page, key) {
+	const loaded = await until(async () => {
+		const states = await page.evaluate(() => ['templates', 'shapelibs'].map((k) => document.querySelector(`[data-knorke-admin-${k}-state]`)?.getAttribute(`data-knorke-admin-${k}-state`) ?? 'loading'))
+		return states.every((s) => s !== 'loading')
+	}, { timeout: 20000 })
+	if (!loaded) return false
+	await sleep(100)
+	const sec = page.locator(`[data-knorke-admin-section=${key}]`).first()
+	if ((await sec.getAttribute('data-knorke-open').catch(() => null)) !== 'true') {
+		await page.locator(`[data-knorke-admin-toggle=${key}]`).first().click({ timeout: 3000 }).catch(() => {})
+	}
+	return (await until(async () => (await sec.getAttribute('data-knorke-open')) === 'true', { timeout: 3000 })) === true
+}
+
 /** Opens a board page and waits for the session. */
 export async function openBoard(actor, id) {
 	const r = await actor.page.goto(`${APP}/b/${id}`, { waitUntil: 'domcontentloaded' })
@@ -316,6 +353,16 @@ export async function centerOf(page, id) {
 	const r = await K.rect(page, id)
 	if (!r) throw new Error(`itemScreenRect(${id}) = null`)
 	return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
+}
+
+/**
+ * (Factory job 229) Jumps to frame fid through the zoom menu: its trigger (the
+ * percentage), the level "Frames", the frame's entry.
+ */
+export async function zoomToFrame(page, fid, timeout = 5000) {
+	await page.locator('[data-knorke-menu=zoom] button[aria-haspopup]').first().click({ timeout })
+	await page.locator('[data-knorke-submenu=frames]:visible').first().click({ timeout })
+	await page.locator(`[data-knorke-frame="${fid}"]:visible`).first().click({ timeout })
 }
 
 /** Clicks the tool button and checks aria-pressed. */
@@ -360,6 +407,11 @@ export async function newId(page, before, timeout = 5000) {
  */
 export async function createSticky(page, wx, wy, text) {
 	const before = await idSet(page)
+	// factory job 173: with the table tool the tool bar is one button taller; the context bar of the note
+	// made just before, at the left edge, can then lie over the button "Sticky note". Esc only clears the
+	// selection (and with it the bar), as in createFrame
+	await page.locator(CANVAS).first().focus()
+	await page.keyboard.press('Escape')
 	await tool(page, 'sticky')
 	const p = await K.w2s(page, wx, wy)
 	await page.mouse.click(p.x, p.y)
@@ -380,6 +432,10 @@ export async function createSticky(page, wx, wy, text) {
 /** Draws a frame with the frame tool between two world points; returns the new id. */
 export async function createFrame(page, w1, w2) {
 	const before = await idSet(page)
+	// factory job 137: the context bar of a selected item stands right above it, closer still once the
+	// frame tool hides its handles, and could take the drag's start; Esc only clears the selection
+	await page.locator(CANVAS).first().focus()
+	await page.keyboard.press('Escape')
 	await tool(page, 'frame')
 	const a = await K.w2s(page, w1.x, w1.y)
 	const b = await K.w2s(page, w2.x, w2.y)
@@ -431,15 +487,74 @@ export async function selectItem(page, id) {
 	await page.mouse.click(c.x, c.y)
 }
 
+/** (Factory job 230) The entries of the context bar's "…" (contextbar.js moreGroups). */
+export const BAR_MORE = Object.freeze(['cut', 'copy', 'duplicate', 'front', 'back', 'connect', 'arrange', 'sort-colors', 'sort-frame', 'group', 'ungroup', 'lock', 'unlock', 'delete'])
+
+/**
+ * (Factory job 230) An entry of the context bar's "…" ([data-knorke-menu=selection],
+ * an NcActions menu teleported to .knorke-menus): opens the menu when the
+ * entry is not shown yet and returns the entry's button (its li carries
+ * [data-knorke-action=<name>]).
+ *
+ * @param {object} page Playwright page
+ * @param {string} name entry name (BAR_MORE)
+ * @param {{timeout?: number}} [o] how long to wait for the trigger and the entry
+ * @return {Promise<object>} the locator of the entry's button
+ */
+export async function barMore(page, name, { timeout = 5000 } = {}) {
+	const entry = page.locator(`.knorke-menus [data-knorke-action="${name}"]`).locator('xpath=descendant-or-self::button').first()
+	if (await entry.isVisible().catch(() => false)) return entry
+	const trigger = page.locator('.knorke-contextbar [data-knorke-menu=selection] button').first()
+	await trigger.waitFor({ state: 'visible', timeout })
+	await trigger.click()
+	await entry.waitFor({ state: 'visible', timeout })
+	return entry
+}
+
+/**
+ * (Factory job 230) Opens the colour panel of the context bar (the dot
+ * [data-knorke-section=color]) on its tab `tab` (fill, border or text) and,
+ * with `custom`, the hex row behind "Custom color…".
+ *
+ * @param {object} page Playwright page
+ * @param {string} tab fill, border or text
+ * @param {{custom?: boolean, timeout?: number}} [o] options
+ * @return {Promise<boolean>} false when the bar has no such tab
+ */
+export async function colorTab(page, tab, { custom = false, timeout = 3000 } = {}) {
+	const dot = page.locator('.knorke-contextbar [data-knorke-section=color]').first()
+	if (!(await dot.waitFor({ state: 'visible', timeout }).then(() => true, () => false))) return false
+	if ((await dot.getAttribute('aria-expanded').catch(() => null)) !== 'true') await dot.click()
+	const t = page.locator(`.knorke-contextbar [data-knorke-tab=${tab}]`).first()
+	if (!(await t.waitFor({ state: 'visible', timeout }).then(() => true, () => false))) return false
+	if ((await t.getAttribute('aria-selected')) !== 'true') {
+		await t.click()
+		// the panel is measured and placed anew for its new size (hidden meanwhile; the narrow layout has no side)
+		await page.waitForTimeout(50)
+		await page.locator('.knorke-contextbar__panel[data-knorke-panel-side]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {})
+	}
+	if (custom) {
+		const c = page.locator('.knorke-contextbar__panel [data-knorke-action=custom-color]').first()
+		await c.waitFor({ state: 'visible', timeout })
+		if ((await c.getAttribute('aria-expanded')) !== 'true') await c.click()
+	}
+	return true
+}
+
 /**
  * Clicks [data-knorke-action=<name>] inside `scope` (a locator or the page).
  * Actions that live in a closed NcActions menu are reached by opening the
  * menu trigger of the scope first; menu content is teleported to <body>.
+ * (Factory job 230) The entries of the context bar's "…" are reached through
+ * barMore.
  */
 export async function action(page, name, scope = null) {
 	const sel = `[data-knorke-action=${name}]`
 	const inScope = (scope || page).locator(sel).first()
 	if (await inScope.isVisible().catch(() => false)) return inScope.click()
+	if (!scope && BAR_MORE.includes(name) && await page.locator('.knorke-contextbar [data-knorke-menu=selection]').first().isVisible().catch(() => false)) {
+		return (await barMore(page, name)).click()
+	}
 	if (scope) {
 		const trigger = scope.locator('button[aria-haspopup], .action-item__menutoggle').first()
 		if (await trigger.isVisible().catch(() => false)) {
@@ -633,12 +748,15 @@ export const nearPt = (a, b, tol = 2) => !!a && !!b && Math.abs(a.x - b.x) <= to
 /**
  * Clicks the context-bar style button [data-knorke-style=<path>][data-knorke-value=<value>]
  * (SPEC-M1 §6.8). Buttons inside a closed panel of the context bar are reached
- * by opening the sections ([data-knorke-section]) one after the other.
+ * by opening the sections ([data-knorke-section]) one after the other; (job
+ * 230) in the colour panel ([data-knorke-section=color]) each of its tabs.
  * @return {Promise<boolean>} false when no such button exists
  */
 export async function styleButton(page, path, value) {
 	const sel = `[data-knorke-style="${path}"][data-knorke-value="${value}"]`
 	const visible = () => page.locator(sel + ':visible').first()
+	// factory job 137: right after a new selection the bar waits (hidden) for the scene's box, one frame
+	await page.locator('.knorke-contextbar').first().waitFor({ state: 'visible', timeout: 2000 }).catch(() => {})
 	if (await visible().isVisible().catch(() => false)) {
 		await visible().click()
 		return true
@@ -649,7 +767,18 @@ export async function styleButton(page, path, value) {
 		const s = sections.nth(i)
 		if (!(await s.isVisible().catch(() => false))) continue
 		await s.click()
-		if (await visible().waitFor({ state: 'visible', timeout: 800 }).then(() => true, () => false)) {
+		if ((await s.getAttribute('data-knorke-section').catch(() => null)) === 'color') {
+			// job 230: the tabs of the colour panel
+			const tabs = page.locator('.knorke-contextbar [data-knorke-tab]')
+			const k = await tabs.count().catch(() => 0)
+			for (let j = 0; j < k; j++) {
+				await tabs.nth(j).click().catch(() => {})
+				if (await visible().waitFor({ state: 'visible', timeout: 400 }).then(() => true, () => false)) {
+					await visible().click()
+					return true
+				}
+			}
+		} else if (await visible().waitFor({ state: 'visible', timeout: 800 }).then(() => true, () => false)) {
 			await visible().click()
 			return true
 		}

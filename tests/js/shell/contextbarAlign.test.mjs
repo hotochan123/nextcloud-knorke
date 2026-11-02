@@ -51,7 +51,13 @@ const withPanel = (name) => ({
 	...ContextBar,
 	setup(props, ctx) {
 		const b = ContextBar.setup(props, ctx)
-		b.toggle(name)
+		// job 230: fill, border and text are tabs of the panel 'color'
+		if (['fill', 'border', 'text'].includes(name)) {
+			b.toggle('color')
+			b.pickTab(name)
+		} else {
+			b.toggle(name)
+		}
 		return b
 	},
 })
@@ -68,8 +74,10 @@ function barOrder(html) {
 	const panel = html.includes('<div id="knorke-contextbar-panel"') ? panelOf(html) : ''
 	const flat = panel ? html.replace(panel, '<div data-knorke-panel-placeholder>') : html
 	const out = []
-	for (const m of flat.matchAll(/<div data-knorke-panel-placeholder>|<[a-z]+\b[^>]*data-stub="NcButton"[^>]*>|<span class="knorke-contextbar__count"/g)) {
-		if (m[0].startsWith('<div data-knorke-panel-placeholder')) {
+	for (const m of flat.matchAll(/<div data-knorke-panel-placeholder>|<[a-z]+\b[^>]*data-stub="NcButton"[^>]*>|<span class="knorke-contextbar__count"|<div class="knorke-contextbar__more"/g)) {
+		if (m[0].startsWith('<div class="knorke-contextbar__more"')) {
+			out.push('more')
+		} else if (m[0].startsWith('<div data-knorke-panel-placeholder')) {
 			out.push('panel:' + panel.match(/data-knorke-panel="([a-z]+)"/)[1])
 		} else if (m[0].startsWith('<span')) {
 			out.push('count')
@@ -141,7 +149,8 @@ test('M2 align (AK10, 018 AK1): toggle(\'align\') opens the panel "Align items" 
 	const own = ALIGN_EDGES.map((e) => bindings.ITEM_ALIGN_ICONS[e])
 	assert.deepEqual(own, [icons.alignItemsLeft, icons.alignItemsCenter, icons.alignItemsRight, icons.alignItemsTop, icons.alignItemsMiddle, icons.alignItemsBottom])
 	assert.equal(new Set(own).size, 6)
-	assert.ok(own.every((p) => typeof p === 'string' && /^M[\d .HVMZ]+$/.test(p)), 'MDI path data')
+	// job 244: Phosphor path data on the 24 grid
+	assert.ok(own.every((p) => typeof p === 'string' && /^M[\d .\-A-Za-z]+$/.test(p)), 'path data')
 	assert.ok(![icons.alignLeft, icons.alignCenter, icons.alignRight, icons.valignTop, icons.valignMiddle, icons.valignBottom].some((p) => own.includes(p)), 'not the text alignment icons')
 })
 
@@ -192,14 +201,15 @@ test('018 AK2: the text alignment keeps its own texts and German entries (not re
 		['Links ausrichten', 'Mittig ausrichten', 'Rechts ausrichten', 'Oben ausrichten', 'Vertikal mittig ausrichten', 'Unten ausrichten'])
 })
 
-test('018 AK6: with "Align items" open the panel follows its toggle directly and stands before "Copy"; its first control is "Align left edges"; the count stays the last child after "Delete"', async () => {
+test('018 AK6, job 230: with "Align items" open the panel follows its toggle directly, before the colour dot; its first control is "Align left edges"; "…" stays the last element', async () => {
 	for (const types of [['sticky', 'sticky'], ['sticky', 'shape', 'sticky']]) {
 		const html = strip(await render(WithAlignPanel, { selection: sel(types, { alignable: types.length }) }))
 		const order = barOrder(html)
 		const at = order.indexOf('action:align')
 		assert.ok(at >= 0, types.join('+'))
-		assert.deepEqual(order.slice(at, at + 3), ['action:align', 'panel:align', 'action:copy'], types.join('+') + ': ' + order.join(' '))
-		assert.deepEqual(order.slice(-2), ['button:Delete', 'count'], 'the count is the last after "Delete"')
+		assert.deepEqual(order.slice(at, at + 3), ['action:align', 'panel:align', 'section:color'], types.join('+') + ': ' + order.join(' '))
+		assert.equal(order[0], 'count', 'the count first')
+		assert.equal(order.at(-1), 'more', '"…" last')
 		const panel = panelOf(html)
 		// nothing focusable between the toggle's tag and the panel
 		const between = html.slice(html.indexOf('data-knorke-action="align"'), html.indexOf(panel))
@@ -208,24 +218,33 @@ test('018 AK6: with "Align items" open the panel follows its toggle directly and
 		const first = panel.match(/<[a-z]+\b[^>]*(?:data-stub="Nc(?:Button|TextField)"|type="button")[^>]*>|<button\b[^>]*>|<input\b[^>]*>/)?.[0] ?? ''
 		assert.match(first, /data-knorke-align="left"/)
 		assert.match(first, /aria-label="Align left edges"/)
-		// the bar's root closes right after the count
-		assert.match(html, /<span class="knorke-contextbar__count">[^<]*<\/span><\/div>$/)
+		// job 230: the captions of its sections
+		assert.match(panel, /Align edges/)
+		assert.equal(/Distribute/.test(panel), types.length >= 3, '"Distribute" from three')
+		assert.match(panel, /Tidy up \(grid\)/)
 	}
 })
 
-test('018 AK6: "Arrange" (one item) — its panel follows the toggle directly; a style panel ("Text" of two shapes) stands after the last panel toggle and before "Copy"', async () => {
+test('018 AK6, job 230: "Arrange" (one item, opened from "…") — its panel follows "…"; the colour panel follows the colour dot', async () => {
 	const arrange = strip(await render(withPanel('arrange'), { selection: sel(['sticky']) }))
 	const a = barOrder(arrange)
-	const at = a.indexOf('action:arrange')
-	assert.ok(at >= 0, a.join(' '))
-	assert.deepEqual(a.slice(at, at + 3), ['action:arrange', 'panel:arrange', 'action:copy'], a.join(' '))
-	assert.equal(a.at(-1), 'count')
+	assert.deepEqual(a.slice(-2), ['more', 'panel:arrange'], a.join(' '))
 	const first = panelOf(arrange).match(/<[a-z]+\b[^>]*data-stub="NcTextField"[^>]*>/)?.[0] ?? ''
 	assert.match(first, /data-knorke-field="arrange-x"/, 'the first field of the ArrangePopover')
 	const text = strip(await render(withPanel('text'), { selection: sel(['shape', 'shape'], { alignable: 2 }) }))
 	const t = barOrder(text)
-	assert.ok(t.includes('section:text') && t.includes('panel:text'), t.join(' '))
-	assert.ok(t.indexOf('section:text') < t.indexOf('panel:text'))
-	assert.deepEqual(t.slice(t.indexOf('panel:text') - 1, t.indexOf('panel:text') + 2), ['action:align', 'panel:text', 'action:copy'], t.join(' '))
-	assert.equal(t.at(-1), 'count')
+	assert.deepEqual(t.slice(0, 4), ['count', 'action:align', 'section:color', 'panel:color'], t.join(' '))
+	assert.equal(t.at(-1), 'more')
+})
+
+test('job 240 (AK6): the bar passes the session\'s square to "Arrange": the tick "1:1" of one shape shows it; other types have none', async () => {
+	const tickOf = async (selection) => panelOf(strip(await render(withPanel('arrange'), { selection }))).match(/<input\b[^>]*data-knorke-field="arrange-square"[^>]*>/)?.[0] ?? null
+	const on = await tickOf(sel(['shape'], { square: true }))
+	assert.ok(on, 'a shape has the tick')
+	assert.match(on, /\schecked\b/, 'square true: ticked')
+	const off = await tickOf(sel(['shape'], { square: false }))
+	assert.ok(off)
+	assert.doesNotMatch(off, /\schecked\b/, 'square false: not ticked')
+	assert.doesNotMatch(await tickOf(sel(['shape'], { square: null })), /\schecked\b/, 'square null: not ticked')
+	assert.equal(await tickOf(sel(['sticky'], { square: null })), null, 'a note has none')
 })

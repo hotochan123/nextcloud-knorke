@@ -6,15 +6,16 @@
  * The bars check of the stage-3 viewport passes (SPEC-M1 §6.6 narrow layout
  * (5), R16; E28, E31, E33 at 390 × 844 and 820 × 1180):
  *
- * - [data-knorke-bar=top|banner|vote|timer|list] stand at their elements in
- *   every width; only VISIBLE elements are checked, with the VotePanel closed
+ * - [data-knorke-bar=top|banner|session|vote|timer|list] stand at their
+ *   elements in every width; only VISIBLE elements are checked, with the
+ *   VotePanel closed (job 233: the session bar holds timer, vote and list)
  * - every pair in which neither element contains the other must not overlap
- *   by more than 0.5 px (DOM a.contains(b) → the pair is skipped: timer lies
- *   in top, list in vote)
+ *   by more than 0.5 px (DOM a.contains(b) → the pair is skipped: timer, vote
+ *   and list lie in session)
  * - every checked element lies completely inside the viewport (0.5 px slack)
  * - in every width (R17 K7: §6.6 (2) docks the VoteBar at the bottom in every
  *   layout, so E28, E31 and E33 check it at 390 × 844 AND 820 × 1180): the
- *   bottom of a visible `vote` ≥ viewport height − 1 px; with
+ *   bottom of a visible `vote` (and, job 233, `session`) ≥ viewport height − 1 px; with
  *   {requireVote: true} a missing visible `vote` is a problem too (a pass
  *   with an open session, so the rule cannot hold by absence)
  * - only at ≤ 600 px (the narrow layout, R16 (1)): at most one visible
@@ -26,7 +27,7 @@
  */
 
 /** The bar names of §6.8 (R2/R16). */
-export const BAR_NAMES = Object.freeze(['top', 'banner', 'vote', 'timer', 'list'])
+export const BAR_NAMES = Object.freeze(['top', 'banner', 'session', 'vote', 'timer', 'list'])
 /** Overlap and viewport slack in CSS px (§6.6 (5)). */
 export const SLACK = 0.5
 /** The VoteBar docks at the bottom: its bottom edge ≥ viewport height − this many CSS px (§6.6 (5), R17 K7). */
@@ -107,8 +108,8 @@ export function checkBars(snap, { panelOpenAtStart = null, requireVote = false }
 	// R17 K7: the VoteBar docks at the bottom in every layout (§6.6 (2)), so in both test viewports
 	const votes = vis.filter((b) => b.name === 'vote')
 	if (requireVote && votes.length === 0) out.push('keine sichtbare [data-knorke-bar=vote] (Sitzung offen)')
-	for (const v of votes) {
-		if (v.rect.y + v.rect.h < snap.vh - BOTTOM_SLACK) out.push(`vote endet bei ${(v.rect.y + v.rect.h).toFixed(1)} px, nicht unten (${snap.vw} × ${snap.vh})`)
+	for (const v of vis.filter((b) => b.name === 'vote' || b.name === 'session')) {
+		if (v.rect.y + v.rect.h < snap.vh - BOTTOM_SLACK) out.push(`${v.name} endet bei ${(v.rect.y + v.rect.h).toFixed(1)} px, nicht unten (${snap.vw} × ${snap.vh})`)
 	}
 	if (snap.vw <= NARROW_MAX) {
 		const banners = vis.filter((b) => b.name === 'banner')

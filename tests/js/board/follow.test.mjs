@@ -16,6 +16,11 @@ import assert from 'node:assert/strict'
 import { FollowController, GLIDE_MAX_MS, GLIDE_MIN_MS, HOLD_MS, STALE_MS, clampGlide, samePair, summonOf } from '../../../src/board/follow.js'
 import { PresenceModel } from '../../../src/sync/presence.js'
 import { FakeClock } from '../sync/fakeClock.mjs'
+import { MAX_SCALE } from '../../../src/model/tokens.js'
+import { SceneModel } from '../../../src/model/SceneModel.js'
+import { SceneManager } from '../../../src/scene/SceneManager.js'
+import { installDom } from '../scene/fakeDom.mjs'
+import { stubRenderer } from '../scene/sceneHarness.mjs'
 
 const ME = { pid: 'pidme00000000001', client: 'cMe0000001' }
 const ALICE = 'pidalice00000001'
@@ -47,7 +52,7 @@ class FollowScene {
  * @param {object} [o] options
  * @return {object} harness
  */
-function setup({ sessionOpen = false } = {}) {
+function setup({ sessionOpen = false, frames = {} } = {}) {
 	const clock = new FakeClock(100000)
 	const presence = new PresenceModel({ now: clock.now })
 	const scene = new FollowScene()
@@ -63,6 +68,7 @@ function setup({ sessionOpen = false } = {}) {
 		sessionOpen: () => open,
 		onChange: (st) => changes.push(st),
 		onLeft: (name) => left.push(name),
+		frameRect: (id) => frames[id] ?? null,
 	})
 	const card = async (map, ms = 0) => {
 		if (ms > 0) {
@@ -84,7 +90,7 @@ test('helpers: clampGlide 300–2000, summonOf, samePair', () => {
 	assert.equal(clampGlide(NaN), GLIDE_MAX_MS)
 	assert.equal(summonOf(null), null)
 	assert.equal(summonOf({ pid: 'x' }), null, 'seq required')
-	assert.deepEqual(summonOf({ pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 5 }), { pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 5 })
+	assert.deepEqual(summonOf({ pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 5 }), { pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 5, frame: null })
 	assert.equal(samePair({ seq: 1, at: 5 }, { seq: 1, at: 5 }), true)
 	assert.equal(samePair({ seq: 1, at: 5 }, { seq: 1, at: 6 }), false)
 	assert.equal(samePair(null, { seq: 1, at: 5 }), false)
@@ -106,6 +112,57 @@ test('follow(pid, client): every presence card → followTo(cameraForRect(v, 0),
 	assert.equal(h.scene.calls[2].ms, GLIDE_MIN_MS, 'clamped to 300')
 	await h.card({ [ALICE + ':c1']: entry('Alice', [300, 50, 1000, 500]) }, 5000)
 	assert.equal(h.scene.calls[3].ms, GLIDE_MAX_MS, 'clamped to 2000')
+})
+
+test('job 238 AK3: follow asks cameraForRect for the whole zoom range (maxScale MAX_SCALE = 10, no insets)', async () => {
+	const h = setup()
+	const args = []
+	const fit = h.scene.cameraForRect.bind(h.scene)
+	h.scene.cameraForRect = (rect, pad, insets, maxScale) => {
+		args.push([pad, insets, maxScale])
+		return fit(rect, pad)
+	}
+	await h.card({ [ALICE + ':c1']: entry('Alice', [0, 0, 128, 72]) })
+	h.fc.follow(ALICE, 'c1')
+	await h.clock.settle()
+	assert.deepEqual(args, [[0, null, MAX_SCALE]])
+	assert.equal(MAX_SCALE, 10)
+})
+
+test('job 238 AK3: with a real 1280 × 720 scene the follower of a viewport [0, 0, 128, 72] ends at 1000 % and sees the same part', async () => {
+	stubRenderer()
+	const dom = installDom()
+	let scene = null
+	try {
+		const container = dom.doc.createElement('div')
+		container.clientWidth = 1280
+		container.clientHeight = 720
+		dom.doc.body.appendChild(container)
+		scene = new SceneManager(container, new SceneModel(), {})
+		scene.mount()
+		scene.setCamera({ x: 0, y: 0, scale: 1 })
+		dom.frame()
+		const clock = new FakeClock(100000)
+		const presence = new PresenceModel({ now: clock.now })
+		const fc = new FollowController({
+			scene: () => scene, presence, now: clock.now, sleep: clock.sleep, self: () => ME,
+			sessionOpen: () => false, onChange: () => {}, onLeft: () => {},
+		})
+		presence.update({ [ALICE + ':c1']: entry('Alice', [0, 0, 128, 72]) }, clock.now())
+		fc.onPresence()
+		assert.equal(fc.follow(ALICE, 'c1'), true)
+		for (let i = 0; i < 200; i++) dom.frame(16)
+		await clock.settle()
+		const c = scene.getCamera()
+		assert.equal(c.scale, 10)
+		const vp = scene.getViewport()
+		for (const [k, want] of [['x', 0], ['y', 0], ['w', 128], ['h', 72]]) {
+			assert.ok(Math.abs(vp[k] - want) < 1e-9, `${k}: ${vp[k]}`)
+		}
+	} finally {
+		scene?.destroy()
+		dom.restore()
+	}
 })
 
 test('followTo resolving false never ends following (R16 CLI-05): the next card tries the same viewport again', async () => {
@@ -435,4 +492,34 @@ test('R22 VC-03: switching from the summon follow to another target (PresenceBar
 	k.fc.onSummon({ ...s1, seq: 2, at: 8000 })
 	assert.equal(k.fc.exited, null, 'a new pair replacing the summon follow is no exit')
 	assert.equal(k.fc.following.summon, true)
+})
+
+test('job 272 AK5: following a summon with a frame fits the frame (not the viewport); a new slide moves there at once; a client that left is not pulled back by a new slide', async () => {
+	const F1 = '01HZZZZZZZZZZZZZZZZZZZZZZA'
+	const F2 = '01HZZZZZZZZZZZZZZZZZZZZZZB'
+	const h = setup({ frames: { [F1]: { x: 100, y: 50, w: 400, h: 300 }, [F2]: { x: 900, y: 50, w: 800, h: 600 } } })
+	const s1 = { pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 1000, frame: F1 }
+	await h.card({ [ALICE + ':c1']: entry('Alice', [0, 0, 1000, 500]) })
+	h.fc.onSummon(s1)
+	await h.clock.settle()
+	assert.deepEqual(h.scene.calls.at(-1).cam, { x: 100, y: 50, scale: 1000 / 400, pad: 16 }, 'the frame, with a pad')
+	const n = h.scene.calls.length
+	await h.card({ [ALICE + ':c1']: entry('Alice', [5, 5, 1000, 500]) }, 1000)
+	assert.equal(h.scene.calls.length, n, 'a new viewport of the presenter does not move the camera off the frame')
+	h.fc.onSummon({ ...s1, frame: F2 })
+	assert.deepEqual(h.scene.calls.at(-1).cam, { x: 900, y: 50, scale: 1000 / 800, pad: 16 }, 'the next slide at once')
+	h.fc.onUserCamera()
+	const m = h.scene.calls.length
+	h.fc.onSummon({ ...s1, frame: F1 })
+	assert.equal(h.fc.following, null, 'the same pair with another slide does not pull back')
+	assert.equal(h.scene.calls.length, m)
+	assert.deepEqual(h.fc.chip(), { pid: ALICE, client: 'c1', name: 'Alice' })
+})
+
+test('job 272 AK5: a summon without a frame, or with an unknown frame, follows the viewport as before', async () => {
+	const h = setup()
+	await h.card({ [ALICE + ':c1']: entry('Alice', [0, 0, 1000, 500]) })
+	h.fc.onSummon({ pid: ALICE, client: 'c1', name: 'Alice', seq: 1, at: 1000, frame: '01HZZZZZZZZZZZZZZZZZZZZZZC' })
+	await h.clock.settle()
+	assert.deepEqual(h.scene.calls.at(-1).cam, { x: 0, y: 0, scale: 1, pad: 0 })
 })

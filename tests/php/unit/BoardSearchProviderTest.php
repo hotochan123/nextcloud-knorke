@@ -42,6 +42,8 @@ use Psr\Container\NotFoundExceptionInterface;
  * l10n/de.json with vsprintf, like Nextcloud's L10N.
  */
 final class BoardSearchProviderTest extends TestCase {
+    /** What the IURLGenerator fake's linkToRouteAbsolute() puts before a board id. */
+    private const BOARD_URL = 'https://cloud.example/index.php/apps/knorke/b/';
     private AccessHarness $h;
     /** @var list<string> every container get()/has() of the provider */
     private array $gets = [];
@@ -50,8 +52,10 @@ final class BoardSearchProviderTest extends TestCase {
     private array $appCalls = [];
     /** @var list<?IUser> the account argument of each isEnabledForUser call, as passed (job 070) */
     private array $appUsers = [];
-    /** @var list<array{0: string, 1: array}> linkToRoute calls */
+    /** @var list<array{0: string, 1: array}> linkToRouteAbsolute calls */
     private array $routes = [];
+    /** @var list<array{0: string, 1: array}> linkToRoute calls (relative links: none since job 157) */
+    private array $relative = [];
     /** @var list<string> uids asked through IUserManager::getDisplayName */
     private array $names = [];
     /** Hand the provider a SharePolicy that logs groupIdsOf/teamsOf into the board log. */
@@ -111,8 +115,12 @@ final class BoardSearchProviderTest extends TestCase {
         ]);
         $l = Fake::of(IL10N::class, ['t' => fn (string $text, $parameters = []): string => vsprintf(self::$de[$text] ?? $text, (array)$parameters)]);
         $urls = Fake::of(IURLGenerator::class, [
-            'linkToRoute' => function (string $route, array $args = []): string {
+            'linkToRouteAbsolute' => function (string $route, array $args = []): string {
                 $this->routes[] = [$route, $args];
+                return $route === 'knorke.page.board' ? self::BOARD_URL . $args['id'] : 'https://cloud.example/index.php/nope';
+            },
+            'linkToRoute' => function (string $route, array $args = []): string {
+                $this->relative[] = [$route, $args];
                 return $route === 'knorke.page.board' ? '/index.php/apps/knorke/b/' . $args['id'] : '/index.php/nope';
             },
             'imagePath' => fn (string $app, string $file): string => '/custom_apps/' . $app . '/img/' . $file,
@@ -152,7 +160,7 @@ final class BoardSearchProviderTest extends TestCase {
 
     /** @return list<int> board ids of the entries (from resourceUrl) */
     private static function ids(SearchResult $r): array {
-        return array_map(static fn ($e): int => (int)substr($e->jsonSerialize()['resourceUrl'], strlen('/index.php/apps/knorke/b/')), $r->jsonSerialize()['entries']);
+        return array_map(static fn ($e): int => (int)substr($e->jsonSerialize()['resourceUrl'], strlen(self::BOARD_URL)), $r->jsonSerialize()['entries']);
     }
 
     /** @return list<string> titles of the entries */
@@ -604,13 +612,13 @@ final class BoardSearchProviderTest extends TestCase {
         $byId = [];
         foreach ($json['entries'] as $e) {
             $e = $e->jsonSerialize();
-            $byId[(int)substr($e['resourceUrl'], strlen('/index.php/apps/knorke/b/'))] = $e;
+            $byId[(int)substr($e['resourceUrl'], strlen(self::BOARD_URL))] = $e;
         }
         $this->assertSame([
             'thumbnailUrl' => '',
             'title' => 'Workshop Beta',
             'subline' => 'von Bob Display',
-            'resourceUrl' => '/index.php/apps/knorke/b/' . $ids['B'],
+            'resourceUrl' => self::BOARD_URL . $ids['B'],
             'icon' => '/custom_apps/knorke/img/app-neutral.svg',
             'rounded' => false,
             'attributes' => [],
@@ -621,6 +629,21 @@ final class BoardSearchProviderTest extends TestCase {
         $this->assertSame('von Alice Display', $byId[$ids['A']]['subline'], 'the owner line also on own boards');
         $this->assertSame('von Carol Display', $byId[$ids['C']]['subline']);
         $this->assertSame(['bob', 'knorke-nope-zed', 'carol', 'alice'], $this->names, 'one display-name lookup per owner (bob owns four hits)');
+    }
+
+    // ── Job 157: absolute addresses for the Smart Picker ────────────────────
+
+    public function testEveryHitHasAnAbsoluteBoardAddress(): void {
+        $ids = $this->rights();
+        $r = $this->search('workshop');
+        $entries = array_map(static fn ($e): array => $e->jsonSerialize(), $r->jsonSerialize()['entries']);
+        $this->assertCount(5, $entries);
+        foreach ($entries as $e) {
+            $this->assertMatchesRegularExpression('#^https://cloud\.example/index\.php/apps/knorke/b/[1-9][0-9]*$#D', $e['resourceUrl'], $e['title']);
+        }
+        $this->assertSame(array_map(static fn (int $id): array => ['knorke.page.board', ['id' => $id]], [$ids['F'], $ids['D'], $ids['C'], $ids['B'], $ids['A']]),
+            $this->routes, 'one linkToRouteAbsolute(knorke.page.board) per hit, in the order of the hits');
+        $this->assertSame([], $this->relative, 'no relative link any more');
     }
 
     // ── AK8: paging ─────────────────────────────────────────────────────────
@@ -1191,5 +1214,15 @@ final class BoardSearchProviderTest extends TestCase {
         $this->assertSame([], $this->gets);
         $this->assertSame([], $this->guests->calls);
         $this->assertNothingRead();
+    }
+
+    // ── Job 245: a disabled owner hides its boards ─────────────────────────
+
+    public function testBoardsOfADisabledOwnerAreNotFound(): void {
+        $ids = $this->rights();
+        $this->h->disabledUsers = ['bob'];
+        $this->assertSame([$ids['C'], $ids['A']], self::ids($this->search('workshop')), "bob's shared, team and link boards are gone");
+        $this->h->hideDisabled = false;
+        $this->assertSame([$ids['F'], $ids['D'], $ids['C'], $ids['B'], $ids['A']], self::ids($this->search('workshop')), 'hide_disabled_user_shares = no: as before');
     }
 }

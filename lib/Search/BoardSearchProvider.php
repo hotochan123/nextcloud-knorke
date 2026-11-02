@@ -44,6 +44,8 @@ use Psr\Container\ContainerInterface;
  *    for the owner; a link_id NULL row of M0 always counts) and the share
  *    role, read fresh through ShareService::roleFor(): a share removed
  *    meanwhile hides it; at most limit + 1 such checks unless checks fail
+ *  - the resourceUrl of a hit is absolute (linkToRouteAbsolute): the Smart
+ *    Picker's "Knorke boards" (BoardPickerProvider) inserts it as it is
  *  - order id DESC with a keyset cursor (id < cursor): stable while
  *    updated_at moves, no duplicates or gaps across pages
  *  - read only: of Access only memberRole() (no forUser*, no grants or
@@ -206,7 +208,7 @@ class BoardSearchProvider implements IProvider {
                 '',
                 (string)$row['title'],
                 $this->l->t('by %s', [$owners[$owner]]),
-                $this->urls->linkToRoute('knorke.page.board', ['id' => $id]),
+                $this->urls->linkToRouteAbsolute('knorke.page.board', ['id' => $id]),
                 $icon,
                 false,
             );

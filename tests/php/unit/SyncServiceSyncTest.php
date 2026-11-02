@@ -544,6 +544,18 @@ final class SyncServiceSyncTest extends TestCase {
         $this->assertStringEndsWith(',"group":null,"lock":null}]}', $snap, 'locked_by without locked: not locked');
         $this->h->syncRaw(['since' => 42, 'pres' => 0]);
         $this->assertSame(0, $this->h->secretReads, 'no locked row: the secret is never read');
+        // job 152: a free row with a remembered lock (locked 0, the locker kept): lock null, no pid, no secret read
+        $this->h->store->items[1][self::id(1)] = ['locked' => 0, 'locked_by' => 'u:alice', 'locked_name' => 'Kept Name'] + $this->h->store->items[1][self::id(1)];
+        $snap = $this->h->sync->snapshotJson(new AccessResult(H::user(), null, 0), 1, ['id' => 1, 'role' => 'owner']);
+        $this->assertStringEndsWith(',"group":null,"lock":null}]}', $snap, 'a remembered lock is not locked');
+        $raw = $this->h->syncRaw(['since' => 42, 'pres' => 0]);
+        $this->assertStringContainsString(',"group":null,"lock":null}', $raw);
+        foreach ([$snap, $raw] as $answer) {
+            $this->assertStringNotContainsString(Access::derivePid(H::SECRET, 1, 'u:alice'), $answer, 'no pid of the remembered locker');
+            $this->assertStringNotContainsString('u:alice', $answer);
+            $this->assertStringNotContainsString('Kept Name', $answer);
+        }
+        $this->assertSame(0, $this->h->secretReads, 'a remembered lock: the secret is never read');
         // locked, locker unknown: no pid to derive either
         $this->h->store->items[1][self::id(1)] = ['locked' => 1, 'locked_by' => null, 'locked_name' => null] + $this->h->store->items[1][self::id(1)];
         $this->assertStringEndsWith(',"lock":{"by":null,"name":null}}]}', $this->h->sync->snapshotJson(new AccessResult(H::user(), null, 0), 1, ['id' => 1, 'role' => 'owner']));

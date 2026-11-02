@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { itemKey } from '../../../src/model/paths.js'
-import { BUSY, Replica, isLockPatch, isVoteOp, keyOf, mergePatch, refsOf } from '../../../src/sync/Replica.js'
+import { BUSY, MAX_PATCH_PATHS, Replica, isLockPatch, isVoteOp, keyOf, mergePatch, refsOf } from '../../../src/sync/Replica.js'
 
 const ID = (n) => '01JA000000000000000000000' + n
 const S1 = ID('1')
@@ -196,6 +196,24 @@ test('compaction: patch + patch merges (ancestor/descendant aware), patch + remo
 	// a patch after a queued remove has no effect
 	r.addLocal([{ o: 'patch', id: S1, p: { 'data.text': 'late' } }])
 	assert.deepEqual(r.queue.map((e) => e.op.o), ['remove'])
+})
+
+test('job 173 AK4: two patches merge only while they keep at most 50 paths; beyond, the newer one goes behind', () => {
+	assert.equal(MAX_PATCH_PATHS, 50)
+	const r = new Replica()
+	r.loadSnapshot([item(S1)], 1)
+	const many = (from, n) => Object.fromEntries(Array.from({ length: n }, (_, i) => ['data.cells.c00000001.r' + String(from + i).padStart(8, '0'), 'x']))
+	r.addLocal([{ o: 'patch', id: S1, p: many(1, 30) }])
+	r.addLocal([{ o: 'patch', id: S1, p: many(31, 20) }])
+	assert.deepEqual(r.queue.map((e) => Object.keys(e.op.p).length), [50], 'exactly 50: merged')
+	r.addLocal([{ o: 'patch', id: S1, p: many(1, 2) }])
+	assert.deepEqual(r.queue.map((e) => Object.keys(e.op.p).length), [50], 'paths it has already: still merged')
+	r.addLocal([{ o: 'patch', id: S1, p: many(51, 1) }])
+	assert.deepEqual(r.queue.map((e) => Object.keys(e.op.p).length), [50, 1], 'the 51st path goes behind')
+	r.addLocal([{ o: 'patch', id: S1, p: { w: 500, h: 72 } }])
+	assert.deepEqual(r.queue.map((e) => Object.keys(e.op.p).length), [50, 3], 'and the next one merges there')
+	assert.deepEqual(r.visible(S1).data.cells.c00000001.r00000051, 'x')
+	assert.equal(r.visible(S1).w, 500)
 })
 
 test('mergePatch: newer descendant goes into the older ancestor value, newer ancestor replaces descendants', () => {
@@ -509,6 +527,70 @@ test('M1 vote ops behind the compaction barrier are appended, not replaced (T15)
 	assert.deepEqual(r.queue.map((e) => e.op.n), [1, 0])
 })
 
+const based = (sid, id, n, b) => ({ o: 'vote', s: sid, id, n, b })
+
+test('job 216 (AK6): a newer vote op replaces the queued one but keeps its base b; behind the barrier it is appended as it is', () => {
+	const r = new Replica()
+	r.addLocal([based(5, S1, 2, 1)])
+	r.addLocal([based(5, S1, 3, 2)])
+	assert.deepEqual(r.queue.map((e) => e.op), [based(5, S1, 3, 1)], 'n − b = 2: both changes')
+	r.addLocal([vote(5, S2, 1)])
+	r.addLocal([based(5, S2, 2, 1)])
+	assert.deepEqual(r.queue[1].op, based(5, S2, 2, 1), 'without an older base the newer op stays as it is')
+	r.markMaybeSent()
+	r.addLocal([based(5, S1, 4, 3)])
+	assert.deepEqual(r.queue.map((e) => e.op), [based(5, S1, 3, 1), based(5, S2, 2, 1), based(5, S1, 4, 3)])
+})
+
+test('job 216 (AK5): ack reports maybeApplied for vote ops that went out before without an answer', () => {
+	const fail = (r, b, code) => r.ack({ seq: b.seq, rev: null, res: b.ops.map(() => code) }).failed.map((f) => [f.op.id, f.code, f.maybeApplied])
+	// a fresh batch: false
+	let r = new Replica()
+	r.addLocal([based(5, S1, 2, 1)])
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S1, 'stale', false]])
+	// network error, the same batch again: true
+	r = new Replica()
+	r.addLocal([based(5, S1, 2, 1)])
+	r.takeBatch()
+	r.failInflight()
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S1, 'stale', true]])
+	// keepalive flush (queued, in flight and held ops of pendingOps()): true; a later op: false
+	r = new Replica()
+	r.addLocal([based(5, S1, 2, 1)])
+	r.takeBatch()
+	r.addLocal([based(5, S2, 1, 0)])
+	r.markMaybeSent(r.pendingOps().ops)
+	r.addLocal([based(5, S3, 1, 0)])
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S1, 'stale', true]])
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S2, 'stale', true], [S3, 'stale', false]])
+	// 500 while isolating: split with maybeSent marks both halves, a 413 split marks nothing
+	r = new Replica()
+	r.addLocal([based(5, S1, 1, 0), based(5, S2, 1, 0)])
+	r.takeBatch()
+	r.splitInflight({ maybeSent: true })
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S1, 'stale', true]])
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S2, 'stale', true]])
+	r = new Replica()
+	r.addLocal([based(5, S1, 1, 0), based(5, S2, 1, 0)])
+	r.takeBatch()
+	r.splitInflight()
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S1, 'stale', false]])
+	assert.deepEqual(fail(r, r.takeBatch(), 'stale'), [[S2, 'stale', false]])
+	// 500 on a single op: held, released, maybe applied
+	r = new Replica()
+	r.addLocal([based(5, S1, 1, 0)])
+	r.takeBatch()
+	assert.equal(r.holdInflight(), true)
+	const again = r.releaseHeld()
+	assert.deepEqual(fail(r, again, 'stale'), [[S1, 'stale', true]])
+	// item ops keep their failure shape
+	r = new Replica()
+	r.confirmed.set(S1, item(S1))
+	r.addLocal([{ o: 'patch', id: S1, p: { 'data.text': 'x' } }])
+	const b = r.takeBatch()
+	assert.deepEqual(Object.keys(r.ack({ seq: b.seq, rev: null, res: ['bad'] }).failed[0]), ['op', 'code'])
+})
+
 test('M1 ack: a vote op acked ok is done at once (no rev, never waits for the cursor); closed is reported and dropped', () => {
 	const r = new Replica()
 	r.confirmed.set(S1, item(S1))
@@ -517,7 +599,7 @@ test('M1 ack: a vote op acked ok is done at once (no rev, never waits for the cu
 	const { ids, failed, busy } = r.ack({ seq: b.seq, rev: 9, res: ['ok', 'ok', 'closed'] })
 	assert.equal(busy, false)
 	assert.deepEqual([...ids], [S1])
-	assert.deepEqual(failed, [{ op: vote(7, S2, 1), code: 'closed' }])
+	assert.deepEqual(failed, [{ op: vote(7, S2, 1), code: 'closed', maybeApplied: false }])
 	assert.equal(r.waitingCount(), 1, 'only the item patch waits for rev 9')
 	assert.equal(r.pendingCount(), 0)
 	assert.equal(r.hasInflight(), false)
@@ -799,4 +881,68 @@ test('job 026 (AK5): remove + revive with another group compacts to a patch that
 	r2.addLocal([{ o: 'patch', id: S1, p: { w: 300 } }])
 	assert.deepEqual(r2.queue.map((e) => e.op.p), [{ group: null, w: 300 }])
 	assert.equal(r2.visible(S1).group, null)
+})
+
+// ---- Job 172: reaction patches -------------------------------------------
+
+const PATH = 'data.react.pa1b2c3d4e5f60718'
+const react = (id, e) => ({ o: 'patch', id, p: { [PATH]: e === null ? null : { e, n: 'Vic' } } })
+
+test('job 172 (AK3): a reaction patch stays an op of its own – never folded into a queued put, never merged with a patch before or after it', () => {
+	const r = new Replica()
+	r.loadSnapshot([], 5)
+	r.addLocal([putOf(item(S1)), react(S1, '1f44d')])
+	assert.deepEqual(r.queue.map((e) => e.op.o), ['put', 'patch'], '[put X, react X] stay two ops')
+	assert.equal(r.queue[0].op.p.data.react, undefined, 'the put carries no reaction')
+	assert.deepEqual(r.visible(S1).data.react, { pa1b2c3d4e5f60718: { e: '1f44d', n: 'Vic' } })
+	const m = new Replica()
+	m.loadSnapshot([item(S1)], 5)
+	m.addLocal([{ o: 'patch', id: S1, p: { 'data.text': 'a' } }, react(S1, '1f44d'), { o: 'patch', id: S1, p: { 'data.text': 'b' } }])
+	assert.deepEqual(m.queue.map((e) => Object.keys(e.op.p).join(',')), ['data.text', PATH, 'data.text'], '[patch, react, patch] stay three, in this order')
+	// a later patch behind the reaction patch still merges with patches after it
+	m.addLocal([{ o: 'patch', id: S1, p: { 'style.fill': '#ffffff' } }])
+	assert.deepEqual(m.queue.map((e) => Object.keys(e.op.p).join(',')), ['data.text', PATH, 'data.text,style.fill'])
+	// every batch: no op carries data.react… beside another path
+	for (const op of m.takeBatch().ops) {
+		const keys = Object.keys(op.p ?? {})
+		assert.ok(!keys.some((k) => k.startsWith('data.react')) || keys.length === 1, keys.join(','))
+	}
+})
+
+test('job 172 (AK3): two reaction patches of the same note in the queue become one with the last value; behind the barrier a new one is appended; after a queued remove it is dropped', () => {
+	const r = new Replica()
+	r.loadSnapshot([item(S1), item(S2)], 5)
+	r.addLocal([react(S1, '1f44d'), { o: 'patch', id: S1, p: { 'data.text': 'x' } }, react(S2, '1f602'), react(S1, '2764-fe0f')])
+	assert.deepEqual(r.queue.map((e) => [e.op.id, e.op.p[PATH] ?? Object.keys(e.op.p)[0]]), [[S1, { e: '2764-fe0f', n: 'Vic' }], [S1, 'data.text'], [S2, { e: '1f602', n: 'Vic' }]])
+	r.addLocal([react(S1, null)])
+	assert.equal(r.queue[0].op.p[PATH], null, 'taking it back replaces the queued value too')
+	assert.equal(r.visible(S1).data.react, undefined)
+	r.markMaybeSent()
+	r.addLocal([react(S1, '1f44d')])
+	assert.equal(r.queue.length, 4, 'behind the compaction barrier: appended')
+	assert.deepEqual(r.queue[3].op.p[PATH], { e: '1f44d', n: 'Vic' })
+	const g = new Replica()
+	g.loadSnapshot([item(S1)], 5)
+	g.addLocal([{ o: 'remove', id: S1 }, react(S1, '1f44d')])
+	assert.deepEqual(g.queue.map((e) => e.op.o), ['remove'], 'the note is gone for this client')
+})
+
+test('job 172 (AK3): diffPatch and mergePatch never put data.react… beside other paths; delete + undo in the same tick leaves no data.react path', () => {
+	const mine = { pa1b2c3d4e5f60718: { e: '1f44d', n: 'Vic' } }
+	assert.deepEqual(mergePatch({ 'data.text': 'a' }, { [PATH]: { e: '1f44d' } }), { 'data.text': 'a' })
+	assert.deepEqual(mergePatch({ [PATH]: { e: '1f44d' } }, { 'style.fill': '#ffffff' }), { 'style.fill': '#ffffff' })
+	assert.deepEqual(mergePatch({ [PATH]: { e: '1f44d' } }, { [PATH]: null }), { [PATH]: null }, 'reaction paths alone stay')
+	// the server state carries a reaction someone added after the step the undo brings back
+	const s = item(S1, { data: { text: 'A', react: { pbbbbbbbbbbbbbbbb: { e: '2764-fe0f', n: 'Bob' }, ...mine } } })
+	const r = new Replica()
+	r.loadSnapshot([s], 5)
+	r.addLocal([{ o: 'remove', id: S1 }])
+	r.addLocal([putOf(item(S1, { x: 9, data: { text: 'A', react: mine } }), true)])
+	assert.deepEqual(r.queue.map((e) => e.op), [{ o: 'patch', id: S1, p: { x: 9, y: 0, parent: null } }], 'one patch, without data.react')
+	assert.deepEqual(r.visible(S1).data.react, s.data.react, 'the reactions the server has stay')
+	const same = new Replica()
+	same.loadSnapshot([s], 5)
+	same.addLocal([{ o: 'remove', id: S1 }])
+	same.addLocal([putOf(item(S1, { data: { text: 'A', react: mine } }), true)])
+	assert.equal(same.queue.length, 0, 'nothing else changed: nothing to send')
 })

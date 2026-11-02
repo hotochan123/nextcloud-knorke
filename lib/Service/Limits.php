@@ -56,6 +56,14 @@ class Limits {
     public const PRESENCE_IDS = 20;
     /** Presence entries per pid (tabs); the oldest of the same pid goes. */
     public const PRESENCE_PER_PID = 3;
+    /** Elements (points and stroke breaks) of a presence laser trail `l` (job 171). */
+    public const PRESENCE_LASER = 100;
+    /** Largest age d (ms) of a laser point in `me.l` (job 171). */
+    public const PRESENCE_LASER_AGE_MS = 10000;
+    /** strlen of one stored presence entry's JSON (job 246, SPEC-M1 §5.5); more → l, then d, then s are cut. */
+    public const PRESENCE_ENTRY_BYTES = 2048;
+    /** strlen of a board's whole presence blob p:<board> (job 246, SPEC-M1 §8 criterion 8). */
+    public const PRESENCE_BLOB_BYTES = 153600;
     /** Guest name after cleaning. */
     public const NAME_MAX = 40;
     /** Bytes of a guest token. */
@@ -82,6 +90,8 @@ class Limits {
     public const TIMER_MIN_MS = 1000;
     public const TIMER_MAX_MS = 5999000;
     public const TIMER_ADD_MAX_MS = 3600000;
+    /** Frames in the saved slide order meta.slides (factory job 272). */
+    public const SLIDES_MAX = 500;
 
     /**
      * Snapshot throttle (SPEC-M1 §4.1 routes 12, 14, 15, §4.8, §7.6): per
@@ -93,9 +103,49 @@ class Limits {
     public const SNAPSHOT_PERIOD = 60;
     public const SNAPSHOT_IP_LIMIT = 300;
     public const SNAPSHOT_IP_PERIOD = 60;
+    /**
+     * Comment list of a guest (route 40, factory job 251): per gid and IP
+     * (`knorke-cmt-<gid>`) 120 per 60 s. Accounts (route 35) are not
+     * throttled, and there is no budget per board and IP (a workshop shares
+     * one network).
+     */
+    public const COMMENT_LIST_LIMIT = 120;
+    public const COMMENT_LIST_PERIOD = 60;
     /** Write budget (SPEC-M1 §4.13.6): fixed windows of 10 s, counters live 25 s. */
     public const BUDGET_WINDOW_MS = 10000;
     public const BUDGET_TTL = 25;
+    /**
+     * Comments (factory job 189, Nextcloud's comment store): characters of
+     * one comment (Nextcloud's own IComment::MAX_MESSAGE_LENGTH), comments
+     * per board, writes per person (account; guest: gid and IP) and
+     * COMMENT_WRITE_PERIOD s, stored mentions per comment, the stored guest
+     * name (as a reaction's, Reactions::NAME_MAX), hits of the @ list
+     * (route 39), its longest query and the members read per shared group or
+     * team.
+     */
+    public const COMMENT_MAX = 1000;
+    public const COMMENTS_PER_BOARD = 1000;
+    public const COMMENT_WRITE_LIMIT = 30;
+    public const COMMENT_WRITE_PERIOD = 60;
+    public const COMMENT_MENTIONS = 20;
+    public const COMMENT_NAME_MAX = 64;
+    public const MENTION_RESULTS = 10;
+    public const MENTION_QUERY_MAX = 64;
+    public const MENTION_MEMBERS_MAX = 500;
+    /** Accounts Nextcloud's search returns for the @ list while the admin restricts finding (factory job 249). */
+    public const MENTION_SEARCH_MAX = 200;
+    /**
+     * Tags (factory job 191): ids in a note's data.tags, entries of the
+     * board's meta.tags, characters of a tag name (Input::title), and the
+     * writes of routes 44 and 45 per account (guest: per IP) and
+     * TAG_WRITE_PERIOD s (ILimiter knorke-tags). src/model/tags.js has the
+     * same first three numbers (a node test reads this file).
+     */
+    public const TAGS_PER_NOTE = 8;
+    public const TAGS_PER_BOARD = 100;
+    public const TAG_NAME_MAX = 30;
+    public const TAG_WRITE_LIMIT = 60;
+    public const TAG_WRITE_PERIOD = 60;
     /**
      * Time budget of one run of CleanupJob (or occ knorke:compact without
      * --board, SPEC-M1 §4.13.7); the block size is ItemStore::PURGE_CHUNK.

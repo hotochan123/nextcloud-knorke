@@ -8,12 +8,16 @@
  * union, r = 0), handles per type, corner resize with and without ratio,
  * centred resize, minimum without mirroring, rotation snapping, uniform
  * mapping of several boxes, clampFactor. Round 1a adds the transformer
- * scenarios of §8.2 on top.
+ * scenarios of §8.2 on top. Job 140 (AK1): gapFrame, the selection frame
+ * SELECTION_GAP_PX (4) screen px outside a box at every scale. Job 231
+ * (AK1, AK2): four corners per box item, the rotation handle beyond the
+ * top right corner, shownHandles (what the mouse reveals), the rotation
+ * relative to the press (rotationOffset).
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import * as tr from '../../../src/model/transform.js'
-import { ROT_HANDLE_OFFSET_PX } from '../../../src/model/tokens.js'
+import { HANDLE_PX, POINT_REVEAL_PX, ROT_HANDLE_OFFSET_PX, ROT_REVEAL_PX, SELECTION_GAP_PX } from '../../../src/model/tokens.js'
 
 const close = (a, b, msg, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps, `${msg ?? ''} ${a} ≈ ${b}`)
 const closeBox = (got, want, msg) => {
@@ -35,7 +39,7 @@ function fakeModel(items, geoms = {}) {
 
 describe('transform: exports', () => {
 	test('the exported names of §6.2 (+ getCursor of the Konva port)', () => {
-		assert.deepEqual(Object.keys(tr).sort(), ['ANCHORS', 'clampFactor', 'getCursor', 'handlesFor', 'mapBoxes', 'resizeFrame', 'rotateFrame', 'selectionFrame'])
+		assert.deepEqual(Object.keys(tr).sort(), ['ANCHORS', 'clampFactor', 'gapFrame', 'getCursor', 'handlesFor', 'mapBoxes', 'resizeFrame', 'rotateFrame', 'rotationOffset', 'selectionFrame', 'shownHandles'])
 		assert.deepEqual(tr.ANCHORS, ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot'])
 		assert.ok(Object.isFrozen(tr.ANCHORS))
 	})
@@ -67,18 +71,71 @@ describe('selectionFrame', () => {
 	})
 })
 
+describe('gapFrame (job 140, AK1)', () => {
+	const box = { x: 100, y: 100, w: 200, h: 200, r: 0 }
+	const xywh = (f) => [f.x, f.y, f.w, f.h, f.r]
+
+	test('SELECTION_GAP_PX is 4; scale 1: 4 world units on every side, scale 2: 2', () => {
+		assert.equal(SELECTION_GAP_PX, 4)
+		assert.deepEqual(xywh(tr.gapFrame(box, 1)), [96, 96, 208, 208, 0])
+		assert.deepEqual(xywh(tr.gapFrame(box, 2)), [98, 98, 204, 204, 0])
+		assert.deepEqual(xywh(tr.gapFrame(box, 0.5)), [92, 92, 216, 216, 0])
+	})
+
+	test('rotated: same centre, same r; other keys (n) stay; null and a bad scale', () => {
+		const f = tr.gapFrame({ ...box, r: 30, n: 1 }, 1)
+		assert.equal(f.r, 30)
+		assert.equal(f.n, 1)
+		close(f.x + f.w / 2, 200, 'centre x')
+		close(f.y + f.h / 2, 200, 'centre y')
+		assert.deepEqual([f.w, f.h], [208, 208])
+		assert.equal(tr.gapFrame(null, 1), null)
+		assert.deepEqual(xywh(tr.gapFrame({ x: 0, y: 0, w: 10, h: 10 }, 0)), [-4, -4, 18, 18, 0], 'scale 0 counts as 1, r defaults to 0')
+		assert.deepEqual(box, { x: 100, y: 100, w: 200, h: 200, r: 0 }, 'the input stays')
+	})
+
+	test('handlesFor on the gap frame: the corners and rot keep their screen distance to the box at scale 2', () => {
+		const hs = tr.handlesFor(tr.gapFrame({ ...box, n: 1 }, 2), new Set(['sticky']), 2)
+		const at = (n) => hs.find((h) => h.name === n)
+		assert.deepEqual([at('tl').x, at('tl').y], [98, 98])
+		assert.deepEqual([at('br').x, at('br').y], [302, 302])
+		assert.deepEqual([at('rot').x, at('rot').y], [302 + ROT_HANDLE_OFFSET_PX / 2, 98 - ROT_HANDLE_OFFSET_PX / 2])
+	})
+
+	test('job 172 (AK5): below – the band of a reaction row (32 units) at the bottom, in the frame\'s axes; top and sides stay; 0, negative or no option: as before', () => {
+		const band = 32
+		assert.deepEqual(xywh(tr.gapFrame(box, 1, { below: band })), [96, 96, 208, 240, 0], 'down to 4 px below the band')
+		assert.deepEqual(xywh(tr.gapFrame(box, 2, { below: band })), [98, 98, 204, 236, 0])
+		for (const below of [0, -5, NaN, undefined, '32']) {
+			assert.deepEqual(xywh(tr.gapFrame(box, 1, { below })), [96, 96, 208, 208, 0], String(below))
+		}
+		// rotated 90°: the bottom points to -x in the world; the frame grows that way, its top edge stays
+		const f = tr.gapFrame({ ...box, r: 90, n: 1 }, 1, { below: band })
+		assert.deepEqual([f.w, f.h, f.r, f.n], [208, 240, 90, 1])
+		close(f.x + f.w / 2, 200 - band / 2, 'centre x moves along the rotated downward axis')
+		close(f.y + f.h / 2, 200, 'centre y')
+		// the bottom handles sit on the extended frame
+		const hs = tr.handlesFor(tr.gapFrame({ ...box, n: 1 }, 1, { below: band }), new Set(['sticky']), 1)
+		const at = (n) => hs.find((h) => h.name === n)
+		assert.deepEqual([at('br').x, at('br').y], [304, 336])
+		assert.deepEqual([at('bl').x, at('bl').y], [96, 336])
+		assert.deepEqual([at('tl').x, at('tl').y], [96, 96], 'the top stays')
+	})
+})
+
 describe('handlesFor', () => {
 	const frame = { x: 0, y: 0, w: 200, h: 100, r: 0, n: 1 }
 	const names = (f, types, s = 1) => tr.handlesFor(f, new Set(types), s).map((h) => h.name)
 
-	test('by type: shape 8 + rot, note 8 + rot (§6.3 table), text corners + l/r + rot, frame 8 without rot, connector none', () => {
-		assert.deepEqual(names(frame, ['shape']), ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot'])
-		// regression (round 1a): phase 0 gave notes only the corners; keepRatio decides how a corner drags, not which handles exist
-		assert.deepEqual(names(frame, ['sticky']), ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot'])
+	test('job 231 (AK1) by type: shape and note four corners + rot, text corners + l/r + rot, frame and pad four corners, connector none', () => {
+		assert.deepEqual(names(frame, ['shape']), ['tl', 'tr', 'br', 'bl', 'rot'])
+		// keepRatio decides how a corner drags (Shift frees a note's), not which handles exist
+		assert.deepEqual(names(frame, ['sticky']), ['tl', 'tr', 'br', 'bl', 'rot'])
 		assert.deepEqual(names(frame, ['text']), ['tl', 'tr', 'r', 'br', 'bl', 'l', 'rot'])
-		assert.deepEqual(names(frame, ['frame']), ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'])
+		assert.deepEqual(names(frame, ['frame']), ['tl', 'tr', 'br', 'bl'])
+		assert.deepEqual(names(frame, ['pad']), ['tl', 'tr', 'br', 'bl'])
 		assert.deepEqual(names(frame, ['connector']), [])
-		assert.deepEqual(names(frame, ['pen']), [], 'placeholders are not resized')
+		assert.deepEqual(names(frame, ['brush']), [], 'placeholders are not resized')
 	})
 
 	test('several items: four corners, no rotation (multi rotation dropped, §12.1)', () => {
@@ -86,23 +143,114 @@ describe('handlesFor', () => {
 		assert.deepEqual(names({ ...frame, n: 2 }, ['frame', 'sticky']), ['tl', 'tr', 'br', 'bl'])
 	})
 
-	test('positions in world coordinates, rotated with the frame; rot handle 28 screen px above the top edge', () => {
+	test('job 231 (AK1) positions in world coordinates, rotated with the frame; rot 16/16 screen px beyond the top right corner', () => {
+		assert.equal(ROT_HANDLE_OFFSET_PX, 16)
 		const h = Object.fromEntries(tr.handlesFor(frame, new Set(['shape']), 2).map((x) => [x.name, [x.x, x.y]]))
 		assert.deepEqual(h.tl, [0, 0])
 		assert.deepEqual(h.br, [200, 100])
-		assert.deepEqual(h.r, [200, 50])
-		assert.deepEqual(h.rot, [100, -ROT_HANDLE_OFFSET_PX / 2])
+		assert.deepEqual(h.tr, [200, 0])
+		assert.deepEqual(h.rot, [200 + ROT_HANDLE_OFFSET_PX / 2, -ROT_HANDLE_OFFSET_PX / 2])
 		const r90 = Object.fromEntries(tr.handlesFor({ ...frame, r: 90 }, new Set(['shape']), 1).map((x) => [x.name, [x.x, x.y]]))
 		close(r90.tl[0], 150, 'tl x')
 		close(r90.tl[1], -50, 'tl y')
-		close(r90.rot[0], 100 + 50 + ROT_HANDLE_OFFSET_PX, 'rot x')
-		close(r90.rot[1], 50, 'rot y')
+		// turned by 90° the top right corner lies bottom right; rot goes on along both rotated axes
+		close(r90.tr[0], 150, 'tr x')
+		close(r90.tr[1], 150, 'tr y')
+		close(r90.rot[0], 150 + ROT_HANDLE_OFFSET_PX, 'rot x')
+		close(r90.rot[1], 150 + ROT_HANDLE_OFFSET_PX, 'rot y')
 	})
 
 	test('no frame → no handles; bad scale counts as 1', () => {
 		assert.deepEqual(tr.handlesFor(null, new Set(['shape']), 1), [])
 		const h = tr.handlesFor(frame, new Set(['shape']), 0).find((x) => x.name === 'rot')
 		assert.equal(h.y, -ROT_HANDLE_OFFSET_PX)
+	})
+})
+
+describe('shownHandles (job 231, AK2)', () => {
+	// a drawn frame of 200 × 100 at scale 1 with the handles of a note and its four points on the edges
+	const f = { x: 0, y: 0, w: 200, h: 100, r: 0 }
+	const points = [
+		{ name: 'plus-t', x: 100, y: 0 }, { name: 'plus-r', x: 200, y: 50 },
+		{ name: 'plus-b', x: 100, y: 100 }, { name: 'plus-l', x: 0, y: 50 },
+	]
+	const list = (fr = f, s = 1) => [...tr.handlesFor(fr, new Set(['sticky']), s), ...points]
+	const shown = (p, o = {}, fr = f, s = 1, l = list(fr, s)) => [...tr.shownHandles(l, fr, p, s, o)].sort()
+	const corners = ['bl', 'br', 'tl', 'tr']
+
+	test('the constants: 24 px to the corner, 16 px to an edge, a hit circle inside each zone', () => {
+		assert.deepEqual([ROT_REVEAL_PX, POINT_REVEAL_PX], [24, 16])
+		assert.ok(HANDLE_PX <= POINT_REVEAL_PX)
+		// the far side of the rotation handle's hit circle still shows it (on the handle itself)
+		assert.ok(Math.hypot(ROT_HANDLE_OFFSET_PX, ROT_HANDLE_OFFSET_PX) + HANDLE_PX > ROT_REVEAL_PX)
+	})
+
+	test('the pointer 20 px from the top right corner: rot, no point', () => {
+		assert.deepEqual(shown({ x: 214, y: -14 }), [...corners, 'rot'].sort())
+		assert.deepEqual(shown({ x: 190, y: 12 }), [...corners, 'rot'].sort(), 'inside the frame near the corner too')
+	})
+
+	test('on the rotation handle (22.6 px from the corner) and on the far side of its hit circle: rot', () => {
+		assert.deepEqual(shown({ x: 216, y: -16 }), [...corners, 'rot'].sort())
+		assert.deepEqual(shown({ x: 216 + 5, y: -16 - 5 }), [...corners, 'rot'].sort())
+	})
+
+	test('30 px from the corner outside: no rot', () => {
+		assert.deepEqual(shown({ x: 230, y: -30 }), corners)
+	})
+
+	test('10 px right of the right edge at half height: plus-r only; 10 px inside the top edge: plus-t only', () => {
+		assert.deepEqual(shown({ x: 210, y: 50 }), [...corners, 'plus-r'].sort())
+		assert.deepEqual(shown({ x: 100, y: 10 }), [...corners, 'plus-t'].sort())
+		assert.deepEqual(shown({ x: 100, y: 117 }), corners, '17 px below the bottom edge: nothing')
+		assert.deepEqual(shown({ x: 100, y: 50 }), corners, 'the middle of a large note: nothing')
+	})
+
+	test('near the bottom left corner: both points of its edges; along an edge only within ± 16 px of its ends', () => {
+		assert.deepEqual(shown({ x: 5, y: 95 }), [...corners, 'plus-b', 'plus-l'].sort())
+		assert.deepEqual(shown({ x: -20, y: 50 }), corners, '20 px left of the left edge')
+		assert.deepEqual(shown({ x: -10, y: 112 }), [...corners, 'plus-b', 'plus-l'].sort())
+		assert.deepEqual(shown({ x: -10, y: 120 }), corners)
+	})
+
+	test('a point off its edge (below a label) shows within 16 px of itself', () => {
+		const l = [...tr.handlesFor(f, new Set(['shape']), 1), { name: 'plus-b', x: 100, y: 140 }]
+		assert.deepEqual(shown({ x: 100, y: 130 }, {}, f, 1, l), [...corners, 'plus-b'].sort())
+	})
+
+	test('without a pointer: no rot, no point; a running rotation keeps rot', () => {
+		assert.deepEqual(shown(null), corners)
+		assert.deepEqual(shown(null, { rotating: true }), [...corners, 'rot'].sort())
+	})
+
+	test('a pen or a finger (touch): every handle', () => {
+		assert.deepEqual(shown(null, { touch: true }), list().map((h) => h.name).sort())
+		assert.deepEqual(shown({ x: 100, y: 50 }, { touch: true }), list().map((h) => h.name).sort())
+	})
+
+	test('without a rotation handle the corner zone shows the points of its edges', () => {
+		const l = [...tr.handlesFor(f, new Set(['frame']), 1), ...points]
+		assert.deepEqual(shown({ x: 205, y: -5 }, {}, f, 1, l), [...corners, 'plus-r', 'plus-t'].sort())
+	})
+
+	test('scale 2: the zones stay in screen px; turned by 90° they turn with the frame', () => {
+		// 8 world units right of the right edge = 16 screen px: still shown; 9 units = 18 px: not
+		const l2 = list(f, 2)
+		assert.deepEqual(shown({ x: 208, y: 50 }, {}, f, 2, l2), [...corners, 'plus-r'].sort())
+		assert.deepEqual(shown({ x: 209, y: 50 }, {}, f, 2, l2), corners)
+		// turned by 90° the frame's right edge lies at the bottom in the world (centre 100, 50)
+		const fr = { ...f, r: 90 }
+		const l90 = [...tr.handlesFor(fr, new Set(['sticky']), 1), { name: 'plus-r', x: 100, y: 150 }]
+		assert.deepEqual(shown({ x: 100, y: 160 }, {}, fr, 1, l90), [...corners, 'plus-r'].sort())
+		// its top right corner lies at (150, 150) in the world
+		assert.deepEqual(shown({ x: 160, y: 160 }, {}, fr, 1, l90), [...corners, 'rot'].sort())
+	})
+
+	test('handles other than rot and the points always show (connector ends, text sides, "+" buttons)', () => {
+		const l = [{ name: 'start', x: 0, y: 0 }, { name: 'end', x: 300, y: 0 }]
+		assert.deepEqual([...tr.shownHandles(l, null, null, 1)].sort(), ['end', 'start'])
+		const t = tr.handlesFor(f, new Set(['text']), 1)
+		assert.deepEqual([...tr.shownHandles([...t, { name: 'table-col', x: 248, y: 50 }], f, null, 1)].sort(), [...corners, 'l', 'r', 'table-col'].sort())
 	})
 })
 
@@ -183,6 +331,19 @@ describe('rotateFrame', () => {
 	test('pointer at the centre or missing: r unchanged', () => {
 		assert.deepEqual(tr.rotateFrame({ ...f, r: 12 }, { x: 50, y: 50 }), { ...f, r: 12 })
 		assert.deepEqual(tr.rotateFrame({ ...f, r: 12 }, null), { ...f, r: 12 })
+	})
+
+	test('job 231: rotationOffset of a press at the top right corner; with fromDeg the press turns nothing, a move turns by its angle', () => {
+		assert.equal(tr.rotationOffset(f, { x: 50, y: -100 }), 0, 'straight above the centre')
+		close(tr.rotationOffset(f, { x: 116, y: -16 }), 45, 'the rotation handle of a square, 45°')
+		close(tr.rotationOffset({ ...f, r: 90 }, { x: 116, y: 116 }), 45, 'turned by 90°: still 45° from its top')
+		close(tr.rotationOffset(f, { x: -16, y: -16 }), -45, 'left of the top: negative')
+		assert.equal(tr.rotationOffset(f, { x: 50, y: 50 }), 0, 'the centre')
+		const from = tr.rotationOffset(f, { x: 116, y: -16 })
+		assert.equal(tr.rotateFrame(f, { x: 116, y: -16 }, { fromDeg: from }).r, 0, 'the press itself')
+		// a quarter turn of the pointer around the centre: 90°
+		assert.equal(tr.rotateFrame(f, { x: 116, y: 116 }, { fromDeg: from }).r, 90)
+		close(tr.rotateFrame(f, { x: 116, y: 116 }, { fromDeg: from, snaps: [] }).r, 90, 'free', 1e-9)
 	})
 })
 

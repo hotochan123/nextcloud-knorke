@@ -194,7 +194,8 @@ describe('wiring in run.mjs and lab.js', () => {
 		assert.ok(measure.length > 100, 'measure() not found')
 		assert.match(measure, /settled: await memoryNow\(cdp\)/)
 		assert.match(measure, /window\.__lab\.measure\(\)[\s\S]*memory\.after = await memoryNow\(cdp\)[\s\S]*await sleep\(MEMORY_IDLE_MS\)\s*memory\.idle = await memoryNow\(cdp\)/)
-		assert.match(measure, /JSON\.stringify\(\{[^}]*\.\.\.meta, memory \}/)
+		// job 214 appends loadavg, pageErrors and thresholds after memory
+		assert.match(measure, /JSON\.stringify\(\{[^}]*\.\.\.meta, memory(, [a-zA-Z]+(: [a-zA-Z]+)?)* \}/)
 		assert.match(measure, /\.\.\.memoryReportLines\(memory\)/)
 	})
 

@@ -65,7 +65,7 @@
  * - Selection v2 for the shell (ids, types, common field values, field
  *   intersection, box, canConnect); limits.maxItems/maxLabel fall back to
  *   5000/200.
- * - Shell commands: setToolOptions, setStyle, setShapeKind, arrange, nudge,
+ * - Shell commands: setToolOptions, setStyle, setShapeKind, swapDirection (job 153), placeShape (job 201), (job 204) placeLanes and setFlow, arrange, nudge,
  *   copy, cut, duplicate, focusCanvas (after pointer clicks on bar buttons).
  * - Opening a board focuses the canvas right after scene.mount() when
  *   nothing else has the focus (body or null), so single keys work at once
@@ -81,7 +81,8 @@
  * - The label (data.label) is the connector's text path: the scene's label
  *   editor sends ordinary text intents (setText), and the text rescue covers
  *   it like note texts (rejected label → editor with notice, rescue editor
- *   or copy dialog). editLabel() opens the editor from the context bar.
+ *   or copy dialog). editLabel() opens the editor from the context bar;
+ *   (job 143) renameFrame() opens a frame's title editor the same way.
  * - Delete releases bound connectors first (deleteItems v2 with the model's
  *   routed geometry): the free end stays where it was drawn, and undo binds
  *   it again in the same step.
@@ -112,7 +113,8 @@
  *   switch settles first (setMode('vote', {settle: true}): the open editor
  *   commits, a drag ends like a release) and one toast says so. A tablet
  *   that follows nobody brings the voting area into view.
- * - Vote ops {o:'vote', s, id, n} go through enqueue (urgent only on
+ * - Vote ops {o:'vote', s, id, n, b} (job 216: b = the base, stale answers
+ *   are carried onto the votes block in onVotes) go through enqueue (urgent only on
  *   devices with a fine pointer: tablets ride the 2-s tick), never into the
  *   undo stack. A tap in mode vote toggles (perItem 1) or opens the stepper
  *   (ui.onStepper); voteMiss explains why (at most every 3 s). Toasts carry
@@ -122,6 +124,17 @@
  *   only automatic call of routes 22–26; 409 is swallowed).
  * - The scene gets SceneVoteState (§6.3): votable(id) over the model (a
  *   real boolean), badges(), markVotable in mode vote, color = colorFor(me.pid).
+ * - (Job 149) Live count: with cfg.live a moderator's votes blocks carry
+ *   tally (VoteState keeps it only for me.mod). liveShown (the bar's "Live
+ *   count", setLiveShown) is this tab's alone, never stored or sent, false
+ *   on loading, at every new sid, at the close and when mod goes; with it
+ *   SceneVoteState gets live and the live totals of the items the model has.
+ * - (Job 175) Accounts only: voteBlocked is true for a guest session
+ *   (mode 'guest') while a session with cfg.accountsOnly is open. Then
+ *   votesView().canVote and canSwitch are false, vote() queues nothing and
+ *   the mode is computed as without an open session (vote link: view; edit
+ *   link: edit on a computer, view on touch). Reactions stay as they are.
+ *   The server denies such ops anyway; this only spares the round trip.
  * - (R17 K4) The vote list follows the model: while a session exists, every
  *   model change that flushVisible applies (server changes, acks, local
  *   edits; an item added, deleted, re-parented or its text edited) and a
@@ -141,7 +154,7 @@
  * Stage 4 (SPEC-M1 §6.6 ContextMenu.vue, §6.5.3; R19 T4-02, T4-03, T4-04):
  * - Intent contextMenu (§6.3, step 4.2) → the menu state {id, at, world,
  *   frame, locker} for the shell (ui.onContextMenu({id, at, seq, items,
- *   grid, gridSnap, unlockAll, unlockFrame, unlockBy, unlockByName}) or
+ *   grid, gridSnap, cursors, wheel, unlockAll, unlockFrame, unlockBy, unlockByName}) or
  *   null). It is
  *   applied after follower.onIntent like every intent in mode edit, so
  *   opening the menu ends following (§6.5.6 unchanged); outside mode edit
@@ -210,6 +223,45 @@
  * grid is shown) switches the scene and stores, the same way and in any
  * state of the grid; the payload carries gridSnap. No key, no scene callback.
  *
+ * Factory job 142 (one-time tip about selecting with a finger): the scene's
+ * onTouchPan (a finger's one-finger pan started, mode edit, select tool)
+ * shows the tip (ui.onTouchTip(true)) when the board is not frozen, the
+ * client mode is edit, this session has not shown it yet and localStorage
+ * knorke.touchTip is not '1'; the key is set to '1' as it appears (one key
+ * for every board, account and guest of this browser). A failed write shows
+ * it at most once per session, without an error. dismissTouchTip() (its OK
+ * button) hides it (ui.onTouchTip(false)); the key stays.
+ *
+ * Factory job 145 (shortcuts overview): the scene's onShortcuts (the key ?
+ * with the canvas focus) goes to ui.onShortcuts() in every client mode and
+ * while frozen; no intent, so following and the selection stay.
+ *
+ * Factory job 147 (hide other people's cursors): a switch of this browser,
+ * localStorage knorke.cursors = '0' (hidden; missing = shown, every other
+ * value too), read when the board opens, for every board, account and guest.
+ * While hidden, the sampler the scene gets gives cursor: null for every
+ * sample but those of the person this client follows and of the presenter
+ * of meta.summon (the whole pid, decided per sample); every other field
+ * stays, so selections, drag previews and the editing chips remain.
+ * toggleCursors() (the board menu's "Show other people's cursors",
+ * menuAction('cursors'), and the scene's onCursors, the key C, in every
+ * mode and while frozen) switches, stores ('0' or the key removed), calls
+ * scene.presenceChanged() and shows the toast [data-knorke-toast=cursors];
+ * a new switch hides the previous one first. No op, no undo step, no poke;
+ * following goes on. The menu payload carries cursors.
+ *
+ * Factory job 154 (the mouse wheel zooms): what the wheel does without
+ * Ctrl/⌘ is a choice of this browser, localStorage knorke.wheel = 'zoom' or
+ * 'pan' (missing, and every other value: automatic), read when the board
+ * opens and handed to the scene as its option wheel ('auto', 'zoom', 'pan';
+ * it acts in every mode and while following). cycleWheel() (the board menu's
+ * "Mouse wheel: …", menuAction('wheel')) switches Automatic → Zoom → Pan →
+ * Automatic in the scene, stores it ('zoom', 'pan'; Automatic removes the
+ * key; a failed write leaves the scene switched) and shows the toast
+ * [data-knorke-toast=wheel] with the new stage; a new switch hides the
+ * previous one first. No op, no undo step, no poke; following goes on. The
+ * menu payload carries wheel (the scene's stage).
+ *
  * M2 (SPEC-M1 §1.2 "(R20) Sperren", §11 Q10): locked items. The server
  * enforces every rule (result code itemlocked); the session mirrors them.
  * - lockSelection() / unlockSelection() (context bar, context menu) and
@@ -231,7 +283,10 @@
  *   patches that the sync layer sends in batches of MAX_OPS within the
  *   write budget (busy → retried), the selection stays, the toast
  *   unlock-all with the number; with nothing left to unlock (someone was
- *   quicker) the toast unlock-none. Undo locks them again in me's name. The
+ *   quicker) the toast unlock-none. Undo locks each again for the person
+ *   who had locked it (job 152: the restore op of actions.unlockItems; the
+ *   server brings back the lock it remembers, never one in me's name; when
+ *   it cannot, the item stays free), me's own locks with me as before. The
  *   menu payload carries unlockAll / unlockFrame / unlockBy (and
  *   unlockByName), the numbers when the menu is reported (0 for everyone
  *   else, in view mode and while frozen); person and frame are the ones of
@@ -252,10 +307,10 @@
  * - Safety net: commit() and sendHistory() leave out every op whose item
  *   is locked in the model (lock patches excepted): commit() silently
  *   (the inverse stays; the item shows its visible state again),
- *   sendHistory() with the toast lock-undo (the step still moves to the
- *   other stack). So no derived client patch reaches a locked item (a
- *   released child, a released connector end, a membership patch); the
- *   server does those itself.
+ *   sendHistory() with the toast lock-undo (job 155: a step from which
+ *   nothing went out vanishes). So no derived client patch reaches a
+ *   locked item (a released child, a released connector end, a membership
+ *   patch); the server does those itself.
  * - itemlocked from the server: one toast lock-held per answer with the
  *   number of distinct items (never "Undo not possible" or the bad path);
  *   a text op goes to the text rescue with its own notice (noticeFor).
@@ -280,36 +335,275 @@
  * - Align, distribute, tidy up and the arrows of the shell act on
  *   movableIds(selection): no locked item and no member of a group with a
  *   locked member (heldGroup).
+ *
+ * Job 139 (sort notes by colour):
+ * - sortByColor() (align panel, menu entry sort-colors) sorts the loose
+ *   notes of the selection, sortFrameByColor() (bar and menu entry
+ *   sort-frame, exactly one frame selected) the notes in that frame
+ *   (actions.sortNotesByColor): mode edit only, one commit = one undo step,
+ *   then the selection is empty and the name fields appear
+ *   (ui.onSortLabels(list), also when nothing moved). Selection v2 carries
+ *   sortable and frameSortable (actions.sortableNotes; 0 while the session
+ *   cannot write, frameSortable 0 without exactly one frame).
+ * - Factory job 267 (board/sessionAi.js, this.ai): selection v2 ai
+ *   {summarise, cluster} offers "Summarise" and "Cluster by topic";
+ *   aiSummarise(), aiCluster() and aiCancel() hand over; ui.onAi(view) and
+ *   ui.onAiNotice({text, url}) → Promise<boolean> (the notice before the
+ *   first task); the result of a task is one undo step, an AI card gets the
+ *   height of its content once (fixHeights).
+ * - Factory job 268: "Create with AI" of the tool bar (sessionAi.js
+ *   diagram): aiDiagramOpen/Run/Insert/Close hand over, ui.onAiDiagram(view)
+ *   reports the window, insertAiDiagram(tree, shape) puts the mind map;
+ *   (job 269) a flowchart through insertAiFlow (board/aiFlow.js, a part);
+ *   (job 276) a workshop the same way (board/aiWorkshop.js workshopPayload).
+ * - The name fields are local only: list = the open blocks {i, color, x, y,
+ *   w, h, parent} (world); sortLabelPlaces() gives their screen places from
+ *   the live camera. sortLabelText(i, text) records what was typed;
+ *   nameSortBlock(i, text) puts a non-empty (trimmed) name as a text item
+ *   above block i (actions.sortBlockName, an undo step of its own, the
+ *   selection stays) and drops its field. endSortLabels() saves every typed
+ *   field the same way, then ends them all (ui.onSortLabels(null)); so do
+ *   every other commit, undo and redo, a change of the selection or a tool,
+ *   a mode switch (saving only when it settles), a frozen status (nothing
+ *   saved), leaving the board and destroy.
+ *
+ * Job 144 (filter the selection): selection v2 carries kinds (model/groups.js
+ * filterKinds); filterSelection(kind) (the bar's count button, the menu
+ * entries only-<kind>) keeps only that kind selected: select(), no op, no
+ * undo step, no toast.
+ *
+ * Job 146 (SPEC-M1 §1.2 (R22), "Arrange" positions):
+ * - flushVisible reports the selection again (at most once) when the
+ *   absolute box (x, y, w, h, r) of a selected item changed in the model:
+ *   own commits, undo/redo, changes of others, a rejection that resets the
+ *   model, a frame moving its selected child. The ArrangePopover follows it.
+ * - arrange() clamps x and y (actions.arrangeItem) and reports once; a `bad`
+ *   answer to its own patch (isArrangeOp, by value) toasts arrange-bad once
+ *   per answer; every other code keeps its own toast.
+ *
+ * Job 155 (undo keeps other people's changes): undo() and redo() send only
+ * the parts of a step that nobody else changed since (undo.js planHistory,
+ * against replica.visible, for every role); a text item gets the measured
+ * height of its target state. After the safety net's lock-undo, the toast
+ * undo-changed names how many items were skipped (an item counts in one of
+ * the two only, the lock first). The step moves to the other stack trimmed
+ * to what went out, or vanishes when nothing did.
+ *
+ * Job 172 (emoji reactions), job 171 (laser pointer) and factory job 189 (comments): see board/sessionComments.js.
+ *
+ * Job 190 (locked items by marquee): the scene keeps the locked items a
+ * plain marquee or Ctrl/⌘+A skipped as its offer (getLockedOffer;
+ * onLockedOffer when its own input changes it); "Select all" of the menu
+ * offers every locked item the same way (scene.setLockedOffer, mode edit).
+ * Selection v2 lockedOffer counts the offered items that still exist and are
+ * locked (lockedOfferIds; 0 outside mode edit, in viewOnly and frozen); a
+ * change of that number by a sync answer or a resync reports the selection
+ * again. selectLockedOffer() (the bar's "Select n locked items") selects
+ * exactly those and ends the offer: no op, no undo step, no toast.
+ *
+ * Job 173 (tables, model/table.js): the lease, the intermediate texts, the
+ * lease tail, the take-over and the text rescue work per cell: the lease key
+ * is '<id>' for an item's text and '<id>#<col>.<row>' for a cell (leaseKey;
+ * leaseLost, leaseTail, takeoverId and rescueEditorId hold such keys), me
+ * carries ec with e, and the scene's onEditing names the cell. A cell's text
+ * goes out as one path data.cells.<col>.<row>, "" as null; a text that would
+ * bring the table over limits.maxItemBytes, or whose row or column is gone,
+ * does not go out (the editor keeps it with its notice). After a cell editor
+ * closes, after every own structure, width or header change and after an
+ * undo or redo of a table the session measures the table again
+ * (scene.measureTableCell, withSize) and writes w/h that differ, the first
+ * two in the same undo step. Structure: tableAppend (the "+"), the menu
+ * entries row-above … col-delete on the cell of the menu, tableWidth (a
+ * border drag); each one undo step; at 50 rows, 20 columns or without bytes
+ * nothing goes out and an info names the limit. table-csv downloads the CSV
+ * (deps.download, util/download.js downloadText).
+ *
+ * Job 199 (swimlanes, model/lanes.js): the create intent of a frame with
+ * lanes: true gets the names "Lane 1" to "Lane 3". laneAdd (the "+"), laneHeight
+ * (a dragged border) and the menu entries lane-rename, lane-above,
+ * lane-below, lane-up, lane-down and lane-delete on the lane of the menu
+ * (menuLanes: {lanes: {index, count, locked}} for menuEntries) are one undo
+ * step each with the frame's patch and the moved children's; nothing goes
+ * out in mode view or vote, on a frozen board or at a locked frame, and an
+ * info names the limit (30 lanes, a frame too tall, a locked child in the
+ * way). A new lane opens the editor of its name. The text intent of a lane
+ * editor (cell = the lane) goes out once, at its final text (no lease: me.e
+ * never names a lane, so the frame's title stays free).
+ *
+ * Job 208 (columns of a frame with lanes): colAdd (the "+"), colWidth (a
+ * dragged column edge), laneMove and colMove (a dragged head, to an index)
+ * and the menu entries column-add, column-rename, column-left,
+ * column-right, column-move-left, column-move-right and column-delete on the
+ * column of the menu (the intent's col; menuLanes adds lanes.cols {index,
+ * count}, null without columns) are one undo step each like a lane's; an
+ * info names the limit (30 columns, a frame too wide). A new column opens
+ * the editor of its name; the text intent of a column editor (cell = the
+ * column) goes out like a lane's.
+ *
+ * Job 225 (lane and column groups): the menu entries lane-group,
+ * lane-group-rename, lane-ungroup and column-group, column-group-rename,
+ * column-ungroup on the lane (column) of the menu (menuLanes adds group to
+ * lanes and to lanes.cols), and the intents laneGroupSpan, colGroupSpan (a
+ * dragged edge) and laneGroupMove, colGroupMove (a dragged cell) are one
+ * undo step each like a lane's; a new group opens the editor of its name,
+ * whose text intent (cell = the group) goes out once at its final text.
+ *
+ * Job 174: tableAppend with open (Tab in the last cell) opens the new row's
+ * left cell; tablePaste fills a table from the cell a spreadsheet grid was
+ * pasted into (model/table.js pasteCells), one undo step of several patches.
+ *
+ * Jobs 178, 179, 180, 181, 182, 200 and 207 (export, templates, board files): see board/sessionFiles.js
+ * (SessionFiles, factory job 253; this session hands over to it).
+ *
+ * Job 188 (note pads, model/pad.js): the scene's intent takeNote (a drag
+ * from a pad's pile with at, Enter at the one selected pad with at null) →
+ * actions.takeNote: one commit (urgent, mergeKey 'new:<id>'), only the new
+ * note is selected and its editor opens (with at null the view brings it in
+ * first); creating it and its first text are one undo step, closed empty it
+ * stays. The pad gets no op, locked or not. Like every intent, nothing in
+ * modes vote and view, for the role view or while frozen. The menu entry
+ * pad-here (menuAction) creates a pad with its centre at W, without an
+ * editor, like a click with the note tool's type 'pad'. The note tool's
+ * type ('sticky' or 'pad', setToolOptions('sticky', {type})) goes back to
+ * 'sticky' at every change of the tool (setTool, setToolOptions of another
+ * tool, the scene's onTool); onToolOptions reports it with the others.
+ *
+ * Job 205 (BPMN files), job 217 (parts on first use) and job 220 (CSV files): see board/sessionFiles.js.
+ *
+ * Job 206 (undo for tags, undo.js planTagHistory): creating a tag (with
+ * ticking the panel's notes: one step), renaming, recolouring and deleting
+ * it (changeTag) are each an undo step with a tag part, recorded after the
+ * route's answer from meta.tags before and after. Undo and redo of such a
+ * step write the route first (sendTagHistory) and then send the step's ops;
+ * they run one after another (history, historyQueue). Undoing a delete
+ * brings the tag back with its id, name and colour, also on the notes that
+ * lost its id meanwhile (retag); deleting asks no question any more. A tag
+ * someone else changed is skipped with the info undo-changed; a failed
+ * write or a skipped add (tag-exists) leaves the step where it is.
  */
+import { pictureSize, placeablePicture, splitImage } from '../model/shapeImage.js'
+import { REDESIGN_KINDS, hasLabel, shownBorder, squareOn } from '../model/shapes.js'
 import { GONE_VIA_LINK, roleToastText } from '../components/banner.js'
-import { SELECTION_FIELDS, groupHintText } from '../components/contextbar.js'
-import { groupSummary, movableIds } from '../model/groups.js'
+import { SELECTION_FIELDS, WHEEL_STAGES, boardColors, frameHintText, groupHintText } from '../components/contextbar.js'
+import { filterKinds, frameAroundPlan, groupSummary, movableIds, selectionKinds } from '../model/groups.js'
 import { clientId } from '../model/ids.js'
 import { isLocked, lockSummary, mayUnlock } from '../model/locks.js'
+import { isCovered, privateOf, wantsResync } from '../model/privateWriting.js'
 import { getPath, itemKey } from '../model/paths.js'
+import { MAX_SCALE, shownColor, shownLine } from '../model/tokens.js'
+import {
+	COLS_MAX, COL_KEY_RE, LANES_MAX, LANE_FRAME_H, LANE_FRAME_W, LANE_KEY_RE, addCol, addLane, colBands, deleteCol as deleteLaneCol, deleteLane,
+	hasCols, hasLanes, laneBands, moveCol, moveColTo, moveLane, moveLaneTo, renameCol, renameLane, setColWidth as setLaneColWidth, setLaneHeight,
+	CGROUP_KEY_RE, LGROUP_KEY_RE, colRuns, groupCol, groupLane, laneRuns, moveGroupTo, renameGroup, spanGroup, ungroup,
+} from '../model/lanes.js'
+import { noteTagIds, selectionTags, tagMap } from '../model/tags.js'
+import {
+	TABLE_MAX_BYTES, applyTablePatch, cellKey, cellOfPath, cellPath, deleteCol, deleteRow, estimateCellHeight, hasCell, hasHtmlTable, insertCol,
+	insertRow, orderedCols, parseCell, pasteCells, setCellText, setColWidth, tableBytes, withSize,
+} from '../model/table.js'
+import { itemLinks } from '../model/itemLinks.js'
+import { isReactionPatch } from '../model/reactions.js'
+import {
+	MM_LAYOUTS, NODE_KEY_RE, addChild, addSibling, applyMindmapPatch, deleteBranch, drawnShape, estimateNodeSize, focusAfterDelete, hasPlaced, mindTree,
+	mindmapBytes, moveNode, nodeOfTextPath, nodesOf, outlineText, parseOutline, placeNode, rearrange, setNodeField, setNodeText, defaultShape,
+	textPath as nodeTextPath, toggleFold, withBox,
+} from '../model/mindmap.js'
+import { copyText } from '../components/copyText.js'
 import { q } from '../model/geometry.js'
-import { allTextPaths, fieldDefault, fieldRule, fieldValue, isBindable, textPathOf, typeInfo } from '../model/registry.js'
+import { allTextPaths, checkField, fieldDefault, fieldRule, fieldValue, isBindable, textPathOf, typeInfo } from '../model/registry.js'
 import { selectionFrame } from '../model/transform.js'
 import { HttpError, isPasswordLock, isProxyBlock, isProxyRetry, isSlowDown, slowDownDelay } from '../sync/http.js'
-import { colorFor, PresenceModel } from '../sync/presence.js'
+import { colorFor, laserDelay, PresenceModel } from '../sync/presence.js'
 import { PROTOCOL } from '../sync/protocol.js'
 import { BUSY, Replica, isLockPatch } from '../sync/Replica.js'
 import { INTERVALS, nextDelay } from '../sync/scheduler.js'
 import { ACCESS_LEVELS, LINKS_DISABLED, LINK_EXPIRED, PASSWORD_REQUIRED, RATE_LIMITED, SERVER_ERROR, SyncClient, UNKNOWN_PROTO, defaultSleep, protoValue } from '../sync/SyncClient.js'
 import { guestTransport, newCounters, userTransport } from '../sync/transport.js'
 import { isApplePlatform } from '../util/device.js'
-import { n, t } from '../util/l10n.js'
+import { language, n, t } from '../util/l10n.js'
 import { claimReload, hardReload } from '../util/reload.js'
+import { shortcut } from '../util/shortcuts.js'
 import { keys, webStorage } from '../util/storage.js'
 import { showError, showInfo } from '../util/toast.js'
+import { PARTS } from '../util/parts.js'
+import { downloadBlob, downloadText } from '../util/download.js'
+import { wellFormed } from '../util/unicode.js'
 import * as boardsApi from '../api/boards.js'
 import * as actions from './actions.js'
 import { attachPasteCatcher, clipAttrOf, clipboardItemsData, clipboardReader, decodeClipAttr, encodeClip, hasDomSelection, inputFocused, isInputElement, readStoredClip, storeClip, validatePayload, writeClipboard } from './clipboard.js'
 import { Clock } from './clock.js'
-import { FollowController, summonOf } from './follow.js'
+import { CommentFeed, commentableIds } from './comments.js'
+import { FRAME_PAD_PX, FollowController, summonOf } from './follow.js'
+import { SlideShow } from './slides.js'
 import { ROLES, accessOf, canEdit, canVote, modeFor, roleToastFor } from './mode.js'
-import { UndoStack } from './undo.js'
-import { VoteState } from './votes.js'
+import { COMMENTS_CALLS, COMMENTS_SETS, COMMENTS_STATE, SessionComments } from './sessionComments.js'
+import { metaMapOf, modelItems, r1 } from './sessionConsts.js'
+import { FILES_CALLS, FILES_STATE, SessionFiles } from './sessionFiles.js'
+import { TAGS_CALLS, TAGS_SETS, TAGS_STATE, SessionTags, tagRect } from './sessionTags.js'
+import { AI_CALLS, AI_STATE, SessionAi } from './sessionAi.js'
+import { UndoStack, planHistory, planTagHistory } from './undo.js'
+import { VoteState, rebaseVotes } from './votes.js'
+
+/**
+ * (Job 173) The lease key of an item's text, or of one cell of a table.
+ *
+ * @param {string} id item id
+ * @param {string|null} [cell] "<col>.<row>" of a table
+ * @return {string} '<id>' or '<id>#<col>.<row>'
+ */
+export function leaseKey(id, cell = null) {
+	return typeof cell === 'string' && cell !== '' ? id + '#' + cell : id
+}
+
+/**
+ * @param {string} key lease key (leaseKey)
+ * @return {[string, (string|null)]} item id and cell (null for an item's text)
+ */
+export function leaseParts(key) {
+	const i = typeof key === 'string' ? key.indexOf('#') : -1
+	return i < 0 ? [key, null] : [key.slice(0, i), key.slice(i + 1)]
+}
+
+/**
+ * (Job 195) The text path of a sub-key: a table's cell "<col>.<row>" or a
+ * mind map's node "n<8>" (its text data.texts.<pot>.<key>); (job 199) a
+ * frame's lane "l<8>" (its name data.lanes.<key>.t); (job 208) its column
+ * "c<8>" (data.cols.<key>.t).
+ *
+ * @param {string} cell sub-key
+ * @return {string} its patch path
+ */
+function subPath(cell) {
+	if (COL_KEY_RE.test(cell)) return 'data.cols.' + cell + '.t'
+	// job 225: the name of a lane group or a column group
+	if (LGROUP_KEY_RE.test(cell)) return 'data.lgroups.' + cell
+	if (CGROUP_KEY_RE.test(cell)) return 'data.cgroups.' + cell
+	return NODE_KEY_RE.test(cell) ? nodeTextPath(cell) : LANE_KEY_RE.test(cell) ? 'data.lanes.' + cell + '.t' : cellPath(cell)
+}
+
+/**
+ * @param {unknown} path patch path
+ * @return {string|null} (job 195) its sub-key: the cell of data.cells.<col>.<row>, the node of
+ *   data.texts.<pot>.<key>, else null
+ */
+function subOfPath(path) {
+	return cellOfPath(path) ?? nodeOfTextPath(path)
+}
+
+/**
+ * @param {object|null} item table, mind map or (job 199) frame with lanes
+ * @param {string} cell sub-key
+ * @return {boolean} (job 195) the table has the cell, the mind map the node; (job 199) the frame the lane (job 208:
+ *   or the column)
+ */
+function hasSub(item, cell) {
+	// job 225: or a group of its lanes or columns
+	if (item?.t === 'frame') return hasLanes(item) && [...laneBands(item), ...colBands(item), ...laneRuns(item), ...colRuns(item)].some((b) => b.key === cell)
+	return item?.t === 'mindmap' ? nodesOf(item.data).has(cell) : hasCell(item, cell)
+}
+
+/** (job 195) The box fields withBox may add to a mind map's patch. */
+const BOX_PATHS = Object.freeze(['x', 'y', 'parent', 'w', 'h'])
 
 const CLIENT_RE = /^[A-Za-z][A-Za-z0-9]{0,15}$/
 /**
@@ -334,7 +628,11 @@ export const BUSY_TOAST_MS = 30000
  * Result codes the session knows (SPEC-M0 §4.6, SPEC-M1 §4.6, plus the
  * client-side SERVER_ERROR). Any other code counts as 'bad' (§4.3).
  */
-export const KNOWN_CODES = Object.freeze(['ok', 'dup', 'gone', 'bad', 'denied', 'limit', 'locked', 'closed', 'itemlocked', BUSY, SERVER_ERROR])
+export const KNOWN_CODES = Object.freeze(['ok', 'dup', 'gone', 'bad', 'denied', 'limit', 'locked', 'closed', 'itemlocked', 'stale', BUSY, SERVER_ERROR])
+/** Job 172: the scene's reaction intents (every mode, handled before the edit rule). */
+const REACT_INTENTS = Object.freeze(['react', 'reactPick', 'reactList', 'reactNames'])
+/** (Job 191) Meta keys whose change alone leaves vote, timer and summon alone (no applyMeta). */
+const QUIET_META = Object.freeze(['comments', 'tags'])
 /** Arrow keys within this time on the same items make one undo step (SPEC-M1 §6.3). */
 export const NUDGE_MERGE_MS = 1000
 /** Pasting more notes from plain text than this asks first (SPEC-M1 §6.5.2). */
@@ -355,10 +653,19 @@ export const AUTO_END_DELAY_MS = 250
 export const AUTO_END_TRIES = 3
 /** Camera changes poke the sync loop at most this often (presence v). */
 const CAMERA_POKE_MS = 250
+/** (Job 171) The laser constants live in sessionConsts.js (factory job 255). */
+export { LASER_MIN_GAP_MS, LASER_WINDOW_MS, LASER_WIRE_MAX } from './sessionConsts.js'
 /** The board's area for the tablet camera and "zoom to" keeps this margin (screen px). */
 export const ZOOM_PAD_PX = 40
 /** Clock skew changes below this are not reported to the shell. */
 const SKEW_REPORT_MS = 100
+/**
+ * @param {string|null} stored localStorage knorke.wheel
+ * @return {string} 'zoom' or 'pan' as stored, 'auto' for anything else (job 154)
+ */
+function storedWheel(stored) {
+	return stored === 'zoom' || stored === 'pan' ? stored : 'auto'
+}
 
 /**
  * @param {object|null} limits initial-state limits
@@ -381,7 +688,7 @@ export function limitsWithDefaults(limits) {
  * changed meta itself (R16: start/extend on an expired session closes it and
  * answers 409); the new meta arrives with the next sync tick.
  */
-export const META_STALE_CODES = Object.freeze(['vote_open', 'vote_closed', 'timer_state', 'meta_too_large'])
+export const META_STALE_CODES = Object.freeze(['vote_open', 'vote_closed', 'timer_state', 'meta_too_large', 'private_on'])
 
 /**
  * Message of a failed moderation call (routes 22–26, SPEC-M1 §4.2, §6.11).
@@ -395,6 +702,9 @@ export function moderationError(e) {
 	switch (code) {
 	case 'vote_open':
 		return t('knorke', 'A vote is already running.')
+	case 'private_on':
+		// job 275: private writing runs (a second start, a vote or AI on the notes)
+		return t('knorke', 'Not possible during private writing.')
 	case 'vote_closed':
 		return t('knorke', 'This vote has already ended.')
 	case 'timer_state':
@@ -430,27 +740,91 @@ function pick(m, k) {
 }
 
 /**
- * @param {number} v number
- * @return {number} rounded to 0.1 (presence coordinates)
+ * @param {{x: number, y: number, w: number, h: number, r?: number}|null} a absolute box (SceneModel.abs)
+ * @param {{x: number, y: number, w: number, h: number, r?: number}|null} b absolute box
+ * @return {boolean} the same x, y, w, h and r (job 146)
  */
-function r1(v) {
-	return Math.round(v * 10) / 10
+function sameAbs(a, b) {
+	if (!a || !b) {
+		return a === b
+	}
+	return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h && (a.r ?? 0) === (b.r ?? 0)
 }
 
 /**
- * `meta` of a board block as a map (SPEC-M1 §3.11). The wire form of an
- * empty map is {} (§15 R4); an empty JSON list is what PHP's json_encode
- * makes of an empty array, so it counts as {} as well. Anything else that is
- * not a plain object (a non-empty list, a scalar, null) is no meta.
+ * (Job 227) The display value of a field for selection v2: a colour field
+ * (rule 'color') as it is drawn (tokens.shownColor; a connector's line
+ * through shownLine, job 260: a shape's border through shownBorder), anything else as fieldValue gives it.
  *
- * @param {unknown} v `meta` of the block
- * @return {object|null} the map, or null: no usable meta in the block
+ * @param {object} it WireItem
+ * @param {string} path field path
+ * @return {unknown} the value, null when there is none
  */
-function metaMapOf(v) {
-	if (Array.isArray(v)) {
-		return v.length === 0 ? {} : null
+function shownField(it, path) {
+	const v = fieldValue(it, path) ?? null
+	if (fieldRule(it.t, path)?.[0] !== 'color') {
+		return v
 	}
-	return v !== null && typeof v === 'object' ? v : null
+	if (path === 'style.stroke' && it.t === 'connector') return shownLine(v)
+	// job 260: a shape's old default border as it is drawn (shapes.js shownBorder)
+	if (path === 'style.stroke' && it.t === 'shape') return shownBorder(fieldValue(it, 'data.kind'), v)
+	return shownColor(v)
+}
+
+/**
+ * (Job 189) Did a meta change touch meta.comments and nothing else?
+ *
+ * @param {object} a meta before
+ * @param {object} b meta after
+ * @return {boolean}
+ */
+export function onlyCommentsChanged(a, b) {
+	if (a.comments === b.comments) {
+		return false
+	}
+	const keysOf = (m) => Object.keys(m).filter((k) => k !== 'comments')
+	const ka = keysOf(a)
+	const kb = keysOf(b)
+	return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]))
+}
+
+/**
+ * (Job 191) Did a meta change touch only the quiet keys (QUIET_META:
+ * meta.comments, meta.tags), at least one of them?
+ *
+ * @param {object} a meta before
+ * @param {object} b meta after
+ * @return {boolean}
+ */
+export function onlyQuietChanged(a, b) {
+	const same = (k) => JSON.stringify(a[k] ?? null) === JSON.stringify(b[k] ?? null)
+	if (QUIET_META.every(same)) {
+		return false
+	}
+	const keysOf = (m) => Object.keys(m).filter((k) => !QUIET_META.includes(k))
+	const ka = keysOf(a)
+	const kb = keysOf(b)
+	return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && JSON.stringify(a[k]) === JSON.stringify(b[k]))
+}
+
+/**
+ * (Job 191) meta before with the quiet keys of meta after: every other value
+ * keeps its object (a vote, a timer).
+ *
+ * @param {object} a meta before
+ * @param {object} b meta after
+ * @return {object}
+ */
+function withQuietKeys(a, b) {
+	const out = { ...a }
+	for (const k of QUIET_META) {
+		if (Object.prototype.hasOwnProperty.call(b, k)) {
+			out[k] = b[k]
+		} else {
+			delete out[k]
+		}
+	}
+	return out
 }
 
 /**
@@ -480,6 +854,7 @@ export class BoardSession {
 	 * @param {number|null} [o.boardId] board id
 	 * @param {string|null} [o.linkToken] link token (guests)
 	 * @param {boolean} [o.viewOnly] view-only DEVICE (no fine pointer); the mode also follows me.role (stage 2)
+	 * @param {boolean} [o.touch] (job 183) the device has a touch screen (util/device.js hasTouchScreen); only true counts
 	 * @param {boolean} [o.debug] install window.__knorke
 	 * @param {object|null} [o.limits] initial-state limits (maxText, maxTitle, …) for the text editor;
 	 *   maxItems/maxLabel fall back to 5000/200 (SPEC-M1 §4.8)
@@ -492,13 +867,15 @@ export class BoardSession {
 	 *   clipboardIo ({doc, clipboard, ClipboardItem, Blob} for writeClipboard) in tests;
 	 *   api (stage 3: the moderation calls of api/boards.js, startVote/updateVote/timer/summon/endSummon)
 	 */
-	constructor({ container, mode = 'user', boardId = null, linkToken = null, viewOnly = false, debug = false, limits = null, pasteCatcher = null, ui = {}, deps = {} }) {
+	constructor({ container, mode = 'user', boardId = null, linkToken = null, viewOnly = false, touch = false, debug = false, limits = null, pasteCatcher = null, ui = {}, deps = {} }) {
 		this.container = container
 		this.mode = mode === 'guest' ? 'guest' : 'user'
 		this.boardId = boardId
 		this.linkToken = linkToken
 		/** The device has no fine pointer (util/device.js); fixed for the session. */
 		this.deviceViewOnly = !!viewOnly
+		/** (job 183) The device has a touch screen (util/device.js); fixed for the session. */
+		this.deviceTouch = touch === true
 		/** Client mode (SPEC-M1 §6.5.4): 'edit' | 'vote' | 'view'; from me.role and the device. */
 		this.clientMode = this.deviceViewOnly ? 'view' : 'edit'
 		/** No editing in the current mode (role or device). */
@@ -514,6 +891,14 @@ export class BoardSession {
 		this.win = deps.win !== undefined ? deps.win : (typeof window !== 'undefined' ? window : null)
 		this.toast = deps.toast ?? showError
 		this.info = deps.info ?? showInfo
+		/** (job 217) the import() of each lazy part (util/parts.js PARTS; tests: deps.parts) */
+		this.parts = deps.parts ?? PARTS
+		/** (job 173) a file download (the CSV export of a table): (name, text) */
+		this.download = deps.download ?? ((name, text) => downloadText(name, text))
+		/** (job 178) a file download of a Blob (the PNG of an image): (name, blob) → started */
+		this.downloadFile = deps.downloadBlob ?? ((name, blob) => downloadBlob(name, blob))
+		/** (job 179) the language the CSV separator follows: () → e.g. 'de' */
+		this.language = deps.language ?? language
 		/** Wall clock (ms) for the stored copy's TTL (clipboard.js). */
 		this.wall = deps.wall ?? Date.now
 		/** The hidden paste catcher (textarea[data-knorke-paste-catcher], SPEC-M1 §6.5.3). */
@@ -533,10 +918,19 @@ export class BoardSession {
 		this.capture = null
 		/** Text intents of the open editor caught when the board froze for a hand-over. */
 		this.frozenText = []
+		/** Factory job 189: the comment threads of the board (live), the pick of "New comment", the bubbles switch. */
+		this.comments = new CommentFeed({
+			load: () => this.commentApi()?.list(),
+			onChange: () => this.emitComments(),
+			onError: (e) => console.warn('[knorke] loading the comments failed', e),
+		})
+		this.commentPicking = false
+		this.bubbles = this.storage.getItem('local', keys.bubbles()) !== '0'
 
 		this.counters = newCounters()
 		this.replica = new Replica()
-		this.presence = new PresenceModel({ now: this.now })
+		// job 171: the others' laser trails play one poll of the device's cadence plus 500 ms late
+		this.presence = new PresenceModel({ now: this.now, laserDelayMs: laserDelay(this.deviceViewOnly, deps.intervals ?? INTERVALS) })
 		this.undoStack = new UndoStack(50)
 		this.model = null
 		this.scene = null
@@ -551,9 +945,57 @@ export class BoardSession {
 		this.destroyed = false
 
 		this.selection = []
+		/** (job 178) an image is being drawn (exportPng and, job 200, exportVector ignore further calls) */
+		this.exporting = false
+		/** (job 178) {name, format, width, height, scale, scaled, ids, bounds} of the last image that downloaded */
+		this.lastExport = null
+		/** Factory job 253: export and file insert (sessionFiles.js); each callback reads the session at the call. */
+		const get = (k) => () => this[k]
+		const call = (k) => (...a) => this[k](...a)
+		this.files = new SessionFiles({
+			...Object.fromEntries(FILES_STATE.map((k) => [k, get(k)])),
+			...Object.fromEntries(FILES_CALLS.map((k) => [k, call(k)])),
+			setExporting: (on) => {
+				this.exporting = on
+			},
+			setLastExport: (last) => {
+				this.lastExport = last
+			},
+		})
+		/** Factory job 255: comments, reactions and the laser (sessionComments.js); each callback reads the session at the call. */
+		this.talk = new SessionComments({
+			...Object.fromEntries(COMMENTS_STATE.map((k) => [k, get(k)])),
+			...Object.fromEntries(COMMENTS_CALLS.map((k) => [k, call(k)])),
+			set: (k, v) => {
+				if (COMMENTS_SETS.includes(k)) {
+					this[k] = v
+				}
+			},
+		})
+		/** Factory job 257: the tag list, panels, filter and writes (sessionTags.js); each callback reads the session at the call. */
+		this.tagging = new SessionTags({
+			...Object.fromEntries(TAGS_STATE.map((k) => [k, get(k)])),
+			...Object.fromEntries(TAGS_CALLS.map((k) => [k, call(k)])),
+			set: (k, v) => {
+				if (TAGS_SETS.includes(k)) {
+					this[k] = v
+				}
+			},
+		})
+		/** Factory job 267: "Summarise" and "Cluster by topic" (sessionAi.js); each callback reads the session at the call. */
+		this.ai = new SessionAi({
+			...Object.fromEntries(AI_STATE.map((k) => [k, get(k)])),
+			...Object.fromEntries(AI_CALLS.map((k) => [k, call(k)])),
+		})
+		/** (job 180) the last ui.onEmpty value (null before the first report) */
+		this.lastEmpty = null
 		this.pointer = null
 		this.dragPreview = []
 		this.editingId = null
+		/** (job 173) the cell of the table editingId whose editor is open, else null */
+		this.editingCell = null
+		/** job 195: the focused node {id, key} of the one selected mind map (scene onNodeFocus), else null */
+		this.mmFocus = null
 		/** Item whose editor a text rescue opened, until that editor closes (T6). */
 		this.rescueEditorId = null
 		/** Item whose text lease this tab takes over; set until me.tk has reached the server. */
@@ -566,6 +1008,10 @@ export class BoardSession {
 		this.textSession = 0
 		this.undoPending = new Set()
 		this.deniedShown = false
+		/** job 146: {id, p} of the newest "Arrange" patch sent (a rejected patch with this placement toasts arrange-bad). */
+		this.arrangeSent = null
+		/** job 146: ui.onSelection reports so far (arrange reports once, after its commit's flush or by itself). */
+		this.selectionReports = 0
 		this.camTimer = null
 		this.listeners = []
 		this.uninstallDebug = null
@@ -594,10 +1040,18 @@ export class BoardSession {
 		this.voteState = new VoteState()
 		/** Desktop editors: vote mode while a session is open (the bar's switch; default at the start: true). */
 		this.preferVote = false
+		/**
+		 * (Job 149) This tab shows the live count on the board (the bar's "Live
+		 * count"): only this tab, never stored or sent; false on loading, at
+		 * every new sid, at the close and when the moderation right goes.
+		 */
+		this.liveShown = false
 		/** The vote panel is open (presence pauses while a session is open, §6.4). */
 		this.votePanelOpen = false
 		/** (R17 K4) A ui.onVotes for a model change is queued (one per tick). */
 		this.voteItemsQueued = false
+		/** (Job 216) Vote ops of the current answer that came back stale ({op, maybeApplied}), until its votes block. */
+		this.staleVotes = []
 		/** When vt went out last (this.now()). */
 		this.vtAt = -Infinity
 		/** When the last voteMiss hint was shown (this.now()). */
@@ -617,6 +1071,37 @@ export class BoardSession {
 		/** The session reloads the page itself (status 'reload'): beforeunload stays quiet (R22, P7-07). */
 		this.selfReload = false
 		this.menuSeq = 0
+		/**
+		 * Job 139: the name fields after "Sort by color": {blocks (sortNotesByColor), open (indexes of
+		 * the fields still shown), texts (index → typed text)} or null.
+		 */
+		this.sortLabels = null
+		/** Job 139: nameSortBlock is committing (that commit does not end the fields). */
+		this.sortNaming = false
+		/** Job 142: this session showed the one-time touch tip (also when storing it failed). */
+		this.touchTipShown = false
+		/** Job 147: other people's cursors are shown (knorke.cursors, read in open()). */
+		this.cursors = true
+		/** Job 147: the last toast of toggleCursors ({hideToast}) or null. */
+		this.cursorsToast = null
+		/** Job 154: the last toast of cycleWheel ({hideToast}) or null. */
+		this.wheelToast = null
+		/** Job 172: the open reaction picker {id, rect, cam, mode} (camera and client mode at its opening) or null. */
+		this.reactPicker = null
+		/** Job 172: the open names or list of a note's reactions {kind, id, e, rect, cam, hold} or null. */
+		this.reactPopup = null
+		/** Job 171: the own laser points [x, y, t] (t = this.now()) and null between strokes, oldest first. */
+		this.laser = []
+		/** Job 171: the stroke ended (onLaser(null)); the next point starts a new one. */
+		this.laserEnded = false
+		/** Job 191: this tab's tag filter, the chosen tag ids (never sent, gone on reload). */
+		this.tagFilter = []
+		/** Job 191: the open tag panel {kind: 'tag'|'filter'|'list', rect, id?, cam?} or null. */
+		this.tagPanel = null
+		/** Job 191: a write of the tag list runs. */
+		this.tagBusy = false
+		/** Job 206: the queue of undo/redo while a tag step's write runs (a promise), else null. */
+		this.historyQueue = null
 	}
 
 	/**
@@ -687,8 +1172,12 @@ export class BoardSession {
 			grid: this.storage.getItem('local', keys.grid()) === '1',
 			// snapping to the shown grid: '0' = off, anything else (missing too) on
 			gridSnap: this.storage.getItem('local', keys.gridSnap()) !== '0',
+			// job 154: the mouse wheel of this browser, 'zoom' or 'pan', anything else automatic
+			wheel: storedWheel(this.storage.getItem('local', keys.wheel())),
 			callbacks: this.sceneCallbacks(),
 			limits: this.limits,
+			// job 198: the editor of an org chart card: the name, then the role on the next line
+			cardPlaceholder: t('knorke', 'Name ({key}: role)', { key: shortcut('mm-break', isApplePlatform(this.win?.navigator ?? null)).hint }),
 		})
 		this.scene.mount()
 		this.focusCanvasOnOpen()
@@ -698,7 +1187,11 @@ export class BoardSession {
 		} else {
 			this.scene.fit()
 		}
-		this.scene.setRemoteSampler((nowMs) => this.presence.sample(nowMs))
+		// job 147: other people's cursors, '0' = hidden, anything else shown
+		this.cursors = this.storage.getItem('local', keys.cursors()) !== '0'
+		this.scene.setRemoteSampler((nowMs) => this.remoteSamples(nowMs))
+		// job 171: the own laser trail in the own presence colour
+		this.scene.setLaserColor?.(colorFor(this.me?.pid ?? ''))
 		this.follower = new FollowController({
 			scene: () => this.scene,
 			presence: this.presence,
@@ -708,6 +1201,26 @@ export class BoardSession {
 			sessionOpen: () => this.voteState.open,
 			onChange: (st) => this.emitFollow(st),
 			onLeft: (name) => this.info(t('knorke', '{name} left.', { name })),
+			frameRect: (id) => (this.model?.get(id)?.t === 'frame' ? this.model.abs(id) : null),
+			frameInsets: () => ({ bottom: this.slideInsets.bottom }),
+		})
+		// factory job 272: frames as slides (the presenter's side); the screen
+		// px the presentation's bars cover at the right and bottom edge
+		this.slideInsets = { right: 0, bottom: 0 }
+		this.slideRole = null
+		this.slideShow = new SlideShow({
+			frames: () => this.frames(),
+			reading: (ids) => actions.readingOrder(this.model, ids),
+			meta: () => (this.board?.meta && typeof this.board.meta === 'object' ? this.board.meta : {}),
+			presenting: () => this.isPresenting(),
+			api: {
+				start: (f) => this.moderate(() => this.api.summon(this.boardId, this.client, f)),
+				move: (f) => this.moderate(() => this.api.moveSummon(this.boardId, f)),
+				save: (o) => this.moderate(() => this.api.saveSlides(this.boardId, o)),
+				end: () => this.endSummon(),
+			},
+			show: (f) => this.showSlide(f),
+			onChange: () => this.emitSlides(),
 		})
 		this.sync = new SyncClient({
 			transport: this.transport,
@@ -737,10 +1250,18 @@ export class BoardSession {
 			...(this.deps.intervals ? { intervals: this.deps.intervals } : {}),
 		})
 		this.addListeners()
+		// job 172: who may react and which pills are mine
+		this.pushReactions()
+		// job 191: the board's tags
+		this.pushTags()
+		// job 267: the AI of the board (route 59) and the heights of its cards
+		this.ai.fixHeights(modelItems(this.model))
+		this.ai.load()
 		if (this.pasteCatcher) {
 			this.detachCatcher = attachPasteCatcher(this.pasteCatcher, (data) => this.onCatcherPaste(data))
 		}
 		this.emitBoard()
+		this.emitEmpty()
 		this.ui.onMode?.(this.clientMode)
 		this.afterVoteMeta(voteStart, { initial: true })
 		this.emitUndo()
@@ -782,6 +1303,10 @@ export class BoardSession {
 		this.board = snap.board && typeof snap.board === 'object' ? { ...snap.board } : null
 		this.metaRev = Number.isInteger(snap.board?.metaRev) ? snap.board.metaRev : 0
 		this.epoch = typeof snap.epoch === 'string' && snap.epoch !== '' ? snap.epoch : null
+		// job 189: meta.comments loads the comment threads (without the key: nothing)
+		this.comments.meta(metaMapOf(this.board?.meta)?.comments)
+		// job 191: the board's tags (a resync snapshot: the scene follows)
+		this.pushTags()
 	}
 
 	/**
@@ -802,16 +1327,37 @@ export class BoardSession {
 			next.title = board.title
 		}
 		const meta = metaMapOf(board.meta)
+		const before = metaMapOf(this.board?.meta) ?? {}
+		// job 189: a change of meta.comments alone keeps every other value (and its object) as it was;
+		// job 191: so does one of meta.tags (alone or with the comments)
+		const onlyComments = meta !== null && onlyQuietChanged(before, meta)
+		const tagsChanged = meta !== null && JSON.stringify(before.tags ?? null) !== JSON.stringify(meta.tags ?? null)
 		if (meta !== null) {
-			next.meta = meta
+			next.meta = onlyComments ? withQuietKeys(before, meta) : meta
 		}
 		next.metaRev = board.metaRev
 		this.metaRev = board.metaRev
 		this.board = next
 		this.emitBoard()
+		if (meta !== null && privateOf(before) !== null && wantsResync(before, meta, this.coveredCount() > 0)) {
+			// job 275: the reveal changed no row the cursor sees again: the texts come with a new snapshot
+			this.sync?.requestResync?.()
+		}
 		if (meta !== null) {
-			// stage 3: vote session, summon (SPEC-M1 §6.5.1 "an Shell, VoteState und FollowController")
-			this.applyMeta()
+			// job 267: the board switch "Allow AI on this board" shows or hides the AI buttons at once
+			if ((before.ai ?? null) !== (meta.ai ?? null)) {
+				this.ai.emit()
+				this.emitSelection()
+			}
+			this.comments.meta(meta.comments)
+			if (tagsChanged) {
+				// job 191: only the notes are drawn again: no toast, no mode switch
+				this.pushTags()
+			}
+			if (!onlyComments) {
+				// stage 3: vote session, summon (SPEC-M1 §6.5.1 "an Shell, VoteState und FollowController")
+				this.applyMeta()
+			}
 		}
 		return true
 	}
@@ -874,6 +1420,8 @@ export class BoardSession {
 
 	emitBoard() {
 		this.ui.onBoard?.({ board: this.board ? { ...this.board } : null, me: this.me })
+		// job 189: the right to comment follows the role
+		this.emitComments()
 	}
 
 	/**
@@ -911,6 +1459,11 @@ export class BoardSession {
 		if (this.board) {
 			this.board = { ...this.board, role }
 		}
+		// job 149: without the moderation right no live count (tally and board counts)
+		this.voteState.setMe(this.me)
+		if (!this.voteState.liveAllowed()) {
+			this.liveShown = false
+		}
 		// a new role: a denial of the next ops is news again (toasted once)
 		this.deniedShown = false
 		const text = roleToastText(roleToastFor(before, this.accessLevel()))
@@ -919,6 +1472,10 @@ export class BoardSession {
 		}
 		this.updateMode()
 		this.emitBoard()
+		// job 172: other rights close the picker; the scene, names and list follow
+		this.closeReactionPicker()
+		this.pushReactions()
+		this.emitReactionPopup()
 		// stage 3: markVotable, vt and the automatic end follow role and mod
 		this.pushVoteState()
 		this.scheduleAutoEnd()
@@ -931,7 +1488,23 @@ export class BoardSession {
 	 *   vote session (SPEC-M1 §6.5.4 modeFor)
 	 */
 	modeNow() {
-		return modeFor(this.me?.role ?? null, this.deviceViewOnly, { sessionOpen: this.voteState.open, preferVote: this.preferVote })
+		// job 175: a guest kept from voting is in the mode of a board without a session
+		return modeFor(this.me?.role ?? null, this.deviceViewOnly, { sessionOpen: this.voteState.open && !this.voteBlocked, preferVote: this.preferVote })
+	}
+
+	/**
+	 * (Job 175) This guest may not vote now: a guest session (mode 'guest')
+	 * while a session with cfg.accountsOnly is open. False again at the end.
+	 *
+	 * @return {boolean}
+	 */
+	get voteBlocked() {
+		return this.mode === 'guest' && this.voteState.open && this.voteState.cfg.accountsOnly === true
+	}
+
+	/** @return {boolean} this person may vote now: canVote(me.role) and not kept out by accountsOnly (job 175) */
+	mayVote() {
+		return canVote(this.me?.role) && !this.voteBlocked
 	}
 
 	/**
@@ -954,6 +1527,11 @@ export class BoardSession {
 		if (lostEdit) {
 			this.closeMenu()
 		}
+		// job 172: another mode closes the reaction picker
+		this.closeReactionPicker()
+		// job 139: a mode switch ends the name fields; typed names are saved only
+		// when the switch settles (like the open editor), while edit still applies
+		this.endSortLabels({ save: settle && lostEdit && !this.frozen })
 		if (settle && lostEdit && !this.frozen) {
 			this.setSceneMode(next, { settle: true })
 			this.clientMode = next
@@ -965,12 +1543,15 @@ export class BoardSession {
 				this.setSceneMode(next)
 			}
 		}
-		if (lostEdit && this.editingId !== null && !this.leaseLost.has(this.editingId)) {
-			this.loseLease(this.editingId, this.noticeFor(this.editingId, 'denied'))
+		const editKey = this.editKey()
+		if (lostEdit && editKey !== null && !this.leaseLost.has(editKey)) {
+			this.loseLease(editKey, this.noticeFor(editKey, 'denied'))
 		}
 		this.pushVoteState()
 		this.ui.onMode?.(next)
 		this.emitVotes()
+		// job 191: the tag panel works in mode edit only
+		this.checkTags()
 		this.sync?.poke()
 	}
 
@@ -1016,6 +1597,10 @@ export class BoardSession {
 		if (r.newSid) {
 			this.vtAt = -Infinity
 		}
+		if (r.newSid || !this.voteState.liveAllowed()) {
+			// job 149: the board counts start hidden with every session and end with it
+			this.liveShown = false
+		}
 		if (r.opened) {
 			// the default at the start of a session: vote (SPEC-M1 §6.5.4)
 			this.preferVote = true
@@ -1054,6 +1639,8 @@ export class BoardSession {
 	afterVoteMeta(r, { initial }) {
 		const meta = this.board?.meta && typeof this.board.meta === 'object' ? this.board.meta : {}
 		this.follower?.onSummon(meta.summon)
+		this.slideShow?.sync()
+		this.emitSlides()
 		if (r.opened && this.deviceViewOnly && this.clientMode === 'vote' && !this.follower?.target) {
 			this.cameraToVoteArea()
 		}
@@ -1085,15 +1672,26 @@ export class BoardSession {
 
 	/**
 	 * `votes` block of a sync answer (SPEC-M1 §4.5): after onAcks and onMeta
-	 * of the same answer; a foreign sid is dropped (R16 SRV-03).
+	 * of the same answer; a foreign sid is dropped (R16 SRV-03). (Job 216)
+	 * The vote ops of the same answer that came back stale are carried onto
+	 * the state the block brings (rebaseVotes, silently at most perItem), once,
+	 * and only when the block of the current sid with `mine` was taken; else
+	 * they stay dropped.
 	 *
 	 * @param {object} votes `votes` block of a sync answer
 	 */
 	onVotes(votes) {
 		const r = this.voteState.ack(null, votes, this.pendingVotes())
+		const stale = this.staleVotes.filter((f) => f.op.s === this.voteState.sid)
+		this.staleVotes = []
 		if (r.taken) {
 			this.pushVoteState()
 			this.emitVotes()
+			if ('mine' in votes) {
+				for (const [id, n] of rebaseVotes(stale, this.voteState.mine, this.voteState.cfg.perItem)) {
+					this.vote(id, n)
+				}
+			}
 		}
 	}
 
@@ -1125,14 +1723,56 @@ export class BoardSession {
 		if (v.state === null) {
 			return null
 		}
+		const badges = v.badges({ live: this.liveShown })
+		if (this.liveShown) {
+			// job 149: the live totals only on items the model has
+			for (const id of [...badges.keys()]) {
+				if (!this.model?.has(id)) {
+					badges.delete(id)
+				}
+			}
+		}
 		return {
 			// the scene asks with an id; a real boolean (S-13)
 			votable: (id) => v.votable(typeof id === 'string' && this.model?.has(id) ? this.model.get(id) : null),
 			scope: v.scope,
-			badges: v.badges(),
+			badges,
 			markVotable: v.open && this.clientMode === 'vote',
 			color: colorFor(this.me?.pid ?? ''),
+			// job 149: the totals are the live count (drawn hollow)
+			live: this.liveShown,
 		}
+	}
+
+	/**
+	 * (Job 149) The bar's "Live count": shows or hides the live count on the
+	 * board of this tab only (never stored, never sent). Only for a moderator
+	 * while a session with live is open; else nothing changes.
+	 *
+	 * @param {boolean} on show the board counts
+	 * @return {boolean} taken
+	 */
+	setLiveShown(on) {
+		if (!this.voteState.liveAllowed()) {
+			return false
+		}
+		const next = on === true
+		if (next !== this.liveShown) {
+			this.liveShown = next
+			this.pushVoteState()
+			this.emitVotes()
+		}
+		return true
+	}
+
+	/**
+	 * @return {Array<[string, number]>|null} the live count (job 149) of the
+	 *   items the model has, descending; null without one and for everyone
+	 *   without the moderation right
+	 */
+	liveTally() {
+		const tally = this.me?.mod === true ? this.voteState.tally : null
+		return tally ? tally.filter(([id]) => !!this.model?.has(id)) : null
 	}
 
 	/** Hands the vote state to the scene (a TypeError of the scene is logged, the old state stays). */
@@ -1178,9 +1818,16 @@ export class BoardSession {
 			show: v.show,
 			by: v.by,
 			mod,
-			canVote: canVote(this.me?.role),
+			canVote: this.mayVote(),
 			mode: this.clientMode,
-			canSwitch: v.open && canEdit(this.me?.role) && !this.deviceViewOnly,
+			canSwitch: v.open && canEdit(this.me?.role) && !this.deviceViewOnly && !this.voteBlocked,
+			// job 149: the live count option, this tab's board counts, the ranking (moderators only)
+			live: v.cfg.live,
+			liveShown: this.liveShown,
+			tally: this.liveTally(),
+			// job 175: only accounts vote; this guest is kept from voting
+			accountsOnly: v.cfg.accountsOnly,
+			voteBlocked: this.voteBlocked,
 			event,
 		}
 	}
@@ -1222,7 +1869,7 @@ export class BoardSession {
 	votesDebug() {
 		const v = this.voteState
 		if (v.state === null) {
-			return { sid: null, state: null, open: false, left: null, mine: {}, results: null, voters: null }
+			return { sid: null, state: null, open: false, left: null, mine: {}, results: null, voters: null, live: false, liveShown: false, tally: null, accountsOnly: false, voteBlocked: false, canVote: this.mayVote() }
 		}
 		return {
 			sid: v.sid,
@@ -1232,6 +1879,13 @@ export class BoardSession {
 			mine: { ...v.mine },
 			results: v.state === 'closed' ? v.results : null,
 			voters: this.me?.mod === true ? v.voters : null,
+			live: v.cfg.live,
+			liveShown: this.liveShown,
+			tally: this.liveTally(),
+			// job 175
+			accountsOnly: v.cfg.accountsOnly,
+			voteBlocked: this.voteBlocked,
+			canVote: this.mayVote(),
 		}
 	}
 
@@ -1239,7 +1893,10 @@ export class BoardSession {
 	 * Sets my votes on an item (SPEC-M1 §6.5.5): a vote op, not in the undo
 	 * stack; tablets send it with the 2-s tick (not urgent). (R22, P7-10) Only
 	 * the canvas tap of perItem = 1 passes tap: the vote list and the stepper
-	 * are never taken for a double tap.
+	 * are never taken for a double tap. (Job 216) The op carries the base b,
+	 * my number on the item this change starts from (pending ops included):
+	 * when another tab of mine changed it meanwhile, the server answers
+	 * `stale` and onVotes carries the change onto the new state.
 	 *
 	 * @param {string} id item id
 	 * @param {number} n my votes on it (0 = none)
@@ -1247,9 +1904,11 @@ export class BoardSession {
 	 * @return {boolean} proposed and queued
 	 */
 	vote(id, n, { tap = false } = {}) {
-		if (this.frozen || !this.sync || !canVote(this.me?.role)) {
+		// job 175: a guest of a session with accountsOnly queues nothing (the server would deny it)
+		if (this.frozen || !this.sync || !this.mayVote()) {
 			return false
 		}
+		const b = this.voteState.mine[id] ?? 0
 		const r = this.voteState.propose(id, n, this.clock.now(), { tap })
 		if (!r.ok) {
 			if (r.reason === 'limit') {
@@ -1259,7 +1918,7 @@ export class BoardSession {
 			}
 			return false
 		}
-		this.sync.enqueue([{ o: 'vote', s: this.voteState.sid, id, n }], { urgent: !this.deviceViewOnly })
+		this.sync.enqueue([{ o: 'vote', s: this.voteState.sid, id, n, b }], { urgent: !this.deviceViewOnly })
 		this.pushVoteState()
 		this.emitVotes()
 		return true
@@ -1337,7 +1996,7 @@ export class BoardSession {
 			return
 		}
 		const item = this.model?.has(st.id) ? this.model.get(st.id) : null
-		if (this.frozen || this.destroyed || this.clientMode !== 'vote' || !canVote(this.me?.role) || !this.voteState.open || !item || !this.voteState.votable(item)) {
+		if (this.frozen || this.destroyed || this.clientMode !== 'vote' || !this.mayVote() || !this.voteState.open || !item || !this.voteState.votable(item)) {
 			this.closeStepper()
 		}
 	}
@@ -1457,9 +2116,10 @@ export class BoardSession {
 
 	/**
 	 * Frame list, vote list (SPEC-M1 §6.5.1): stop following, then show the
-	 * item with ZOOM_PAD_PX around it (no 100 % limit). (R22, P7-11) With
+	 * item with ZOOM_PAD_PX around it (no 100 % limit), in the part of the
+	 * canvas the bars leave free (job 223, viewInsets). (R22, P7-11) With
 	 * `left`/`right` (screen px a side panel covers at that edge of the
-	 * canvas) the item lands centred in the visible rest (reserveRect).
+	 * canvas) the larger of that and the measured inset counts.
 	 *
 	 * @param {string} id item id
 	 * @param {{left?: number, right?: number}} [reserve] covered px at the left/right edge
@@ -1470,53 +2130,55 @@ export class BoardSession {
 		if (!box) {
 			return false
 		}
-		return this.zoomToRect(this.reserveRect(box, left, right))
+		const v = this.viewInsets()
+		// NaN || 0 is 0; what is still no positive number counts as 0 in freePart
+		return this.zoomToRect(box, { ...v, left: Math.max(v?.left || 0, left || 0), right: Math.max(v?.right || 0, right || 0) })
 	}
 
 	/**
-	 * (R22, P7-11) The world rectangle widened by the covered edges, so that
-	 * cameraForRect(…, ZOOM_PAD_PX) puts `rect` centred into the visible part
-	 * of the canvas at the scale it gets there: s is the fit of rect into the
-	 * visible width (cameraForRect of rect stretched by (vw − 2·pad) / free,
-	 * so the scene's scale limits apply as usual), then left/s and right/s
-	 * world units are added at the two edges. Without a covered edge, without
-	 * a measurable canvas or when nothing would stay free: rect itself.
+	 * (Job 180) The world rectangle widened upwards by the covered top of the
+	 * canvas (`top` container px: the top bar, the banners and the context
+	 * bar of a new selection, ui.viewTop), so that cameraForRect(…,
+	 * ZOOM_PAD_PX) puts `rect` whole below it: s is the fit of rect into the
+	 * visible height (cameraForRect of rect stretched by (vh − 2·pad) / free,
+	 * so the scene's scale limits apply as usual), then top/s world units are
+	 * added above. Without a covered top, without a measurable canvas or when
+	 * nothing would stay free: rect itself.
 	 *
 	 * @param {{x: number, y: number, w: number, h: number}} rect world rectangle
-	 * @param {number} left covered screen px at the left edge
-	 * @param {number} right covered screen px at the right edge
+	 * @param {number} top covered screen px at the top edge
 	 * @return {{x: number, y: number, w: number, h: number}}
 	 */
-	reserveRect(rect, left = 0, right = 0) {
-		const l = Number.isFinite(left) && left > 0 ? left : 0
-		const r = Number.isFinite(right) && right > 0 ? right : 0
+	reserveTop(rect, top = 0) {
+		const T = Number.isFinite(top) && top > 0 ? top : 0
 		const sc = this.scene
-		if (l + r === 0 || !sc || typeof sc.cameraForRect !== 'function' || !(rect?.w > 0)) {
+		if (T === 0 || !sc || typeof sc.cameraForRect !== 'function' || !(rect?.h > 0)) {
 			return rect
 		}
 		const vp = sc.getViewport?.()
 		const cam = sc.getCamera?.()
-		const vw = vp && cam && Number.isFinite(vp.w) && cam.scale > 0 ? vp.w * cam.scale : 0
-		const full = vw - 2 * ZOOM_PAD_PX
-		const free = full - l - r
+		const vh = vp && cam && Number.isFinite(vp.h) && cam.scale > 0 ? vp.h * cam.scale : 0
+		const full = vh - 2 * ZOOM_PAD_PX
+		const free = full - T
 		if (!(free > 0)) {
 			return rect
 		}
-		const s = sc.cameraForRect({ x: rect.x, y: rect.y, w: rect.w * full / free, h: rect.h }, ZOOM_PAD_PX)?.scale
+		const s = sc.cameraForRect({ x: rect.x, y: rect.y, w: rect.w, h: rect.h * full / free }, ZOOM_PAD_PX)?.scale
 		if (!(s > 0)) {
 			return rect
 		}
-		return { x: rect.x - l / s, y: rect.y, w: rect.w + (l + r) / s, h: rect.h }
+		return { x: rect.x, y: rect.y - T / s, w: rect.w, h: rect.h + T / s }
 	}
 
 	/**
-	 * "Zoom to selection" (zoom controls, like Shift+2).
+	 * "Zoom to selection" (zoom controls, like Shift+2): (job 242) up to
+	 * MAX_SCALE, like a zoom by hand.
 	 *
 	 * @return {boolean} the camera moved
 	 */
 	zoomToSelection() {
 		const ids = this.selection.filter((id) => this.model?.has(id))
-		return ids.length > 0 && this.zoomToRect(this.boundsOf(ids))
+		return ids.length > 0 && this.zoomToRect(this.boundsOf(ids), this.viewInsets(), MAX_SCALE)
 	}
 
 	/**
@@ -1541,15 +2203,17 @@ export class BoardSession {
 
 	/**
 	 * @param {{x: number, y: number, w: number, h: number}|null} rect world rectangle
+	 * @param {{top?: number, right?: number, bottom?: number, left?: number}|null} [insets] (job 223) covered px per edge (viewInsets; null: the whole canvas)
+	 * @param {number} [maxScale] (job 242) highest scale; undefined: the scene's default (ZOOM_TO_MAX_SCALE)
 	 * @return {boolean} the camera moved
 	 */
-	zoomToRect(rect) {
+	zoomToRect(rect, insets = null, maxScale = undefined) {
 		const sc = this.scene
 		if (!rect || !sc || typeof sc.cameraForRect !== 'function') {
 			return false
 		}
 		this.follower?.stop('user')
-		sc.setCamera(sc.cameraForRect(rect, ZOOM_PAD_PX))
+		sc.setCamera(sc.cameraForRect(rect, ZOOM_PAD_PX, insets, maxScale))
 		return true
 	}
 
@@ -1671,7 +2335,7 @@ export class BoardSession {
 	}
 
 	/**
-	 * @param {{per: number, perItem: number, scope: (string|null), types: string[], minutes: (number|null)}} cfg settings
+	 * @param {{per: number, perItem: number, scope: (string|null), types: string[], minutes: (number|null), live?: boolean}} cfg settings (live: job 149)
 	 * @return {Promise<{ok: boolean, code: (string|null)}>}
 	 */
 	startVote(cfg) {
@@ -1704,6 +2368,28 @@ export class BoardSession {
 	/** @return {Promise<{ok: boolean, code: (string|null)}>} "Stop presenting" */
 	endSummon() {
 		return this.moderate(() => this.api.endSummon(this.boardId))
+	}
+
+	/**
+	 * Factory job 275: private writing.
+	 *
+	 * @param {'start'|'reveal'} action action
+	 * @param {string|null} [frame] frame of start, null = the whole board
+	 * @return {Promise<{ok: boolean, code: (string|null)}>}
+	 */
+	privateWriting(action, frame = null) {
+		return this.moderate(() => this.api.privateWriting(this.boardId, action, frame))
+	}
+
+	/** @return {number} job 275: covered notes in the model (private writing) */
+	coveredCount() {
+		let n = 0
+		for (const id of this.model?.ids() ?? []) {
+			if (isCovered(this.model.get(id))) {
+				n++
+			}
+		}
+		return n
 	}
 
 	/** @return {boolean} meta.summon names this tab (my pid and this client id) */
@@ -1754,6 +2440,151 @@ export class BoardSession {
 			this.closeMenu()
 		}
 		this.ui.onFollow?.(st)
+		this.emitSlides()
+	}
+
+	// ---- factory job 272: frames as slides -------------------------------
+
+	/**
+	 * Starts presenting the frames from this tab: at the selected frame when
+	 * exactly one frame is selected, else at the first slide.
+	 *
+	 * @return {Promise<boolean>} started
+	 */
+	startSlides() {
+		const sel = this.selection ? [...this.selection] : []
+		const at = sel.length === 1 && this.model?.get(sel[0])?.t === 'frame' ? sel[0] : null
+		this.follower?.stop('user')
+		return this.slideShow.start(at)
+	}
+
+	/** @param {number|'first'|'last'} dir +1, -1, 'first', 'last' @return {boolean} moved */
+	slideStep(dir) {
+		return this.slideShow.step(dir)
+	}
+
+	/** @param {string} id frame @return {boolean} moved */
+	slideTo(id) {
+		return this.slideShow.go(id)
+	}
+
+	/**
+	 * @param {string} id slide
+	 * @param {number} to new index
+	 * @return {Promise<boolean>} saved
+	 */
+	moveSlide(id, to) {
+		return this.slideShow.reorder(id, to)
+	}
+
+	/** @return {Promise<boolean>} ended (DELETE summon) */
+	endSlides() {
+		return this.slideShow.end()
+	}
+
+	/** "Look around myself": leaves the presentation (an own exit, the chip brings back). */
+	lookAround() {
+		this.follower?.stop('user')
+	}
+
+	/**
+	 * Screen px the presentation covers at the right edge (the presenter's
+	 * slide list) and at the bottom (its bar, and the session bar below it);
+	 * the shown frame is fitted into the rest.
+	 *
+	 * @param {{right?: number, bottom?: number}} o covered px
+	 */
+	setSlideInsets({ right = 0, bottom = 0 } = {}) {
+		const px = (v) => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0)
+		const next = { right: px(right), bottom: px(bottom) }
+		if (next.right === this.slideInsets.right && next.bottom === this.slideInsets.bottom) {
+			return
+		}
+		this.slideInsets = next
+		const cur = this.slideShow.current()
+		if (cur) {
+			this.showSlide(cur)
+		} else if (this.follower?.target?.summon) {
+			// a follower fits the frame again with the new bottom
+			this.follower.lastView = null
+			this.follower.step(this.now())
+		}
+	}
+
+	/** @param {string} id frame: the presenter's camera fits it */
+	showSlide(id) {
+		const sc = this.scene
+		const box = this.model?.get(id)?.t === 'frame' ? this.model.abs(id) : null
+		if (!sc || !box || typeof sc.cameraForRect !== 'function' || typeof sc.followTo !== 'function') {
+			return
+		}
+		const cam = sc.cameraForRect(box, FRAME_PAD_PX, { right: this.slideInsets.right, bottom: this.slideInsets.bottom }, MAX_SCALE)
+		sc.followTo(cam, 300)
+	}
+
+	/**
+	 * The presentation state for the shell (ui.onSlides): role 'presenter'
+	 * (this tab presents frames), 'viewer' (this client follows a summon
+	 * naming a frame of this board) or null; and the shown frame's screen box
+	 * (ui.onSlideRect).
+	 */
+	emitSlides() {
+		if (this.destroyed || !this.slideShow) {
+			return
+		}
+		const meta = this.board?.meta && typeof this.board.meta === 'object' ? this.board.meta : {}
+		const s = summonOf(meta.summon)
+		let role = null
+		let current = null
+		if (this.slideShow.active) {
+			role = 'presenter'
+			current = this.slideShow.current()
+		} else if (s?.frame && this.follower?.target?.summon && this.model?.get(s.frame)?.t === 'frame') {
+			role = 'viewer'
+			current = s.frame
+		}
+		if (role === null) {
+			if (this.slideRole !== null) {
+				this.slideRole = null
+				this.ui.onSlides?.(null)
+			}
+			return
+		}
+		this.slideRole = role
+		const list = this.slideShow.list()
+		this.ui.onSlides?.({
+			role,
+			list,
+			current,
+			index: list.findIndex((x) => x.id === current),
+			name: s?.name ?? '',
+		})
+		this.emitSlideRect()
+	}
+
+	/**
+	 * The shown frame's screen box (container px) while a presentation shows,
+	 * measured with the camera the user sees: the one onCamera reports, else
+	 * the scene's live camera (a follow glide moves it before the confirmed
+	 * camera follows).
+	 *
+	 * @param {{x: number, y: number, scale: number}} [cam] camera now
+	 */
+	emitSlideRect(cam = null) {
+		if (this.slideRole === null) {
+			return
+		}
+		const meta = this.board?.meta && typeof this.board.meta === 'object' ? this.board.meta : {}
+		const id = this.slideRole === 'presenter' ? this.slideShow.current() : summonOf(meta.summon)?.frame
+		const sc = this.scene
+		const box = id && this.model?.get(id)?.t === 'frame' ? this.model.abs(id) : null
+		const c = cam && [cam.x, cam.y, cam.scale].every(Number.isFinite) && cam.scale > 0
+			? cam
+			: (typeof sc?.liveCamera === 'function' ? sc.liveCamera() : sc?.getCamera?.())
+		if (!box || !c || ![c.x, c.y, c.scale].every(Number.isFinite)) {
+			return
+		}
+		this.ui.onSlideRect?.({ x: (box.x - c.x) * c.scale, y: (box.y - c.y) * c.scale, w: box.w * c.scale, h: box.h * c.scale })
 	}
 
 	/**
@@ -1973,7 +2804,9 @@ export class BoardSession {
 		return {
 			onIntent: (i) => this.onIntent(i),
 			onSelection: (ids) => {
-				this.selection = Array.isArray(ids) ? [...ids] : []
+				const next = Array.isArray(ids) ? [...ids] : []
+				this.sortSelectionChange(next)
+				this.selection = next
 				this.emitSelection()
 				this.sync?.poke()
 			},
@@ -1994,6 +2827,12 @@ export class BoardSession {
 				this.follower?.onActivity(a, this.clientMode)
 				if (a && !a.active) {
 					this.flushDeferred()
+					// job 240: the scene wrote the dragged box into the model while it
+					// moved, so no flush sees a change: report the selection once more,
+					// "Arrange" (and its tick "1:1") shows the box as it ended up
+					if ((a.kind === 'drag' || a.kind === 'transform') && Array.isArray(a.ids) && a.ids.some((id) => this.selection.includes(id))) {
+						this.emitSelection()
+					}
 				}
 				if (a?.kind !== 'press') {
 					this.sync?.poke()
@@ -2009,11 +2848,451 @@ export class BoardSession {
 				this.dragPreview = Array.isArray(p) ? p : []
 				this.sync?.poke()
 			},
-			onEditing: (id, takeover) => this.onEditing(id, takeover),
-			onTool: (tool) => this.ui.onTool?.(tool),
+			onEditing: (id, takeover, cell) => this.onEditing(id, takeover, cell),
+			onTool: (tool) => {
+				// job 139: a tool change ends the name fields
+				this.endSortLabels()
+				this.ui.onTool?.(tool)
+				// job 188: the scene changed the tool (a key, back to select after creating): the note tool says "Note"
+				if (this.noteBack()) {
+					this.emitToolOptions()
+				}
+			},
 			// the key G switched the grid in the scene (R12): only store it
 			onGrid: (on) => this.storeGrid(on),
+			// factory job 137: the shell places its context bar at the selection
+			onSelectionBox: (b) => this.ui.onSelectionBox?.(b),
+			// factory job 142: the first one-finger pan may show the tip about selecting with a finger
+			onTouchPan: () => this.maybeTouchTip(),
+			// factory job 145: the key ? opens the shell's shortcuts overview, in every mode and frozen too
+			onShortcuts: () => this.ui.onShortcuts?.(),
+			onSearch: () => this.ui.onSearch?.(),
+			// factory job 147: the key C shows or hides other people's cursors, in every mode and frozen too
+			onCursors: () => this.toggleCursors(),
+			// factory job 171: a point of the own laser stroke, null at its end
+			onLaser: (p) => this.laserPoint(p),
+			// factory job 190: the scene's offer of locked items changed (the bar's "Select n locked items")
+			onLockedOffer: () => this.emitSelection(),
+			// factory job 195: the focused node of the one selected mind map (the bar's section "Branch")
+			onNodeFocus: (id, key) => {
+				this.mmFocus = typeof id === 'string' && typeof key === 'string' ? { id, key } : null
+				this.emitSelection()
+			},
+			// factory job 223: Shift+1 and Shift+2 keep the content clear of the bars, like the buttons
+			viewInsets: () => this.viewInsets(),
 		}
+	}
+
+	// Factory job 255: comments, reactions and the laser live in board/sessionComments.js (SessionComments,
+	// this.talk); these hand over.
+
+	mayReact() {
+		return this.talk.mayReact()
+	}
+
+	pushReactions() {
+		return this.talk.pushReactions()
+	}
+
+	react(id, e) {
+		return this.talk.react(id, e)
+	}
+
+	reactIntent(i) {
+		return this.talk.reactIntent(i)
+	}
+
+	commentApi() {
+		return this.talk.commentApi()
+	}
+
+	mayComment() {
+		return this.talk.mayComment()
+	}
+
+	commentsView() {
+		return this.talk.commentsView()
+	}
+
+	emitComments() {
+		return this.talk.emitComments()
+	}
+
+	setBubbles(on) {
+		return this.talk.setBubbles(on)
+	}
+
+	startCommentPick() {
+		return this.talk.startCommentPick()
+	}
+
+	cancelCommentPick() {
+		return this.talk.cancelCommentPick()
+	}
+
+	onCommentPick(i) {
+		return this.talk.onCommentPick(i)
+	}
+
+	commentOn(id, node) {
+		return this.talk.commentOn(id, node)
+	}
+
+	composeComment(place) {
+		return this.talk.composeComment(place)
+	}
+
+	commentCall(fn) {
+		return this.talk.commentCall(fn)
+	}
+
+	createThread(o) {
+		return this.talk.createThread(o)
+	}
+
+	replyTo(thread, text) {
+		return this.talk.replyTo(thread, text)
+	}
+
+	editComment(comment, text) {
+		return this.talk.editComment(comment, text)
+	}
+
+	setResolved(thread, resolved) {
+		return this.talk.setResolved(thread, resolved)
+	}
+
+	deleteComment(comment) {
+		return this.talk.deleteComment(comment)
+	}
+
+	searchMentions(q) {
+		return this.talk.searchMentions(q)
+	}
+
+	commentError(e) {
+		return this.talk.commentError(e)
+	}
+
+	commentsOnRemove(ops) {
+		return this.talk.commentsOnRemove(ops)
+	}
+
+	liveCommentBox(item, node) {
+		return this.talk.liveCommentBox(item, node)
+	}
+
+	liveCameraNow() {
+		return this.talk.liveCameraNow()
+	}
+
+	commentPlaces() {
+		return this.talk.commentPlaces()
+	}
+
+	threadAnchor(id) {
+		return this.talk.threadAnchor(id)
+	}
+
+	commentScreen(o) {
+		return this.talk.commentScreen(o)
+	}
+
+	centerOn(w, reserve) {
+		return this.talk.centerOn(w, reserve)
+	}
+
+	/**
+	 * (Job 271) What the board search reads: the local model and the loaded
+	 * comment threads (only what this person may see), with the anchor of a
+	 * thread; null before the board loaded.
+	 *
+	 * @return {{model: object, threads: object[], anchorOf: function(object): ({x: number, y: number}|null)}|null}
+	 */
+	searchSource() {
+		if (!this.model) {
+			return null
+		}
+		return { model: this.model, threads: this.comments?.threads ?? [], anchorOf: (th) => this.threadAnchor(th.id) }
+	}
+
+	/**
+	 * (Job 274) What the outline reads: the local model and the frames with
+	 * their shown titles (frames()); null before the board loaded.
+	 *
+	 * @return {{model: object, frames: {id: string, title: string}[]}|null}
+	 */
+	outlineSource() {
+		if (!this.model) {
+			return null
+		}
+		return { model: this.model, frames: this.frames() }
+	}
+
+	/**
+	 * (Job 271) The frame around the current hit of the board search.
+	 *
+	 * @param {string|null} id item id (null: none)
+	 */
+	setSearchHit(id) {
+		this.scene?.setSearchHit?.(typeof id === 'string' ? id : null)
+	}
+
+	/**
+	 * (Job 271) Shows a hit of the board search: an item into view
+	 * (zoomToItem with the covered edges), a thread's anchor into the free
+	 * part (centerOn), and the frame around the item (a thread: the item it
+	 * hangs on, if any). Selection, ops and the undo stack stay as they are.
+	 *
+	 * @param {{kind: string, id: string, item: (string|null)}|null} hit a hit of board/search.js
+	 * @param {{left?: number, right?: number}} [reserve] covered px at the left/right edge
+	 * @return {boolean} the camera moved
+	 */
+	showSearchHit(hit, reserve = {}) {
+		if (!hit || typeof hit.id !== 'string') {
+			return false
+		}
+		if (hit.kind === 'comment') {
+			this.setSearchHit(hit.item)
+			const a = this.threadAnchor(hit.id)
+			return a ? this.centerOn(a, reserve) : false
+		}
+		this.setSearchHit(hit.id)
+		return this.zoomToItem(hit.id, reserve)
+	}
+
+	openReactionPicker(id, rect) {
+		return this.talk.openReactionPicker(id, rect)
+	}
+
+	reactFromBar(rect) {
+		return this.talk.reactFromBar(rect)
+	}
+
+	emitReactionPicker() {
+		return this.talk.emitReactionPicker()
+	}
+
+	closeReactionPicker() {
+		return this.talk.closeReactionPicker()
+	}
+
+	pickReaction(e) {
+		return this.talk.pickReaction(e)
+	}
+
+	openReactionPopup(kind, id, e, rect, hold) {
+		return this.talk.openReactionPopup(kind, id, e, rect, hold)
+	}
+
+	emitReactionPopup() {
+		return this.talk.emitReactionPopup()
+	}
+
+	closeReactionPopup() {
+		return this.talk.closeReactionPopup()
+	}
+
+	checkReactions(ids) {
+		return this.talk.checkReactions(ids)
+	}
+
+	laserPoint(p) {
+		return this.talk.laserPoint(p)
+	}
+
+	laserWire() {
+		return this.talk.laserWire()
+	}
+
+	/** @return {{x: number, y: number, scale: number}|null} the scene's camera when it is a valid one */
+	cameraNow() {
+		const c = this.scene?.getCamera?.() ?? null
+		return c && Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.scale) ? { x: c.x, y: c.y, scale: c.scale } : null
+	}
+
+	// ---- factory job 191: tags ---------------------------------------------
+
+	// Factory job 257: the tag list, the tag panels, the filter and the tag writes live in
+	// board/sessionTags.js (SessionTags, this.tagging); these hand over. Undo and redo of a
+	// tag step (recordTagStep, sendTagHistory) stay here beside history().
+
+	tagApi() {
+		return this.tagging.tagApi()
+	}
+
+	boardTags() {
+		return this.tagging.boardTags()
+	}
+
+	mayTag() {
+		return this.tagging.mayTag()
+	}
+
+	tagTargets() {
+		return this.tagging.tagTargets()
+	}
+
+	pushTags() {
+		return this.tagging.pushTags()
+	}
+
+	tagsView() {
+		return this.tagging.tagsView()
+	}
+
+	emitTags() {
+		return this.tagging.emitTags()
+	}
+
+	/**
+	 * @param {unknown} rect a box of the shell (board px)
+	 * @return {{x: number, y: number, w: number, h: number}|null}
+	 */
+	static tagRect(rect) {
+		return tagRect(rect)
+	}
+
+	openTagPanel(rect) {
+		return this.tagging.openTagPanel(rect)
+	}
+
+	openTagFilter() {
+		return this.tagging.openTagFilter()
+	}
+
+	openTagList(id, rect) {
+		return this.tagging.openTagList(id, rect)
+	}
+
+	closeTagPanel(o) {
+		return this.tagging.closeTagPanel(o)
+	}
+
+	checkTags() {
+		return this.tagging.checkTags()
+	}
+
+	tickTag(tagId, on, made) {
+		return this.tagging.tickTag(tagId, on, made)
+	}
+
+	createTag(name) {
+		return this.tagging.createTag(name)
+	}
+
+	renameTag(id, name) {
+		return this.tagging.renameTag(id, name)
+	}
+
+	recolorTag(id, color) {
+		return this.tagging.recolorTag(id, color)
+	}
+
+	deleteTag(id) {
+		return this.tagging.deleteTag(id)
+	}
+
+	changeTag(id, body, extra) {
+		return this.tagging.changeTag(id, body, extra)
+	}
+
+	tagById(id) {
+		return this.tagging.tagById(id)
+	}
+
+	notesWithTag(id) {
+		return this.tagging.notesWithTag(id)
+	}
+
+	retag(id, notes) {
+		return this.tagging.retag(id, notes)
+	}
+
+	saveTags(body, o) {
+		return this.tagging.saveTags(body, o)
+	}
+
+	tagFailed(e) {
+		return this.tagging.tagFailed(e)
+	}
+
+	setTagFilter(ids) {
+		return this.tagging.setTagFilter(ids)
+	}
+
+	toggleTagFilter(id) {
+		return this.tagging.toggleTagFilter(id)
+	}
+
+	selectWithTag(id) {
+		return this.tagging.selectWithTag(id)
+	}
+
+	tagAction(name, ...args) {
+		return this.tagging.tagAction(name, ...args)
+	}
+
+	withPasteTags(payload, run) {
+		return this.tagging.withPasteTags(payload, run)
+	}
+
+	/**
+	 * Job 206: a step with only a tag part (renaming, recolouring, deleting,
+	 * or creating when no note got the tag).
+	 *
+	 * @param {object|null} tag the step's tag part (null: nothing)
+	 */
+	recordTagStep(tag) {
+		if (!tag) {
+			return
+		}
+		this.undoStack.push({ ops: [], inverse: [], tag })
+		this.emitUndo()
+	}
+
+	/**
+	 * Job 206: undo or redo of the top step with a tag part (undo.js
+	 * planTagHistory): first its write of the tag route, then, after the
+	 * answer, the ops of the step (a create's ticking) as sendHistory sends
+	 * them; a restored deleted tag returns to the notes that lost its id
+	 * meanwhile (retag). A failed write (its hint from saveTags) or an add the
+	 * server skipped (another tag has the name: the hint tag-exists) sends
+	 * nothing more and the step stays where it is.
+	 *
+	 * @param {'undo'|'redo'} dir direction
+	 * @return {Promise<void>}
+	 */
+	async sendTagHistory(dir) {
+		const step = this.undoStack.peek(dir)
+		if (!step?.tag || !this.sync || !this.mayTag()) {
+			return
+		}
+		const start = { gen: this.undoStack.gen, at: this.undoStack.done.length }
+		const id = step.tag.id
+		const plan = planTagHistory(step.tag, dir, this.tagById(id), this.notesWithTag(id))
+		if (plan.body !== null) {
+			const ok = await this.saveTags(plan.body)
+			if (!ok || this.destroyed) {
+				return
+			}
+			if (plan.body.action === 'add') {
+				if (this.tagById(id) === null) {
+					this.info(t('knorke', 'A tag with this name already exists.'), { hook: 'tag-exists' })
+					return
+				}
+				this.retag(id, step.tag.notes ?? [])
+			}
+		}
+		if (plan.changed) {
+			this.info(t('knorke', 'The tag was skipped because someone else changed it.'), { hook: 'undo-changed' })
+		}
+		const ops = step.ops.length > 0 || step.inverse.length > 0 ? this.historyPlan({ ops: structuredClone(step.ops), inverse: structuredClone(step.inverse) }, dir) : null
+		this.undoStack.settle(step, dir, { ops: ops?.plan.step?.ops ?? [], inverse: ops?.plan.step?.inverse ?? [], tag: plan.tag }, start)
+		if (ops !== null) {
+			this.historySend(dir, ops)
+		}
+		this.emitUndo()
 	}
 
 	// ---- intents ---------------------------------------------------------
@@ -2025,6 +3304,23 @@ export class BoardSession {
 		if (this.capture !== null && i && i.type === 'text') {
 			// unsentTexts(): the frozen editor's latest text, kept for the rescue
 			this.capture.push(i)
+			return
+		}
+		if (i && i.type === 'pick') {
+			// job 189: the click or tap of "New comment", every mode; never ends following
+			this.onCommentPick(i)
+			return
+		}
+		if (i && REACT_INTENTS.includes(i.type)) {
+			// job 172: every mode; never ends following
+			if (this.model && !this.destroyed) {
+				this.reactIntent(i)
+			}
+			return
+		}
+		if (i && i.type === 'tagList') {
+			// job 191: "+n" of a note's tags, every mode; never ends following
+			this.openTagList(i.id, i.rect ?? null)
 			return
 		}
 		if (i && (i.type === 'vote' || i.type === 'voteMiss')) {
@@ -2082,6 +3378,13 @@ export class BoardSession {
 		case 'create':
 			this.createNow(i)
 			break
+		case 'stroke':
+			// job 273: a pen stroke, one put, one undo step; nothing is selected
+			this.commit(actions.createStroke(this.model, i), { urgent: true })
+			break
+		case 'neighbour':
+			this.neighbourNow(i)
+			break
 		case 'move': {
 			const r = actions.moveItems(this.model, i)
 			const nudge = i.nudge === true || (!this.activity.has('drag') && !this.activity.has('transform'))
@@ -2102,6 +3405,72 @@ export class BoardSession {
 			break
 		case 'text':
 			this.textNow(i)
+			break
+		case 'tableAppend':
+			// job 173: the "+" of a table; job 174: open (Tab in the last cell) opens the new row's left cell
+			this.tableAppend(i.id, i.axis, { open: i.open === true })
+			break
+		case 'tablePaste':
+			// job 174: a grid pasted into a cell
+			this.tablePaste(i.id, i.cell, i.grid)
+			break
+		case 'tableWidth':
+			// job 173: a column border was dragged
+			this.tableWidth(i.id, i.col, i.w)
+			break
+		case 'takeNote':
+			// job 188: a note off a pad
+			this.takeNoteNow(i)
+			break
+		case 'laneAdd':
+			// job 199: the "+" of a frame with lanes
+			this.laneAdd(i.id)
+			break
+		case 'laneHeight':
+			// job 199: a lane border was dragged
+			this.laneStep(i.id, () => setLaneHeight(this.model, i.id, i.lane, i.h))
+			break
+		case 'colAdd':
+			// job 208: the "+" of a frame with columns
+			this.colAdd(i.id)
+			break
+		case 'colWidth':
+			// job 208: a column's edge was dragged
+			this.laneStep(i.id, () => setLaneColWidth(this.model, i.id, i.col, i.w), 'col')
+			break
+		case 'laneMove':
+			// job 208: the head of a lane was dragged to another place
+			this.laneStep(i.id, () => moveLaneTo(this.model, i.id, i.lane, i.to))
+			break
+		case 'colMove':
+			// job 208: the head of a column was dragged to another place
+			this.laneStep(i.id, () => moveColTo(this.model, i.id, i.col, i.to), 'col')
+			break
+		case 'laneGroupMove':
+		case 'colGroupMove':
+			// job 225: a group's cell was dragged to another place
+			this.laneStep(i.id, () => moveGroupTo(this.model, i.id, i.group, i.to, i.type === 'colGroupMove' ? 'x' : 'y'))
+			break
+		case 'laneGroupSpan':
+		case 'colGroupSpan':
+			// job 225: a group's edge was dragged over lanes (columns)
+			this.laneStep(i.id, () => spanGroup(this.model, i.id, i.group, i.from, i.to, i.type === 'colGroupSpan' ? 'x' : 'y'))
+			break
+		case 'mmAdd':
+			// job 195: a child or a sibling of a node ("+", Tab, Enter, the menu)
+			this.mindmapAdd(i.id, i.key, i.as, { side: i.side ?? null, open: i.open === true })
+			break
+		case 'mmMove':
+			// job 195: a node dragged onto another branch or place in its row; job 196: onto empty space
+			this.mindmapPlace(i.id, i.key, i.target ?? null, i.place ?? null)
+			break
+		case 'mmDelete':
+			// job 195: Delete at the focus
+			this.mindmapDelete(i.id, i.key)
+			break
+		case 'mmFold':
+			// job 195: the dot of a branch
+			this.mindmapStep(i.id, (it) => toggleFold(it, i.key))
 			break
 		case 'reorder':
 			this.commit(actions.reorder(this.model, i.ids ?? [], i.where), { urgent: true })
@@ -2145,14 +3514,23 @@ export class BoardSession {
 	/**
 	 * Intent create (SPEC-M1 §6.3, §6.5.2): the tool options come with the
 	 * intent; a text item gets its measured height; the editor opens for note,
-	 * shape and text, and the item's first text merges with its creation into
-	 * one undo step.
+	 * shape and text (job 143: and a frame's title editor), and the item's
+	 * first text merges with its creation into one undo step. A frame closed
+	 * without a title stays untitled (no text op; only an empty text item
+	 * vanishes, dropEmptyNewText). A new frame's title band, where its
+	 * editor opens, first comes into view below the top chrome
+	 * (scene.revealTitle with ui.viewTop, review round 1 of job 143: a frame
+	 * is centred on the click, so its band may lie above the view); (job 193)
+	 * so does a new note pad's title band, which may lie below the view. A
+	 * pad closed without a title stays untitled, like a frame.
 	 *
 	 * @param {object} i create intent
 	 * @return {string|null} new id
 	 */
 	createNow(i) {
-		const r = actions.createItem(this.model, i)
+		// job 199: a frame with lanes gets three named lanes
+		const lanes = i.t === 'frame' && i.lanes === true ? [1, 2, 3].map((k) => t('knorke', 'Lane {n}', { n: k })) : null
+		const r = actions.createItem(this.model, lanes ? { ...i, lanes } : i, undefined, this.rand)
 		if (r.ops.length === 0) {
 			return null
 		}
@@ -2162,6 +3540,10 @@ export class BoardSession {
 		this.commit(r, { urgent: true, mergeKey: key })
 		this.select(r.selectIds)
 		if (r.edit) {
+			const editor = typeInfo(r.ops[0].t).editor
+			if (editor === 'title' || editor === 'padTitle') {
+				this.scene.revealTitle?.(id, this.viewTop(), this.viewBottom())
+			}
 			// The scene finishes an editor that is still open inside
 			// openTextEditor (onEditing null, then id): the closed one must still
 			// count as new there (an untouched new text item is deleted), so the
@@ -2173,11 +3555,119 @@ export class BoardSession {
 	}
 
 	/**
+	 * (Job 188) Intent takeNote (header): a note off the pad i.id, with its
+	 * top-left corner at i.at, or right of the pad (at null, Enter).
+	 *
+	 * @param {{id: string, at: ({x: number, y: number}|null)}} i takeNote intent
+	 * @return {string|null} the new note's id
+	 */
+	takeNoteNow(i) {
+		const at = i.at === null || i.at === undefined ? null : i.at
+		const r = actions.takeNote(this.model, i.id, { at })
+		if (r.ops.length === 0) {
+			return null
+		}
+		const id = r.selectIds[0]
+		const key = 'new:' + id
+		this.commit(r, { urgent: true, mergeKey: key })
+		this.select(r.selectIds)
+		if (at === null) {
+			this.scene.panIntoView(id)
+		}
+		// set after openTextEditor, like createNow: a closing editor must not take this note for its own
+		this.scene.openTextEditor(id)
+		this.newEdit = { id, key }
+		return id
+	}
+
+	/**
+	 * (job 143) How far the board's top chrome reaches down, with room for
+	 * the context bar of a new selection (ui.viewTop, the view measures it).
+	 *
+	 * @return {number} container px; 0 without an answer or when the view fails to measure
+	 */
+	viewTop() {
+		try {
+			const v = this.ui?.viewTop?.()
+			return Number.isFinite(v) && v > 0 ? v : 0
+		} catch (e) {
+			console.error('[knorke] viewTop failed', e)
+			return 0
+		}
+	}
+
+	/**
+	 * (job 223) The container px the bars and an open side panel cover at
+	 * each edge of the canvas (ui.viewInsets, the view measures them):
+	 * "Show everything", "Zoom to selection", the frame list and Shift+1/2
+	 * place the content in the rest.
+	 *
+	 * @return {{top?: number, right?: number, bottom?: number, left?: number}|null} as the view answers (Camera.js
+	 *   freePart counts what is no positive number as 0); null without an answer or when the view fails to measure
+	 */
+	viewInsets() {
+		try {
+			return this.ui?.viewInsets?.() ?? null
+		} catch (e) {
+			console.error('[knorke] viewInsets failed', e)
+			return null
+		}
+	}
+
+	/**
+	 * (job 193) How far the bars at the board's bottom (zoom controls, vote
+	 * bar, touch tip) reach up (ui.viewBottom, the view measures it).
+	 *
+	 * @return {number} container px; 0 without an answer or when the view fails to measure
+	 */
+	viewBottom() {
+		try {
+			const v = this.ui?.viewBottom?.()
+			return Number.isFinite(v) && v > 0 ? v : 0
+		} catch (e) {
+			console.error('[knorke] viewBottom failed', e)
+			return 0
+		}
+	}
+
+	/**
+	 * Intent neighbour (job 136): a click on a "+" handle or Alt/Option+arrow.
+	 * An empty item of the source's kind beside it (actions.neighbourItem;
+	 * job 148: a click brings `connect`, then a connector from the source to
+	 * it in the same step; job 159: a text item gets a copy with its text),
+	 * selected alone, panned into view like Tab. No editor opens (job 148,
+	 * job 159 for text): the next "+" or Alt/Option+arrow goes on from it,
+	 * text comes later (double click, Enter) in a step of its own. (job 162)
+	 * A click whose note or shape has a near item X in that direction adds
+	 * only a connector to X; X is selected and panned into view. The step's
+	 * mergeKey names the first put (N or the connector), never X: joining X
+	 * must not merge into the step that made X, so undo takes back only the
+	 * connector.
+	 *
+	 * @param {{id: string, side: string, connect?: {route: string, endCap: string}}} i neighbour intent
+	 * @return {string|null} id of the first new item (N, or the connector to X)
+	 */
+	neighbourNow(i) {
+		const r = actions.neighbourItem(this.model, i)
+		if (r.ops.length === 0) {
+			return null
+		}
+		const made = r.ops[0].id
+		this.commit(r, { urgent: true, mergeKey: 'new:' + made })
+		this.select(r.selectIds)
+		this.scene.panIntoView(r.selectIds[0])
+		return made
+	}
+
+	/**
 	 * Intent connect (SPEC-M1 §6.3, §6.5.2): a new connector from the
 	 * connector tool or a "+" handle; route and end cap come with the intent
 	 * (the scene's tool options). One undo step; the connector is selected.
+	 * (job 169) With selectEnd (a connector that hung from a text item's "+")
+	 * the item its stored end is bound to is selected alone instead, when it
+	 * is in the model; no pan, the user has just clicked or tapped it.
 	 *
-	 * @param {{start: object, end: object, route?: string, endCap?: string}} i connect intent
+	 * @param {{start: object, end: object, route?: string, endCap?: string, selectEnd?: boolean}} i connect intent
 	 * @return {string|null} new connector id
 	 */
 	connectNow(i) {
@@ -2186,7 +3676,8 @@ export class BoardSession {
 			return null
 		}
 		this.commit(r, { urgent: true })
-		this.select(r.selectIds)
+		const x = i.selectEnd === true ? r.ops[0].p.data.end.item : undefined
+		this.select(typeof x === 'string' && this.model.has(x) ? [x] : r.selectIds)
 		return r.selectIds[0]
 	}
 
@@ -2271,7 +3762,8 @@ export class BoardSession {
 	 * @param {object} i text intent
 	 */
 	textNow(i) {
-		if (this.leaseLost.has(i.id)) {
+		// job 173: a cell has a lease of its own
+		if (this.leaseLost.has(leaseKey(i.id, i.cell))) {
 			return
 		}
 		if (!this.model.has(i.id)) {
@@ -2284,6 +3776,25 @@ export class BoardSession {
 			return
 		}
 		const item = this.model.get(i.id)
+		if (item.t === 'table' && typeof i.cell === 'string') {
+			this.cellTextNow(i)
+			return
+		}
+		// job 195: a node of a mind map has a lease of its own, like a cell
+		if (item.t === 'mindmap' && typeof i.cell === 'string') {
+			this.nodeTextNow(i)
+			return
+		}
+		// job 199: the name of a lane (job 208: of a column), at its final text only
+		if (item.t === 'frame' && typeof i.cell === 'string') {
+			if (i.final === true && typeof i.value === 'string') {
+				// job 225: or of a group
+				const ax = LGROUP_KEY_RE.test(i.cell) ? 'y' : CGROUP_KEY_RE.test(i.cell) ? 'x' : null
+				this.laneStep(i.id, () => (ax !== null ? renameGroup(this.model, i.id, i.cell, i.value, ax)
+					: (COL_KEY_RE.test(i.cell) ? renameCol : renameLane)(this.model, i.id, i.cell, i.value)))
+			}
+			return
+		}
 		const isNew = this.newEdit !== null && this.newEdit.id === i.id
 		const key = isNew ? this.newEdit.key : 'text:' + i.id + ':' + this.textSession
 		const final = i.final === true || i.next === 'right'
@@ -2335,6 +3846,908 @@ export class BoardSession {
 		})
 	}
 
+	// ---- tables (job 173) ------------------------------------------------
+
+	/** @return {string|null} the lease key of the open editor (an item's text or a cell), null without one */
+	editKey() {
+		return this.editingId === null ? null : leaseKey(this.editingId, this.editingCell)
+	}
+
+	/** @return {(text: string, width: number, bold: boolean) => number} the scene's text height of a table cell */
+	cellMeasure() {
+		return (text, width, bold) => {
+			try {
+				const h = this.scene?.measureTableCell?.(text, width, bold)
+				if (typeof h === 'number' && Number.isFinite(h)) {
+					return h
+				}
+			} catch (e) {
+				console.error('[knorke] measureTableCell failed', e)
+			}
+			return estimateCellHeight(text, width, bold)
+		}
+	}
+
+	/** @return {number} the largest stored size of an item (limits.maxItemBytes) */
+	maxItemBytes() {
+		const v = this.limits?.maxItemBytes
+		return Number.isInteger(v) && v > 0 ? v : TABLE_MAX_BYTES
+	}
+
+	/**
+	 * The text of a cell (intent text with cell): one path, "" as null; the
+	 * first text of a new table merges with its creation. A row or column
+	 * that is gone, or a text that would bring the table over maxItemBytes,
+	 * sends nothing: the editor keeps the text with its notice (a final
+	 * text whose editor is closing goes to the copy dialog).
+	 *
+	 * @param {object} i text intent of a cell editor
+	 */
+	cellTextNow(i) {
+		const key = leaseKey(i.id, i.cell)
+		const final = i.final === true
+		// well-formed UTF-16 (T14), as actions.setText: the local model equals what the server stores
+		const value = typeof i.value === 'string' ? wellFormed(i.value) : ''
+		const it = this.knownItem(i.id) ?? this.model.get(i.id)
+		const lost = (notice) => {
+			this.loseLease(key, notice)
+			if (final && value !== '' && value !== i.before) {
+				this.ui.onRescue?.({ id: i.id, text: value, gone: false })
+			}
+		}
+		const r = setCellText(it, i.cell, value, typeof i.before === 'string' ? i.before : undefined)
+		if (r.error) {
+			lost(t('knorke', 'Not saved. Copy your text before closing.'))
+			return
+		}
+		if (tableBytes(applyTablePatch(it, r.p)) > this.maxItemBytes()) {
+			lost(t('knorke', 'Not saved: the table is full. Copy your text before closing.'))
+			return
+		}
+		const isNew = this.newEdit !== null && this.newEdit.id === i.id
+		const mergeKey = isNew ? this.newEdit.key : 'text:' + key + ':' + this.textSession
+		this.commit({ ops: [{ o: 'patch', id: i.id, p: r.p }], inverse: [{ o: 'patch', id: i.id, p: r.inv }] }, { urgent: final, mergeKey })
+		this.lastTextKey = { id: key, key: mergeKey }
+		if (final) {
+			this.textSession++
+			if (isNew) {
+				this.newEdit = null
+			}
+		}
+	}
+
+	/**
+	 * One structure or width change of a table (one undo step), measured
+	 * again (withSize: w and h that differ travel along). Nothing at 50 rows
+	 * or 20 columns or when the result would not fit maxItemBytes: an info
+	 * names the limit.
+	 *
+	 * @param {string} id table
+	 * @param {(item: object) => ({p: object, inv: object}|{error: string})} make the op builder (model/table.js)
+	 * @return {boolean} something was sent
+	 */
+	tableStep(id, make) {
+		if (this.viewOnly || this.frozen || !this.model?.has(id) || isLocked(this.model.get(id))) {
+			return false
+		}
+		const it = this.knownItem(id)
+		if (it?.t !== 'table') {
+			return false
+		}
+		let r = null
+		this.guard(() => {
+			r = make(it)
+		})
+		if (r === null) {
+			return false
+		}
+		if (r.error === 'rows') {
+			this.info(t('knorke', 'A table can have at most 50 rows.'), { hook: 'table-limit' })
+			return false
+		}
+		if (r.error === 'cols') {
+			this.info(t('knorke', 'A table can have at most 20 columns.'), { hook: 'table-limit' })
+			return false
+		}
+		if (r.error) {
+			return false
+		}
+		withSize(it, r, this.cellMeasure())
+		if (tableBytes(applyTablePatch(it, r.p)) > this.maxItemBytes()) {
+			this.info(t('knorke', 'The table is full.'), { hook: 'table-full' })
+			return false
+		}
+		this.guard(() => this.commit({ ops: [{ o: 'patch', id, p: r.p }], inverse: [{ o: 'patch', id, p: r.inv }] }, { urgent: true }))
+		return true
+	}
+
+	/**
+	 * The "+" of a table: an empty column (TABLE_COL_W) or row at its end.
+	 * (Job 174) With open (Tab in the last cell, whose editor has just closed
+	 * with its own undo step) the editor of the new row's left cell opens.
+	 *
+	 * @param {string} id table
+	 * @param {'col'|'row'} axis what to append
+	 * @param {{open?: boolean}} [o] open the left cell of a new row
+	 * @return {boolean} sent
+	 */
+	tableAppend(id, axis, { open = false } = {}) {
+		let key = null
+		const sent = this.tableStep(id, (it) => {
+			const r = axis === 'col' ? insertCol(it, {}, this.rand) : insertRow(it, {}, this.rand)
+			key = typeof r.key === 'string' ? r.key : null
+			return r
+		})
+		const col = sent && open && axis === 'row' && key !== null ? orderedCols(this.model.get(id)?.data)[0] : null
+		if (col) {
+			this.scene?.openTextEditor(id, { cell: cellKey(col.key, key) })
+		}
+		return sent
+	}
+
+	/**
+	 * (Job 174) Cells from a spreadsheet pasted into a cell (model/table.js
+	 * pasteCells): from that cell on, new columns as needed up to 20 (job
+	 * 185) and new rows up to 50, as ONE undo step of several patches; the
+	 * table stays selected. Nothing goes out for a locked table, in mode vote
+	 * or view or on a frozen board (without a notice), when someone else
+	 * holds a target cell whose text changes ("Someone else is writing in one
+	 * of these cells.") or when a state would exceed maxItemBytes ("The table
+	 * is full."); what reaches beyond the 20th column or the 50th row is left
+	 * out, the rest goes out with "Not all pasted cells fit into the table.".
+	 *
+	 * @param {string} id table
+	 * @param {string} cell the top-left cell (the editor's)
+	 * @param {string[][]} grid clipGrid
+	 * @return {boolean} something was sent
+	 */
+	tablePaste(id, cell, grid) {
+		if (this.viewOnly || this.frozen || !this.model?.has(id) || isLocked(this.model.get(id))) {
+			return false
+		}
+		const it = this.knownItem(id)
+		if (it?.t !== 'table') {
+			return false
+		}
+		const held = (c) => {
+			const h = this.presence.leaseHolder(id, c)
+			return h !== null && h.pid !== this.me?.pid
+		}
+		let r = null
+		this.guard(() => {
+			r = pasteCells(it, cell, grid, { rand: this.rand, measure: this.cellMeasure(), maxBytes: this.maxItemBytes(), held })
+		})
+		if (r === null) {
+			return false
+		}
+		if (r.error === 'held') {
+			this.info(t('knorke', 'Someone else is writing in one of these cells.'), { hook: 'table-paste-held' })
+			return false
+		}
+		if (r.error === 'bytes') {
+			this.info(t('knorke', 'The table is full.'), { hook: 'table-full' })
+			return false
+		}
+		if (r.error) {
+			return false
+		}
+		const sent = r.patches.length > 0
+		if (sent) {
+			const op = (p) => ({ o: 'patch', id, p })
+			this.guard(() => this.commit({ ops: r.patches.map(op), inverse: r.inverse.map(op) }, { urgent: true }))
+		}
+		if (r.cut) {
+			this.info(t('knorke', 'Not all pasted cells fit into the table.'), { hook: 'table-paste-cut' })
+		}
+		if (this.selection.length !== 1 || this.selection[0] !== id) {
+			this.select([id])
+		}
+		return sent
+	}
+
+	/**
+	 * A column border was dragged: the column's new width.
+	 *
+	 * @param {string} id table
+	 * @param {string} col column key
+	 * @param {number} w width
+	 * @return {boolean} sent
+	 */
+	tableWidth(id, col, w) {
+		return this.tableStep(id, (it) => setColWidth(it, col, w))
+	}
+
+	/**
+	 * A table entry of the context menu on the cell of the menu (row-above,
+	 * row-below, col-left, col-right, row-delete, col-delete, table-csv).
+	 *
+	 * @param {string} name entry
+	 * @param {string|null} id the menu's table
+	 * @param {string|null} cell the cell under W when the menu opened
+	 * @return {boolean} it acted
+	 */
+	tableMenuAction(name, id, cell) {
+		if (typeof id !== 'string' || !this.model?.has(id) || this.model.get(id).t !== 'table') {
+			return false
+		}
+		if (name === 'table-csv') {
+			return this.exportCsv(id)
+		}
+		const c = parseCell(cell)
+		if (c === null) {
+			return false
+		}
+		switch (name) {
+		case 'row-above':
+		case 'row-below':
+			return this.tableStep(id, (it) => insertRow(it, { at: c.row, where: name === 'row-above' ? 'above' : 'below' }, this.rand))
+		case 'col-left':
+		case 'col-right':
+			return this.tableStep(id, (it) => insertCol(it, { at: c.col, where: name === 'col-left' ? 'left' : 'right' }, this.rand))
+		case 'row-delete':
+			return this.tableStep(id, (it) => deleteRow(it, c.row))
+		case 'col-delete':
+			return this.tableStep(id, (it) => deleteCol(it, c.col))
+		default:
+			return false
+		}
+	}
+
+	// ---- swimlanes (job 199) ---------------------------------------------
+
+	/**
+	 * One change of a frame with lanes and its children (one undo step).
+	 * Nothing in mode view or vote, on a frozen board or at a locked frame;
+	 * an info names the limit (30 lanes, a frame too tall, a locked child in
+	 * the way; job 208: 30 columns, a frame too wide).
+	 *
+	 * @param {string} id frame
+	 * @param {() => ({ops: object[], inverse: object[]}|{error: string})} make the op builder (model/lanes.js)
+	 * @param {'lane'|'col'} [what] (job 208) what the limit of 'max' names
+	 * @return {object|null} what make gave when it went out, else null
+	 */
+	laneStep(id, make, what = 'lane') {
+		if (this.viewOnly || this.frozen || !this.model?.has(id) || isLocked(this.model.get(id)) || !hasLanes(this.model.get(id))) {
+			return null
+		}
+		let r = null
+		this.guard(() => {
+			r = make()
+		})
+		if (r === null) {
+			return null
+		}
+		if (r.error === 'max') {
+			this.info(what === 'col'
+				? t('knorke', 'A frame can have at most {n} columns.', { n: COLS_MAX })
+				: t('knorke', 'A frame can have at most {n} lanes.', { n: LANES_MAX }), { hook: 'lane-limit' })
+			return null
+		}
+		if (r.error === 'wide') {
+			this.info(t('knorke', 'The frame cannot get any wider.'), { hook: 'lane-limit' })
+			return null
+		}
+		if (r.error === 'tall') {
+			this.info(t('knorke', 'The frame cannot get any taller.'), { hook: 'lane-limit' })
+			return null
+		}
+		if (r.error === 'locked') {
+			this.info(t('knorke', 'Locked items are in the way. Unlock them first.'), { hook: 'lane-locked' })
+			return null
+		}
+		if (r.error) {
+			return null
+		}
+		this.guard(() => this.commit({ ops: r.ops, inverse: r.inverse }, { urgent: true }))
+		return r
+	}
+
+	/**
+	 * A new lane without a name above or below a lane, or at the end (the
+	 * "+"); the editor of its name opens.
+	 *
+	 * @param {string} id frame
+	 * @param {{at?: (string|null), where?: ('above'|'below')}} [o] the lane of the menu (null: at the end)
+	 * @return {boolean} sent
+	 */
+	laneAdd(id, { at = null, where = 'below' } = {}) {
+		const r = this.laneStep(id, () => addLane(this.model, id, { at, where }, this.rand))
+		if (r === null) {
+			return false
+		}
+		this.scene?.openTextEditor(id, { cell: r.key })
+		return true
+	}
+
+	/**
+	 * (Job 208) A new column without a name left or right of a column, or at
+	 * the end (the "+"; on a frame without columns the first one); the editor
+	 * of its name opens.
+	 *
+	 * @param {string} id frame
+	 * @param {{at?: (string|null), where?: ('left'|'right')}} [o] the column of the menu (null: at the end)
+	 * @return {boolean} sent
+	 */
+	colAdd(id, { at = null, where = 'right' } = {}) {
+		const r = this.laneStep(id, () => addCol(this.model, id, { at, where }, this.rand), 'col')
+		if (r === null) {
+			return false
+		}
+		this.scene?.openTextEditor(id, { cell: r.key })
+		return true
+	}
+
+	/**
+	 * A lane entry of the context menu on the lane of the menu (lane-rename,
+	 * lane-above, lane-below, lane-up, lane-down, lane-delete); (job 208) a
+	 * column entry on its column (column-add, column-rename, column-left,
+	 * column-right, column-move-left, column-move-right, column-delete).
+	 *
+	 * @param {string} name entry
+	 * @param {string|null} id the menu's frame
+	 * @param {string|null} lane the lane under W when the menu opened
+	 * @param {string|null} [col] (job 208) the column under W then
+	 * @return {boolean} it acted
+	 */
+	laneMenuAction(name, id, lane, col = null) {
+		if (typeof id !== 'string' || typeof lane !== 'string' || !LANE_KEY_RE.test(lane) || !hasLanes(this.model?.get(id))) {
+			return false
+		}
+		if (name === 'column-add') {
+			return !hasCols(this.model.get(id)) && this.colAdd(id)
+		}
+		if (name.startsWith('column-') && (typeof col !== 'string' || !COL_KEY_RE.test(col) || !hasCols(this.model.get(id)))) {
+			return false
+		}
+		switch (name) {
+		case 'column-rename':
+			return this.scene?.openTextEditor(id, { cell: col }) === true
+		case 'column-left':
+		case 'column-right':
+			return this.colAdd(id, { at: col, where: name === 'column-left' ? 'left' : 'right' })
+		case 'column-move-left':
+		case 'column-move-right':
+			return this.laneStep(id, () => moveCol(this.model, id, col, name === 'column-move-left' ? -1 : 1), 'col') !== null
+		case 'column-delete':
+			return this.laneStep(id, () => deleteLaneCol(this.model, id, col), 'col') !== null
+		case 'lane-rename':
+			return this.scene?.openTextEditor(id, { cell: lane }) === true
+		case 'lane-above':
+		case 'lane-below':
+			return this.laneAdd(id, { at: lane, where: name === 'lane-above' ? 'above' : 'below' })
+		case 'lane-up':
+		case 'lane-down':
+			return this.laneStep(id, () => moveLane(this.model, id, lane, name === 'lane-up' ? -1 : 1)) !== null
+		case 'lane-delete':
+			return this.laneStep(id, () => deleteLane(this.model, id, lane)) !== null
+		case 'lane-group':
+		case 'column-group':
+			return this.groupAdd(id, name === 'column-group' ? col : lane, name === 'column-group' ? 'x' : 'y')
+		case 'lane-group-rename':
+		case 'column-group-rename':
+		case 'lane-ungroup':
+		case 'column-ungroup': {
+			// job 225: the group of the menu's lane (column)
+			const ax = name.startsWith('column-') ? 'x' : 'y'
+			const it = this.model.get(id)
+			const g = (ax === 'x' ? colBands(it) : laneBands(it)).find((b) => b.key === (ax === 'x' ? col : lane))?.g ?? null
+			if (g === null) {
+				return false
+			}
+			if (name.endsWith('-rename')) {
+				return this.scene?.openTextEditor(id, { cell: g }) === true
+			}
+			return this.laneStep(id, () => ungroup(this.model, id, g, ax), ax === 'x' ? 'col' : 'lane') !== null
+		}
+		default:
+			return false
+		}
+	}
+
+	/**
+	 * (Job 225) "Create lane group" ("… column group"): a new group without a
+	 * name with the lane (column) of the menu; the editor of its name opens.
+	 *
+	 * @param {string} id frame
+	 * @param {string} key lane or column
+	 * @param {'x'|'y'} ax column or lane
+	 * @return {boolean} sent
+	 */
+	groupAdd(id, key, ax) {
+		const r = this.laneStep(id, () => (ax === 'x' ? groupCol : groupLane)(this.model, id, key, this.rand), ax === 'x' ? 'col' : 'lane')
+		if (r === null) {
+			return false
+		}
+		this.scene?.openTextEditor(id, { cell: r.key })
+		return true
+	}
+
+	// ---- mind maps (job 195) ---------------------------------------------
+
+	/** @return {(text: string, maxW: number, size: number, bold: boolean) => {w: number, h: number}} the scene's node text size */
+	nodeMeasure() {
+		return (text, maxW, size, bold) => {
+			try {
+				const m = this.scene?.measureNodeText?.(text, maxW, size, bold)
+				if (m && Number.isFinite(m.w) && Number.isFinite(m.h)) {
+					return m
+				}
+			} catch (e) {
+				console.error('[knorke] measureNodeText failed', e)
+			}
+			return estimateNodeSize(text, maxW, size, bold)
+		}
+	}
+
+	/**
+	 * The text of a node (intent text with the node as cell): one path, "" as
+	 * null, with the box when the layout moved (model/mindmap.js withBox: the
+	 * root keeps its place, also between two commits of one text); the first
+	 * text of a new node or map merges with its creation. A node that is
+	 * gone, or a text that would bring the map over maxItemBytes, sends
+	 * nothing: the editor keeps the text with its notice.
+	 *
+	 * @param {object} i text intent of a node editor
+	 */
+	nodeTextNow(i) {
+		const key = leaseKey(i.id, i.cell)
+		const final = i.final === true
+		const value = typeof i.value === 'string' ? wellFormed(i.value) : ''
+		const it = this.knownItem(i.id) ?? this.model.get(i.id)
+		const lost = (notice) => {
+			this.loseLease(key, notice)
+			if (final && value !== '' && value !== i.before) {
+				this.ui.onRescue?.({ id: i.id, text: value, gone: false })
+			}
+		}
+		const r = setNodeText(it, i.cell, value, typeof i.before === 'string' ? i.before : undefined)
+		if (r.error) {
+			lost(t('knorke', 'Not saved. Copy your text before closing.'))
+			return
+		}
+		withBox(it, r, this.nodeMeasure())
+		if (mindmapBytes(applyMindmapPatch(it, r.p)) > this.maxItemBytes()) {
+			lost(t('knorke', 'Not saved: the mind map is full. Copy your text before closing.'))
+			return
+		}
+		const isNew = this.newEdit !== null && this.newEdit.id === i.id && (this.newEdit.node === undefined || this.newEdit.node === i.cell)
+		const mergeKey = isNew ? this.newEdit.key : 'text:' + key + ':' + this.textSession
+		this.commit({ ops: [{ o: 'patch', id: i.id, p: r.p }], inverse: [{ o: 'patch', id: i.id, p: r.inv }] }, { urgent: final, mergeKey })
+		this.lastTextKey = { id: key, key: mergeKey }
+		if (final) {
+			this.textSession++
+			if (isNew) {
+				this.newEdit = null
+			}
+		}
+	}
+
+	/**
+	 * One structure, colour, shape, fold or layout change of a mind map (one
+	 * undo step): the op builder's patch (or patches, children first), the box
+	 * in the last one when the layout moved (withBox). Nothing for a locked
+	 * map, in mode vote or view, on a frozen board; at 500 nodes or when the
+	 * result would not fit maxItemBytes an info names the limit.
+	 *
+	 * @param {string} id mind map
+	 * @param {(item: object) => object} make op builder (model/mindmap.js): {p, inv, key?}, {patches, inverse} or {error}
+	 * @param {{mergeKey?: ((r: object) => string)|null}} [o] the undo key of the step (a new node: its first text merges)
+	 * @return {object|null} what the builder gave, when something was sent
+	 */
+	mindmapStep(id, make, { mergeKey = null } = {}) {
+		if (this.viewOnly || this.frozen || !this.model?.has(id) || isLocked(this.model.get(id))) {
+			return null
+		}
+		const it = this.knownItem(id)
+		if (it?.t !== 'mindmap') {
+			return null
+		}
+		let r = null
+		this.guard(() => {
+			r = make(it)
+		})
+		if (r === null) {
+			return null
+		}
+		if (r.error === 'nodes') {
+			this.info(t('knorke', 'A mind map can have at most 500 nodes.'), { hook: 'mindmap-limit' })
+			return null
+		}
+		if (r.error) {
+			return null
+		}
+		const patches = Array.isArray(r.patches) ? r.patches.map((x) => ({ ...x })) : [{ ...r.p }]
+		const inverse = Array.isArray(r.inverse) ? r.inverse.map((x) => ({ ...x })) : [{ ...r.inv }]
+		const box = withBox(it, { p: Object.assign({}, ...patches), inv: {} }, this.nodeMeasure())
+		const tail = BOX_PATHS.filter((k) => Object.prototype.hasOwnProperty.call(box.p, k))
+		if (tail.length > 0) {
+			const last = patches[patches.length - 1]
+			const room = Object.keys(last).length + tail.length <= 50
+			const into = room ? last : {}
+			for (const k of tail) {
+				into[k] = box.p[k]
+			}
+			if (!room) {
+				patches.push(into)
+			}
+			const inv = inverse[inverse.length - 1]
+			for (const k of tail) {
+				inv[k] = box.inv[k]
+			}
+		}
+		let state = it
+		for (const x of patches) {
+			state = applyMindmapPatch(state, x)
+		}
+		if (mindmapBytes(state) > this.maxItemBytes()) {
+			this.info(t('knorke', 'The mind map is full.'), { hook: 'mindmap-full' })
+			return null
+		}
+		const op = (x) => ({ o: 'patch', id, p: x })
+		this.guard(() => this.commit({ ops: patches.map(op), inverse: inverse.map(op) }, { urgent: true, mergeKey: typeof mergeKey === 'function' ? mergeKey(r) : null }))
+		return r
+	}
+
+	/**
+	 * A new child or sibling of a node ("+", Tab, Enter, the menu): one undo
+	 * step with its first text; the new node gets the focus and, with open,
+	 * its editor. A sibling of the root is a child.
+	 *
+	 * @param {string} id mind map
+	 * @param {string} key the node
+	 * @param {'child'|'sibling'} as what to add
+	 * @param {{side?: ('l'|'r'|null), open?: boolean}} [o] side of a new main branch, open its editor
+	 * @return {string|null} the new node's key
+	 */
+	mindmapAdd(id, key, as, { side = null, open = false } = {}) {
+		const it0 = this.model?.get(id)
+		if (it0?.t !== 'mindmap' || typeof key !== 'string') {
+			return null
+		}
+		const child = as !== 'sibling' || mindTree(it0).root === key
+		const mergeKey = (r) => 'new:' + id + '#' + r.key
+		const r = this.mindmapStep(id, (it) => (child ? addChild(it, key, { side }, this.rand) : addSibling(it, key, this.rand)), { mergeKey })
+		if (r === null || typeof r.key !== 'string') {
+			return null
+		}
+		if (this.selection.length !== 1 || this.selection[0] !== id) {
+			this.select([id])
+		}
+		this.scene?.focusNode?.(id, r.key)
+		if (open && this.scene) {
+			// set after openTextEditor, like createNow: a closing editor must not take this node for its own
+			this.scene.openTextEditor(id, { cell: r.key })
+			this.newEdit = { id, key: mergeKey(r), node: r.key }
+		}
+		return r.key
+	}
+
+	/**
+	 * Delete at the focus, "Delete branch": the node with its subtree; the
+	 * focus goes to the node before it in its row, else after it, else its
+	 * parent (model/mindmap.js focusAfterDelete).
+	 *
+	 * @param {string} id mind map
+	 * @param {string} key node (never the root)
+	 * @return {boolean} sent
+	 */
+	mindmapDelete(id, key) {
+		const it = this.knownItem(id)
+		const next = it?.t === 'mindmap' ? focusAfterDelete(it, key) : null
+		const r = this.mindmapStep(id, (x) => deleteBranch(x, key))
+		if (r === null) {
+			return false
+		}
+		if (next !== null) {
+			this.scene?.focusNode?.(id, next)
+		}
+		return true
+	}
+
+	/**
+	 * A node dragged (intent mmMove): onto a target as moveNode says, or (job
+	 * 196) without one placed freely with the centre of its box at a world
+	 * point (placeNode). One undo step; the free nodes below it travel along.
+	 *
+	 * @param {string} id mind map
+	 * @param {string} key the dragged node
+	 * @param {object|null} target model/mindmap.js dropTarget
+	 * @param {{x: number, y: number}|null} place world centre of the ghost (no target)
+	 * @return {boolean} sent
+	 */
+	mindmapPlace(id, key, target, place) {
+		const measure = this.nodeMeasure()
+		if (target !== null) {
+			return this.mindmapStep(id, (it) => moveNode(it, key, target, measure)) !== null
+		}
+		const a = this.model?.has(id) ? this.model.abs?.(id) : null
+		if (!a || !Number.isFinite(place?.x) || !Number.isFinite(place?.y)) {
+			return false
+		}
+		return this.mindmapStep(id, (it) => placeNode(it, key, { x: place.x - a.x, y: place.y - a.y }, measure)) !== null
+	}
+
+	/**
+	 * The context bar's sections "Branch" and (job 198) "Layout": colour (c)
+	 * and shape (s) of the focused node, style.layout of the one selected
+	 * mind map (both stored as none); one undo step each. A click on the
+	 * layout or the shape drawn now sends nothing.
+	 *
+	 * @param {'color'|'shape'|'layout'} what what changes
+	 * @param {string|null} value colour #rrggbb, a shape of MM_SHAPES, a layout of MM_LAYOUTS
+	 * @return {boolean} sent
+	 */
+	mindmapStyle(what, value) {
+		const id = this.selection.length === 1 ? this.selection[0] : null
+		if (id === null || this.model?.get(id)?.t !== 'mindmap') {
+			return false
+		}
+		if (what === 'layout') {
+			if (!MM_LAYOUTS.includes(value)) {
+				return false
+			}
+			const v = value === 'both' ? null : value
+			return this.mindmapStep(id, (it) => {
+				const now = mindTree(it).layout
+				return (now === 'both' ? null : now) === v ? { error: 'same' } : { p: { 'style.layout': v }, inv: { 'style.layout': it.style?.layout ?? null } }
+			}) !== null
+		}
+		const f = this.mmFocus !== null && this.mmFocus.id === id ? this.mmFocus.key : null
+		if (f === null) {
+			return false
+		}
+		if (what === 'color') {
+			return this.mindmapStep(id, (it) => setNodeField(it, f, 'c', typeof value === 'string' ? value.toLowerCase() : null)) !== null
+		}
+		if (what === 'shape') {
+			return this.mindmapStep(id, (it) => {
+				const tree = mindTree(it)
+				const e = tree.nodes.get(f)
+				// (job 198) the shape drawn now (in org and tree line is drawn as roundRect)
+				if (e && drawnShape(e.n, e.parent === null, tree.layout, e.depth) === value) {
+					return { error: 'same' }
+				}
+				// the default shape is stored as none (job 266: a main branch's is pill)
+				const plain = e && defaultShape(e.parent === null, e.depth, tree.layout) === value
+				return setNodeField(it, f, 's', plain ? null : value)
+			}) !== null
+		}
+		return false
+	}
+
+	/**
+	 * (Job 195) The mind map of a menu: on a node of the one selected map,
+	 * {mindmap: {root, kids, folded, locked, placed}} (contextbar.js menuEntries; job 196 placed: "Rearrange" acts
+	 * there), else nothing.
+	 *
+	 * @param {object} m the menu state
+	 * @return {object} {mindmap} or {}
+	 */
+	menuMindmap(m) {
+		const it = m.cell !== null && m.id !== null && this.selection.length === 1 && this.selection[0] === m.id ? this.model?.get(m.id) : null
+		if (!it || it.t !== 'mindmap') {
+			return {}
+		}
+		const e = mindTree(it).nodes.get(m.cell)
+		if (!e) {
+			return {}
+		}
+		return { mindmap: { root: e.parent === null, kids: e.kids.length, folded: e.n.f === true, locked: isLocked(it), placed: hasPlaced(it, m.cell) } }
+	}
+
+	/**
+	 * A mind map entry of the context menu on the node of the menu (mm-child,
+	 * mm-sibling, mm-fold, mm-delete, mm-text; job 196 mm-rearrange).
+	 *
+	 * @param {string} name entry
+	 * @param {string|null} id the menu's mind map
+	 * @param {string|null} key the node under W when the menu opened
+	 * @return {boolean} it acted
+	 */
+	mindmapMenuAction(name, id, key) {
+		if (typeof id !== 'string' || typeof key !== 'string' || this.model?.get(id)?.t !== 'mindmap') {
+			return false
+		}
+		switch (name) {
+		case 'mm-child':
+			return this.mindmapAdd(id, key, 'child', { open: true }) !== null
+		case 'mm-sibling':
+			return this.mindmapAdd(id, key, 'sibling', { open: true }) !== null
+		case 'mm-fold':
+			return this.mindmapStep(id, (it) => toggleFold(it, key)) !== null
+		case 'mm-rearrange':
+			return this.mindmapStep(id, (it) => rearrange(it, key)) !== null
+		case 'mm-delete':
+			return this.mindmapDelete(id, key)
+		case 'mm-text':
+			return this.copyMindmapText(id, key)
+		default:
+			return false
+		}
+	}
+
+	/**
+	 * "Copy as text": a node and its subtree as an indented list
+	 * (model/mindmap.js outlineText), text/plain only (components/copyText.js:
+	 * inside the click); an info says whether it worked. No op, no undo step.
+	 *
+	 * @param {string} id mind map
+	 * @param {string|null} key the top node (null: the root)
+	 * @return {boolean} the copy started
+	 */
+	copyMindmapText(id, key) {
+		const it = this.knownItem(id)
+		if (it?.t !== 'mindmap') {
+			return false
+		}
+		const text = outlineText(it, key)
+		if (text === '') {
+			return false
+		}
+		const copy = this.deps.copyText ?? copyText
+		Promise.resolve(copy(text))
+			.then((ok) => {
+				if (ok === true) {
+					this.info(t('knorke', 'Copied as text.'), { hook: 'mindmap-copied' })
+				} else {
+					this.toast(t('knorke', 'The text could not be copied.'))
+				}
+			})
+			.catch(() => this.toast(t('knorke', 'The text could not be copied.')))
+		return true
+	}
+
+	/**
+	 * (Job 195) An indented list pasted as plain text: ONE mind map
+	 * (actions.mindmapFromText) at the point, selected; what was left out is
+	 * named in an info.
+	 *
+	 * @param {{root: string, lines: object[]}} outline model/mindmap.js parseOutline
+	 * @param {{x: number, y: number}|null} where world point ("Paste here"); default pointer or viewport center
+	 */
+	pasteOutline(outline, where) {
+		if (this.destroyed || this.frozen || this.viewOnly || !this.model) {
+			return
+		}
+		const at = where ?? (Array.isArray(this.pointer) ? { x: this.pointer[0], y: this.pointer[1] } : this.viewportCenter())
+		const r = actions.mindmapFromText(this.model, outline, { at, limits: this.limits, measure: this.nodeMeasure(), maxBytes: this.maxItemBytes(), rand: this.rand })
+		this.finishPaste({ ...r, skipped: 0 }, 0)
+		if (!r.full && r.cut > 0) {
+			this.info(n('knorke', '%n line was left out.', '%n lines were left out.', r.cut), { hook: 'mindmap-cut' })
+		}
+	}
+
+	// Factory job 253: export and file insert live in board/sessionFiles.js (SessionFiles, this.files); these hand over.
+
+	/** @param {string} id table @return {boolean} (sessionFiles.js) "Export as CSV" of the table */
+	exportCsv(id) {
+		return this.files.exportCsv(id)
+	}
+
+	/** @return {';'|','} (sessionFiles.js) the CSV separator of the language */
+	csvSep() {
+		return this.files.csvSep()
+	}
+
+	/** @param {'board'|'selection'} scope @return {boolean} (sessionFiles.js) "Save as CSV" */
+	exportBoardCsv(scope) {
+		return this.files.exportBoardCsv(scope)
+	}
+
+	/** @param {'board'|'selection'} scope @return {Promise<boolean>} (sessionFiles.js) "Save as image (PNG)" */
+	exportPng(scope) {
+		return this.files.exportPng(scope)
+	}
+
+	/** @param {'board'|'selection'} scope @param {'svg'|'pdf'} format @param {{page?: string}} [opts] @return {Promise<boolean>} (sessionFiles.js) "Save as SVG" / "Save as PDF" */
+	exportVector(scope, format, opts) {
+		return this.files.exportVector(scope, format, opts)
+	}
+
+	/** @return {string} (sessionFiles.js) the page size "Save as PDF…" starts with */
+	pdfPage() {
+		return this.files.pdfPage()
+	}
+
+	/** @param {'board'|'selection'} scope @return {boolean} (sessionFiles.js) "Save as PDF…": the dialog opened, or the PDF is being saved */
+	openPdfExport(scope) {
+		return this.files.openPdfExport(scope)
+	}
+
+	/** @param {string} key board/templates.js TEMPLATE_KEYS @return {boolean} (sessionFiles.js) the template was inserted */
+	insertTemplate(key) {
+		return this.files.insertTemplate(key)
+	}
+
+	/** @param {'board'|'selection'} scope @return {Promise<boolean>} (sessionFiles.js) "Save as BPMN" */
+	exportBpmn(scope) {
+		return this.files.exportBpmn(scope)
+	}
+
+	/** @return {boolean} (sessionFiles.js) "Download board" */
+	exportBoardFile() {
+		return this.files.exportBoardFile()
+	}
+
+	/** @param {'board'|'selection'} scope @return {object|null} (sessionFiles.js) the draft of "Suggest as template…" */
+	templateDraft(scope) {
+		return this.files.templateDraft(scope)
+	}
+
+	/** @param {string|null} text @return {boolean} (sessionFiles.js) a board file was inserted */
+	insertBoardFile(text) {
+		return this.files.insertBoardFile(text)
+	}
+
+	/** @param {string|null} text @return {Promise<boolean>} (sessionFiles.js) a .bpmn file was inserted */
+	insertBpmnFile(text) {
+		return this.files.insertBpmnFile(text)
+	}
+
+	/** @param {Uint8Array|null} bytes @return {Promise<boolean>} (sessionFiles.js) a CSV file was inserted as notes */
+	insertCsvFile(bytes) {
+		return this.files.insertCsvFile(bytes)
+	}
+
+	/** @param {string|null} content @return {boolean} (sessionFiles.js) an adopted template was inserted */
+	insertOwnTemplate(content) {
+		return this.files.insertOwnTemplate(content)
+	}
+
+	/**
+	 * After an undo or redo (job 173): the tables the ops touch, measured in
+	 * the state they leave; a {w, h} patch for each one whose stored size
+	 * differs goes along (not part of the step). (Job 195) The mind maps they
+	 * touch as well, with their box (model/mindmap.js withBox): when the ops
+	 * bring the place back (they carry x), only w and h; else the root keeps
+	 * the place it has now (the box of the state before the ops with all
+	 * their patches, like a new step), also when someone else changed the
+	 * map's place meanwhile and the step's place was skipped.
+	 *
+	 * @param {object[]} ops the ops that go out
+	 * @return {object[]} the ops with the size patches appended
+	 */
+	withTableSizes(ops) {
+		const out = [...ops]
+		const ids = new Set(ops.filter((op) => op.o === 'patch' || op.o === 'put').map((op) => op.id))
+		for (const id of ids) {
+			let it = this.replica.visible(id)
+			if (it?.t !== 'table' && it?.t !== 'mindmap') {
+				continue
+			}
+			const before = it
+			for (const op of ops) {
+				if (op.id === id && op.o === 'patch' && op.p) {
+					it = it.t === 'mindmap' ? applyMindmapPatch(it, op.p) : applyTablePatch(it, op.p)
+				} else if (op.id === id && op.o === 'remove') {
+					it = null
+					break
+				}
+			}
+			if (it === null) {
+				continue
+			}
+			if (it.t === 'mindmap') {
+				// job 195: a mind map's box; the root stays where it is unless the ops set the place
+				const patches = ops.filter((op) => op.id === id && op.o === 'patch' && op.p).map((op) => op.p)
+				const placed = patches.some((p) => Object.prototype.hasOwnProperty.call(p, 'x'))
+				const r = placed
+					? withBox(it, { p: {}, inv: {} }, this.nodeMeasure())
+					: withBox(before, { p: Object.assign({}, ...patches), inv: {} }, this.nodeMeasure())
+				const p = Object.fromEntries(BOX_PATHS.filter((k) => Object.prototype.hasOwnProperty.call(r.p, k)).map((k) => [k, r.p[k]]))
+				if (Object.keys(p).length > 0) {
+					out.push({ o: 'patch', id, p })
+				}
+				continue
+			}
+			const r = withSize(it, { p: {}, inv: {} }, this.cellMeasure())
+			if (Object.keys(r.p).length > 0) {
+				out.push({ o: 'patch', id, p: r.p })
+			}
+		}
+		return out
+	}
+
 	/**
 	 * Undo key of an arrow-key series (SPEC-M1 §6.3): the same items moved
 	 * again within NUDGE_MERGE_MS → the same key (one undo step).
@@ -2357,6 +4770,7 @@ export class BoardSession {
 	 * @param {string[]} ids new selection (scene and shell)
 	 */
 	select(ids) {
+		this.sortSelectionChange(ids)
 		this.scene?.setSelection(ids)
 		this.selection = [...ids]
 		this.emitSelection()
@@ -2367,12 +4781,12 @@ export class BoardSession {
 	 * (M2, R20): an op on an item that is locked in the model (lock patches
 	 * excepted) is left out silently; the inverse stays as it is, and the
 	 * item shows its visible state again (a drag that a lock overtook jumps
-	 * back). Nothing left to send: no undo step.
+	 * back). Nothing left to send: no undo step (job 206: but the tag part, alone).
 	 *
 	 * @param {{ops: object[], inverse: object[]}} r action result
-	 * @param {{urgent?: boolean, mergeKey?: string|null}} [o] options
+	 * @param {{urgent?: boolean, mergeKey?: string|null, tag?: object|null}} [o] options (tag: job 206, the step's tag part)
 	 */
-	commit(r, { urgent = true, mergeKey = null } = {}) {
+	commit(r, { urgent = true, mergeKey = null, tag = null } = {}) {
 		if (!r || !Array.isArray(r.ops) || r.ops.length === 0 || !this.sync) {
 			return
 		}
@@ -2386,15 +4800,37 @@ export class BoardSession {
 		})
 		if (ops.length === 0) {
 			this.flushVisible(held)
+			this.recordTagStep(tag)
 			return
 		}
+		if (!this.sortNaming) {
+			// job 139: every other commit ends the name fields (typed names first, steps of their own)
+			this.endSortLabels()
+		}
+		// job 189: threads on removed items keep their last corner
+		this.commentsOnRemove(ops)
 		const ids = this.sync.enqueue(ops, { urgent })
-		this.undoStack.push({ ops: r.ops, inverse: r.inverse, mergeKey })
+		this.undoStack.push({ ops: r.ops, inverse: r.inverse, mergeKey, tag })
 		for (const id of held) {
 			ids.add(id)
 		}
 		this.flushVisible(ids)
 		this.emitUndo()
+	}
+
+	/**
+	 * commit() urgently, then the selection is reported exactly once: by the
+	 * commit's flush when a selected box moved (job 146), else here (the
+	 * selection stays; Align, Distribute, Tidy up, Arrange).
+	 *
+	 * @param {{ops: object[], inverse: object[]}} r action result
+	 */
+	commitReported(r) {
+		const reports = this.selectionReports
+		this.commit(r, { urgent: true })
+		if (this.selectionReports === reports) {
+			this.emitSelection()
+		}
 	}
 
 	/**
@@ -2447,69 +4883,174 @@ export class BoardSession {
 	}
 
 	/**
-	 * Undo/redo ops to send. Safety net (M2, R20): an op on an item that is
-	 * locked in the model (lock patches excepted: undoing the own lock
-	 * unlocks, redo locks again) is skipped, and the toast lock-undo names
-	 * how many items; the step has moved to the other stack anyway.
+	 * Undo or redo of the top step (job 155): undo.js planHistory decides per
+	 * part against the visible state what goes out. The safety net (M2, R20)
+	 * comes first: an op on an item that is locked in the model (lock
+	 * patches excepted: undoing the own lock unlocks, redo locks again) is
+	 * skipped, and the toast lock-undo names how many items; then the toast
+	 * undo-changed names the items skipped because someone else changed
+	 * them. The step moves to the other stack trimmed to what went out, or
+	 * vanishes when nothing did.
 	 *
-	 * @param {object[]} ops undo/redo ops to send
+	 * @param {'undo'|'redo'} dir direction
 	 */
-	sendHistory(ops) {
-		if (!ops || ops.length === 0 || !this.sync) {
+	sendHistory(dir) {
+		if (!this.sync) {
 			return
 		}
-		const skipped = new Set()
-		ops = ops.filter((op) => {
-			if (this.heldByLock(op)) {
-				skipped.add(op.id)
-				return false
-			}
-			return true
-		})
-		if (skipped.size > 0) {
-			this.info(n('knorke', '%n locked item was skipped.', '%n locked items were skipped.', skipped.size), { hook: 'lock-undo' })
+		let r = null
+		const cut = (step) => {
+			r = this.historyPlan(step, dir)
+			return r.plan.step
 		}
-		if (ops.length === 0) {
-			this.emitUndo()
+		if (dir === 'undo') {
+			this.undoStack.undo(cut)
+		} else {
+			this.undoStack.redo(cut)
+		}
+		if (r === null) {
 			return
 		}
-		const ids = this.sync.enqueue(ops, { urgent: true })
-		for (const id of ids) {
-			this.undoPending.add(id)
-		}
-		this.flushVisible(ids)
-		const rest = this.selection.filter((id) => this.model?.has(id))
-		if (rest.length !== this.selection.length) {
-			this.selection = rest
-			this.scene?.setSelection(rest)
-			this.emitSelection()
-		}
+		this.historySend(dir, r)
 		this.emitUndo()
+	}
+
+	/**
+	 * The ops of a step against the visible state (planHistory), after the safety net.
+	 *
+	 * @param {{ops: object[], inverse: object[]}} step the step (fresh copies)
+	 * @param {'undo'|'redo'} dir direction
+	 * @return {{plan: object, held: Set<string>}} planHistory's answer and the items the safety net holds
+	 */
+	historyPlan(step, dir) {
+		const held = new Set((dir === 'undo' ? step.inverse : step.ops).filter((op) => this.heldByLock(op)).map((op) => op.id))
+		return { held, plan: planHistory(step, dir, { visible: (id) => this.replica.visible(id), held, measure: (item) => this.measure(item) }) }
+	}
+
+	/**
+	 * The toasts of an undo or redo and its ops out (sendHistory).
+	 *
+	 * @param {'undo'|'redo'} dir direction
+	 * @param {{plan: object, held: Set<string>}} r historyPlan's answer
+	 */
+	historySend(dir, { plan, held }) {
+		if (held.size > 0) {
+			this.info(n('knorke', '%n locked item was skipped.', '%n locked items were skipped.', held.size), { hook: 'lock-undo' })
+		}
+		if (plan.changed.length > 0) {
+			this.info(n('knorke', '%n item was skipped because someone else changed it.', '%n items were skipped because someone else changed them.', plan.changed.length), { hook: 'undo-changed' })
+		}
+		// A redone create hits a tombstone: it must revive (job 167: also the put
+		// of the state right before the undo, undo.js planHistory). The undo of
+		// a redone delete carries its revive in the put itself (job 176).
+		const sent = dir === 'redo' ? plan.send.map((op) => (op.o === 'put' ? { ...op, revive: true } : op)) : plan.send
+		// job 173: a table's w/h are written again after its undo or redo
+		const ops = sent.length > 0 ? this.withTableSizes(sent) : sent
+		if (ops.length > 0) {
+			// job 189: threads on items an undo or redo removes keep their last corner
+			this.commentsOnRemove(ops)
+			const ids = this.sync.enqueue(ops, { urgent: true })
+			for (const id of ids) {
+				this.undoPending.add(id)
+			}
+			this.flushVisible(ids)
+			const rest = this.selection.filter((id) => this.model?.has(id))
+			if (rest.length !== this.selection.length) {
+				this.selection = rest
+				this.scene?.setSelection(rest)
+				this.emitSelection()
+			}
+		}
+	}
+
+	/**
+	 * Job 206: undo and redo run one after another. A step with a tag part
+	 * writes the tag route (sendTagHistory) and waits for its answer; every
+	 * undo or redo pressed meanwhile waits in historyQueue and runs after it.
+	 * Without a tag step waiting or running, the plain step goes out at once.
+	 *
+	 * @param {'undo'|'redo'} dir direction
+	 * @return {Promise<void>|undefined} the queue when it waits
+	 */
+	history(dir) {
+		const run = () => {
+			if (this.destroyed || this.viewOnly || this.frozen) {
+				return undefined
+			}
+			if (this.undoStack.peek(dir)?.tag) {
+				return this.sendTagHistory(dir)
+			}
+			this.guard(() => this.sendHistory(dir))
+			return undefined
+		}
+		if (this.historyQueue === null && !this.undoStack.peek(dir)?.tag) {
+			run()
+			return undefined
+		}
+		const next = (this.historyQueue ?? Promise.resolve()).then(run).catch((e) => this.actionFailed(e))
+		this.historyQueue = next
+		next.then(() => {
+			if (this.historyQueue === next) {
+				this.historyQueue = null
+			}
+		})
+		return next
 	}
 
 	undo() {
 		if (this.viewOnly || this.frozen) {
 			return
 		}
-		this.guard(() => this.sendHistory(this.undoStack.undo()))
+		this.endSortLabels()
+		return this.history('undo')
 	}
 
 	redo() {
 		if (this.viewOnly || this.frozen) {
 			return
 		}
-		this.guard(() => {
-			const ops = this.undoStack.redo()
-			// A redone create hits a tombstone: it must revive.
-			this.sendHistory(ops?.map((op) => (op.o === 'put' ? { ...op, revive: true } : op)) ?? null)
-		})
+		this.endSortLabels()
+		return this.history('redo')
 	}
 
-	/** @param {string} tool a tool id of TOOLS (select, hand, sticky, shape, text, frame, connector) */
+	/**
+	 * @param {string} tool a tool id of TOOLS (select, hand, sticky, shape, text, frame, connector); (job 188)
+	 *   another tool than the scene's puts the note tool's type back to 'sticky'
+	 */
 	setTool(tool) {
+		const back = tool !== this.scene?.getTool?.() && this.noteBack()
+		this.useTool(tool)
+		if (back) {
+			this.emitToolOptions()
+		}
+	}
+
+	/**
+	 * @param {string} tool a tool id of TOOLS, given to the scene with its stored options
+	 */
+	useTool(tool) {
+		this.endSortLabels()
 		const opts = this.toolOptions[tool] ?? null
 		this.scene?.setTool(tool, opts ? { ...opts } : null)
 		this.ui.onTool?.(this.scene?.getTool?.() ?? tool)
+	}
+
+	/**
+	 * (Job 188) The note tool's type goes back to 'sticky' ("Note"); (job 199) the frame tool's frameKind to 'frame'.
+	 *
+	 * @return {boolean} it was 'pad' (or 'lanes')
+	 */
+	noteBack() {
+		// job 199: the frame tool's frameKind too
+		const frame = this.toolOptions.frame?.frameKind === 'lanes'
+		if (frame) {
+			this.toolOptions.frame = { ...this.toolOptions.frame, frameKind: 'frame' }
+		}
+		if (this.toolOptions.sticky?.type !== 'pad') {
+			return frame
+		}
+		this.toolOptions.sticky = { ...this.toolOptions.sticky, type: 'sticky' }
+		return true
 	}
 
 	/**
@@ -2523,8 +5064,14 @@ export class BoardSession {
 		if (typeof tool !== 'string' || !opts || typeof opts !== 'object') {
 			return
 		}
+		// (job 188) another tool than the scene's puts the note tool's type back first; opts come after that
+		if (tool !== this.scene?.getTool?.()) {
+			this.noteBack()
+		}
 		this.toolOptions[tool] = { ...(this.toolOptions[tool] ?? {}), ...opts }
-		this.setTool(tool)
+		// (job 203) another kind drops the picture of an own shape
+		if (tool === 'shape' && this.toolOptions.shape.kind !== 'image') delete this.toolOptions.shape.picture
+		this.useTool(tool)
 		this.emitToolOptions()
 	}
 
@@ -2546,7 +5093,14 @@ export class BoardSession {
 	}
 
 	emitToolOptions() {
-		this.ui.onToolOptions?.({ shape: this.getToolOptions('shape'), connector: this.getToolOptions('connector') })
+		// job 188: sticky, the note tool's type
+		this.ui.onToolOptions?.({
+			shape: this.getToolOptions('shape'), connector: this.getToolOptions('connector'), sticky: this.getToolOptions('sticky'),
+			// job 199: frame, the frame tool's frameKind
+			frame: this.getToolOptions('frame'),
+			// job 273: pen, the pen tool's kind and the colour and width of each kind
+			pen: this.getToolOptions('pen'),
+		})
 	}
 
 	/** @param {string} color #rrggbb for the selection (M0; v2: setStyle) */
@@ -2582,7 +5136,15 @@ export class BoardSession {
 					}
 				}
 			}
-			this.commit(actions.setStyle(this.model, ids, path, value, { heights }), { urgent: true, mergeKey })
+			const r = actions.setStyle(this.model, ids, path, value, { heights })
+			// job 173: the header row of a table is bold: its size follows (withSize); job 265: the header column too
+			r.ops.forEach((op, k) => {
+				const it = op.o === 'patch' ? this.knownItem(op.id) : null
+				if (it?.t === 'table' && (path === 'style.header' || path === 'style.headerCol')) {
+					withSize(it, { p: op.p, inv: r.inverse[k].p }, this.cellMeasure())
+				}
+			})
+			this.commit(r, { urgent: true, mergeKey })
 			this.emitSelection()
 		})
 	}
@@ -2593,9 +5155,48 @@ export class BoardSession {
 	}
 
 	/**
-	 * "Arrange" (X, Y, W, H, angle, WCAG 2.5.7) for the one selected item.
+	 * (job 153) "Swap direction" (context bar panel "Tips", menu entry
+	 * swap-direction): the two tips of every unlocked selected connector
+	 * whose tips differ change places (actions.swapCaps), one undo step;
+	 * locked ones and equal tips stay without a message, like setStyle.
+	 */
+	swapDirection() {
+		if (this.viewOnly || this.frozen || !this.model) {
+			return
+		}
+		this.guard(() => {
+			this.commit(actions.swapCaps(this.model, this.unlockedOf(this.selection)), { urgent: true })
+			this.emitSelection()
+		})
+	}
+
+	/**
+	 * (Job 204) "Sequence flow" / "Message flow" (context bar panel "Tips"):
+	 * line and tips of every unlocked selected connector (actions.setFlow),
+	 * one undo step; nothing to change sends nothing.
 	 *
-	 * @param {{x?: number, y?: number, w?: number, h?: number, r?: number}} box target (absolute)
+	 * @param {string} flow sequence | message
+	 */
+	setFlow(flow) {
+		if (this.viewOnly || this.frozen || !this.model) {
+			return
+		}
+		this.guard(() => {
+			this.commit(actions.setFlow(this.model, this.unlockedOf(this.selection), flow), { urgent: true })
+			this.emitSelection()
+		})
+	}
+
+	/**
+	 * "Arrange" (X, Y, W, H, angle, WCAG 2.5.7) for the one selected item.
+	 * Job 146 (R22): x and y beyond ±NUM_ABS_MAX are clamped (actions.arrangeItem;
+	 * job 160: also the stored value of a frame's child, relative to its frame);
+	 * the selection is reported exactly once afterwards, also when nothing was
+	 * sent, so the fields show the real position again; the patch sent is kept
+	 * as arrangeSent (handleFailed: a `bad` answer to it toasts arrange-bad).
+	 * Job 240: square ticks or unticks "1:1" of a shape in the same patch.
+	 *
+	 * @param {{x?: number, y?: number, w?: number, h?: number, r?: number, square?: boolean}} box target (absolute)
 	 */
 	arrange(box) {
 		if (this.viewOnly || this.frozen || !this.model || this.selection.length !== 1) {
@@ -2612,8 +5213,13 @@ export class BoardSession {
 				const w = typeof box?.w === 'number' && Number.isFinite(box.w) && box.w > 0 ? box.w : it.w
 				textH = this.measure(actions.measureTarget(it, { w })) ?? undefined
 			}
-			this.commit(actions.arrangeItem(this.model, id, box ?? {}, { textH }), { urgent: true })
-			this.emitSelection()
+			const r = actions.arrangeItem(this.model, id, box ?? {}, { textH })
+			const op = r.ops.find((o) => o.o === 'patch' && o.id === id)
+			if (op && this.sync) {
+				// the Replica copies ops and merges later ops of one item into them: kept by value
+				this.arrangeSent = { id, p: { ...op.p } }
+			}
+			this.commitReported(r)
 		})
 	}
 
@@ -2673,11 +5279,30 @@ export class BoardSession {
 	 * @return {boolean} the editor opens
 	 */
 	editLabel() {
+		return this.editOneText('data.label')
+	}
+
+	/**
+	 * (job 143) Context bar "Rename" (the one selected, unlocked frame; like
+	 * Enter on the canvas): opens the scene's title editor, which takes the
+	 * focus.
+	 *
+	 * @return {boolean} the editor opens
+	 */
+	renameFrame() {
+		return this.editOneText('data.title')
+	}
+
+	/**
+	 * @param {string} path text path the one selected item must have (data.label, data.title)
+	 * @return {boolean} the scene's editor opens for it (not on a locked item, never view-only or frozen)
+	 */
+	editOneText(path) {
 		if (this.viewOnly || this.frozen || !this.scene || this.selection.length !== 1) {
 			return false
 		}
 		const id = this.selection[0]
-		if (!this.model?.has(id) || textPathOf(this.model.get(id).t) !== 'data.label' || isLocked(this.model.get(id))) {
+		if (!this.model?.has(id) || textPathOf(this.model.get(id).t) !== path || isLocked(this.model.get(id))) {
 			return false
 		}
 		try {
@@ -2955,6 +5580,49 @@ export class BoardSession {
 	}
 
 	/**
+	 * (Job 278) "Frame around" (the bar's "…" and the context menu, no key):
+	 * actions.frameAround on the selection, ONE undo step with the title
+	 * typed next (mergeKey new:<id>, as createNow for a frame drawn by hand);
+	 * the new frame is selected alone, its title band comes into view and
+	 * its title editor opens. Blocked: the toast frame-blocked with the
+	 * reason (contextbar.js frameHintText), nothing sent.
+	 *
+	 * @return {'sent'|'blocked'|'none'} ops went out, a reason was shown, or nothing happened
+	 */
+	frameAroundSelection() {
+		if (this.viewOnly || this.frozen || !this.model) {
+			return 'none'
+		}
+		let out = 'none'
+		let made = null
+		this.guard(() => {
+			const r = actions.frameAround(this.model, this.selection.filter((id) => this.model.has(id)))
+			if (r.blocked !== null) {
+				const text = frameHintText(r.blocked)
+				if (text !== null) {
+					this.info(text, { hook: 'frame-blocked' })
+				}
+				out = 'blocked'
+				return
+			}
+			if (r.ops.length === 0) {
+				return
+			}
+			made = r.selectIds[0]
+			this.commit(r, { urgent: true, mergeKey: 'new:' + made })
+			this.select(r.selectIds)
+			out = 'sent'
+		})
+		if (made !== null && this.model.has(made)) {
+			this.scene.revealTitle?.(made, this.viewTop(), this.viewBottom())
+			// set after openTextEditor, like createNow: a closing editor must not take this frame for its own
+			this.scene.openTextEditor(made)
+			this.newEdit = { id: made, key: 'new:' + made }
+		}
+		return out
+	}
+
+	/**
 	 * After a pointer click on a bar button (SPEC-M1 §6.5.1, R2): single keys
 	 * work at once again.
 	 */
@@ -3009,7 +5677,7 @@ export class BoardSession {
 			this.deleteNow(ids)
 			return false
 		}
-		const payload = actions.copyPayload(this.model, take, { board: this.boardId })
+		const payload = actions.copyPayload(this.model, take, { board: this.boardId, tags: this.boardTags() })
 		const clip = encodeClip(payload)
 		writeClipboard(clip, { doc: this.win?.document ?? null, ...(this.deps.clipboardIo ?? {}) })
 		storeClip(this.storage, { text: clip.text, payload }, this.wall())
@@ -3028,7 +5696,7 @@ export class BoardSession {
 		if (ids.length === 0) {
 			return
 		}
-		const r = actions.duplicateItems(this.model, ids, { offset: PASTE_STEP, limits: this.limits, board: this.boardId })
+		const r = actions.duplicateItems(this.model, ids, { offset: PASTE_STEP, limits: this.limits, board: this.boardId, tags: this.boardTags() })
 		this.finishPaste(r, 0)
 	}
 
@@ -3120,7 +5788,7 @@ export class BoardSession {
 		if (text.trim() === '') {
 			return
 		}
-		this.pasteText(text, intent?.at ?? null)
+		this.pasteText(text, intent?.at ?? null, typeof data?.html === 'string' ? data.html : '')
 	}
 
 	/**
@@ -3129,8 +5797,16 @@ export class BoardSession {
 	 * @param {{inPlace: boolean}} intent paste intent
 	 */
 	pastePayload(payload, skipped, intent) {
-		const r = actions.pasteItems(this.model, payload, { ...this.pastePlacement(payload, intent), limits: this.limits, board: this.boardId })
-		this.finishPaste(r, skipped)
+		const place = this.pastePlacement(payload, intent)
+		// job 191: the payload's tags first (one add for the missing ones), then the notes
+		this.withPasteTags(payload, (tagMap) => {
+			if (this.viewOnly || this.frozen || !this.model) {
+				return false
+			}
+			const r = actions.pasteItems(this.model, payload, { ...place, limits: this.limits, board: this.boardId, tagMap })
+			this.finishPaste(r, skipped)
+			return true
+		})
 	}
 
 	/**
@@ -3242,38 +5918,81 @@ export class BoardSession {
 	/**
 	 * Plain text → notes at the pointer or the viewport center; above
 	 * NOTES_ASK the user is asked first (ui.onConfirm → Promise<boolean>).
+	 * (Job 195) An indented list (model/mindmap.js parseOutline) becomes one
+	 * mind map instead (pasteOutline). (Job 218) Cells from a spreadsheet (an
+	 * HTML table in text/html) are always notes, one per cell; at most
+	 * actions.PASTE_NOTES_MAX notes, a message says when the rest was left out.
 	 *
 	 * @param {string} text plain text
 	 * @param {{x: number, y: number}|null} [where] world point ("Paste here"); default pointer or viewport center
+	 * @param {string} [html] text/html of the clipboard (only searched for a table)
 	 */
-	pasteText(text, where = null) {
-		const count = actions.noteTexts(text).length
-		if (count === 0) {
+	pasteText(text, where = null, html = '') {
+		// job 195: an indented list becomes a mind map; job 218: never cells from a spreadsheet
+		const outline = hasHtmlTable(html) ? null : parseOutline(text)
+		if (outline !== null) {
+			this.pasteOutline(outline, where)
 			return
+		}
+		this.pasteNotes(text, {
+			at: () => where ?? (Array.isArray(this.pointer) ? { x: this.pointer[0], y: this.pointer[1] } : this.viewportCenter()),
+			html,
+			may: () => !this.destroyed && !this.frozen && !this.viewOnly && !!this.model,
+			ask: (count) => ({ name: t('knorke', 'Paste {n} notes?', { n: count }), confirmLabel: t('knorke', 'Paste') }),
+			cut: () => this.toast(t('knorke', 'Only the first {n} notes were pasted.', { n: actions.PASTE_NOTES_MAX })),
+		})
+	}
+
+	/**
+	 * (Jobs 218, 220) Text → notes (actions.notesFromText): above NOTES_ASK
+	 * notes (at most PASTE_NOTES_MAX) ui.onConfirm asks first; may() is checked
+	 * again before the commit; cut() when the rest was left out.
+	 *
+	 * @param {string} text plain text
+	 * @param {{at: () => {x: number, y: number}, html?: string, sep?: string, may: () => boolean,
+	 *   ask: (n: number) => object, cut: () => void, empty?: () => void}} o the centre of the notes (at the commit),
+	 *   text/html of the clipboard, a CSV file's separator, the condition, the question, the toasts
+	 * @return {boolean|Promise<boolean>} notes were inserted (a promise when asked)
+	 */
+	pasteNotes(text, { at, html = '', sep = '', may, ask, cut, empty = () => {} }) {
+		const count = actions.noteTexts(text, { html, sep, max: actions.PASTE_NOTES_MAX }).length
+		if (count === 0) {
+			empty()
+			return false
 		}
 		const run = () => {
-			if (this.destroyed || this.frozen || this.viewOnly || !this.model) {
-				return
+			if (!may()) {
+				return false
 			}
-			const at = where ?? (Array.isArray(this.pointer) ? { x: this.pointer[0], y: this.pointer[1] } : this.viewportCenter())
-			const r = actions.notesFromText(this.model, text, { at, limits: this.limits })
+			const r = actions.notesFromText(this.model, text, { at: at(), limits: this.limits, html, sep })
 			this.finishPaste({ ...r, skipped: 0 }, 0)
+			if (r.cut === true) {
+				cut()
+			}
+			return r.ops.length > 0
 		}
 		if (count <= NOTES_ASK) {
-			run()
-			return
-		}
-		const ask = this.ui.onConfirm
-		if (typeof ask !== 'function') {
-			return
-		}
-		Promise.resolve(ask({ name: t('knorke', 'Paste {n} notes?', { n: count }), confirmLabel: t('knorke', 'Paste') }))
-			.then((ok) => {
-				if (ok === true) {
-					this.guard(run)
-				}
+			let done = false
+			this.guard(() => {
+				done = run()
 			})
-			.catch(() => {})
+			return done
+		}
+		const confirm = this.ui.onConfirm
+		if (typeof confirm !== 'function') {
+			return false
+		}
+		return Promise.resolve(confirm(ask(count)))
+			.then((ok) => {
+				let done = false
+				if (ok === true) {
+					this.guard(() => {
+						done = run()
+					})
+				}
+				return done
+			})
+			.catch(() => false)
 	}
 
 	/** @param {'front'|'back'} where direction */
@@ -3296,8 +6015,7 @@ export class BoardSession {
 			return
 		}
 		this.guard(() => {
-			this.commit(actions.alignItems(this.model, movableIds(this.model, this.selection), edge), { urgent: true })
-			this.emitSelection()
+			this.commitReported(actions.alignItems(this.model, movableIds(this.model, this.selection), edge))
 		})
 	}
 
@@ -3313,8 +6031,7 @@ export class BoardSession {
 			return
 		}
 		this.guard(() => {
-			this.commit(actions.distributeItems(this.model, movableIds(this.model, this.selection), axis), { urgent: true })
-			this.emitSelection()
+			this.commitReported(actions.distributeItems(this.model, movableIds(this.model, this.selection), axis))
 		})
 	}
 
@@ -3329,9 +6046,307 @@ export class BoardSession {
 			return
 		}
 		this.guard(() => {
-			this.commit(actions.tidyItems(this.model, movableIds(this.model, this.selection)), { urgent: true })
-			this.emitSelection()
+			this.commitReported(actions.tidyItems(this.model, movableIds(this.model, this.selection)))
 		})
+	}
+
+	/**
+	 * "Sort by color" (job 139; align panel, menu entry sort-colors): the
+	 * loose notes of the selection in one block per colour.
+	 *
+	 * @return {boolean} sorted (the name fields are shown)
+	 */
+	sortByColor() {
+		return this.sortNow(null)
+	}
+
+	/**
+	 * "Sort notes by color" (job 139; bar and menu entry sort-frame): the
+	 * notes in the one selected frame, which grows until they fit.
+	 *
+	 * @return {boolean} sorted (the name fields are shown)
+	 */
+	sortFrameByColor() {
+		const id = this.selection.length === 1 ? this.selection[0] : null
+		if (id === null || !this.model?.has(id) || this.model.get(id).t !== 'frame') {
+			return false
+		}
+		return this.sortNow(id)
+	}
+
+	/**
+	 * Factory job 267: "Summarise" of the context bar (sessionAi.js run).
+	 *
+	 * @return {Promise<boolean>} started
+	 */
+	aiSummarise() {
+		return this.ai.run('summarise')
+	}
+
+	/**
+	 * Factory job 267: "Cluster by topic" of the context bar.
+	 *
+	 * @return {Promise<boolean>} started
+	 */
+	aiCluster() {
+		return this.ai.run('cluster')
+	}
+
+	/** Factory job 267: "Cancel" of the chip "AI is working…". */
+	aiCancel() {
+		return this.ai.cancel()
+	}
+
+	/** Factory job 268: "Create with AI" of the tool bar opens the window (sessionAi.js). @return {boolean} opened */
+	aiDiagramOpen() {
+		return this.ai.openDiagram()
+	}
+
+	/** @param {string} shape @param {string} prompt @return {Promise<boolean>} (job 268) "Create" / "Try again" */
+	aiDiagramRun(shape, prompt) {
+		return this.ai.runDiagram(shape, prompt)
+	}
+
+	/** @return {Promise<boolean>} (job 268) "Insert" of the window */
+	aiDiagramInsert() {
+		return this.ai.insertDiagram()
+	}
+
+	/** (Job 268) "Cancel" / Esc of the window. */
+	aiDiagramClose() {
+		this.ai.closeDiagram()
+	}
+
+	/**
+	 * Factory job 268: the tree of an AI diagram as ONE mind map
+	 * (actions.mindmapFromText, layout by shape), the middle of its hull on
+	 * the middle of the view, selected, one undo step.
+	 *
+	 * (Job 269) The shape flowchart: insertAiFlow.
+	 *
+	 * @param {object} tree {text, children}; a flowchart's {nodes, edges}
+	 * @param {string} shape mindmap | org | tree | flowchart
+	 * @return {boolean|Promise<boolean>} inserted
+	 */
+	insertAiDiagram(tree, shape) {
+		if (this.destroyed || this.frozen || this.viewOnly || !this.model) {
+			return false
+		}
+		if (shape === 'flowchart' || shape === 'workshop') {
+			return this.insertAiFlow(tree, shape)
+		}
+		const outline = actions.outlineOfTree(tree)
+		if (!outline) {
+			return false
+		}
+		const layout = shape === 'org' ? 'org' : shape === 'tree' ? 'tree' : 'both'
+		const r = actions.mindmapFromText(this.model, outline, {
+			at: this.viewportCenter(), limits: this.limits, measure: this.nodeMeasure(), maxBytes: this.maxItemBytes(), rand: this.rand, layout, centre: 'hull',
+		})
+		this.finishPaste({ ...r, skipped: 0 }, 0)
+		return !r.full && r.ops.length > 0
+	}
+
+	/**
+	 * Factory job 269: an AI flowchart as shapes and elbow connectors
+	 * (board/aiFlow.js flowPayload, a lazy part), pasted like a board file:
+	 * the middle of its hull on the middle of the view, one commit (one undo
+	 * step), selected, the camera only when it is not wholly in view.
+	 *
+	 * (Job 276) shape workshop: the frames of a workshop (aiWorkshop.js).
+	 *
+	 * @param {object} flow {nodes, edges} (route 59); (job 276) a workshop's {parts}
+	 * @param {string} [shape] flowchart | workshop
+	 * @return {Promise<boolean>} inserted
+	 */
+	async insertAiFlow(flow, shape) {
+		if (!this.files.mayInsertFile()) {
+			return false
+		}
+		const m = await this.files.part('aiFlow')
+		if (!m || this.destroyed || !this.files.mayInsertFile()) {
+			return false
+		}
+		const payload = shape === 'workshop' ? m.workshopPayload(flow) : m.flowPayload(flow)
+		if (!payload) {
+			return false
+		}
+		const r = actions.pasteItems(this.model, payload, { at: this.viewportCenter(), limits: this.limits, board: null })
+		this.finishPaste(r, 0)
+		if (r.full || r.ops.length === 0) {
+			return false
+		}
+		const hull = selectionFrame(this.model, r.selectIds)
+		const v = this.viewportWorld()
+		if (hull && v && !(hull.x >= v.x && hull.y >= v.y && hull.x + hull.w <= v.x + v.w && hull.y + hull.h <= v.y + v.h)) {
+			this.zoomToRect(this.reserveTop({ x: hull.x, y: hull.y, w: hull.w, h: hull.h }, this.viewTop()))
+		}
+		return true
+	}
+
+	/**
+	 * Job 139: open name fields end first (typed names saved), then
+	 * actions.sortNotesByColor in one commit (one undo step; none when nothing
+	 * moves), the selection empty, the new name fields shown. Nothing outside
+	 * mode edit, while frozen, without a model or with fewer than two notes.
+	 *
+	 * @param {string|null} frame the frame whose notes are sorted, null: the loose notes of the selection
+	 * @return {boolean} sorted
+	 */
+	sortNow(frame) {
+		if (this.clientMode !== 'edit' || this.viewOnly || this.frozen || !this.model) {
+			return false
+		}
+		let done = false
+		this.guard(() => {
+			this.endSortLabels()
+			const r = actions.sortNotesByColor(this.model, this.selection, { frame })
+			if (r.blocks.length === 0) {
+				return
+			}
+			this.commit(r, { urgent: true })
+			this.select([])
+			this.sortLabels = { blocks: r.blocks.map((b) => ({ ...b })), open: new Set(r.blocks.map((_, i) => i)), texts: new Map() }
+			this.emitSortLabels()
+			done = true
+		})
+		return done
+	}
+
+	/** Job 139: reports the open name fields (ui.onSortLabels: [{i, color, x, y, w, h, parent}], world). */
+	emitSortLabels() {
+		const L = this.sortLabels
+		this.ui.onSortLabels?.(L === null ? null : [...L.open].sort((a, b) => a - b).map((i) => ({ i, ...L.blocks[i] })))
+	}
+
+	/**
+	 * Job 139: the screen places of the open name fields, from the camera the
+	 * user sees now (the live camera of a gesture when the scene has one).
+	 *
+	 * @return {Array<{i: number, color: string, x: number, y: number, w: number}>} container px: the block's
+	 *   top-left corner and its width
+	 */
+	sortLabelPlaces() {
+		const L = this.sortLabels
+		const sc = this.scene
+		if (L === null || !sc) {
+			return []
+		}
+		let c = null
+		try {
+			c = typeof sc.liveCamera === 'function' ? sc.liveCamera() : sc.getCamera?.()
+		} catch (e) {
+			c = null
+		}
+		if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y) || !(c.scale > 0)) {
+			return []
+		}
+		return [...L.open].sort((a, b) => a - b).map((i) => {
+			const b = L.blocks[i]
+			return { i, color: b.color, x: (b.x - c.x) * c.scale, y: (b.y - c.y) * c.scale, w: b.w * c.scale }
+		})
+	}
+
+	/**
+	 * Job 139: what is typed into the field of block i (saved by endSortLabels).
+	 *
+	 * @param {number} i block
+	 * @param {string} text the field's value
+	 */
+	sortLabelText(i, text) {
+		const L = this.sortLabels
+		if (L !== null && L.open.has(i)) {
+			L.texts.set(i, typeof text === 'string' ? text : '')
+		}
+	}
+
+	/**
+	 * Job 139: the field of block i is left with a name: a non-empty
+	 * (trimmed) name becomes a text item above the block
+	 * (actions.sortBlockName, an undo step of its own; the selection stays)
+	 * and the field goes, the others stay (none left: the fields end).
+	 * Nothing for an empty name, a field no longer shown, outside mode edit
+	 * or while frozen.
+	 *
+	 * @param {number} i block
+	 * @param {string} text the name
+	 * @return {boolean} the text item was put
+	 */
+	nameSortBlock(i, text) {
+		const L = this.sortLabels
+		if (L === null || !L.open.has(i) || this.clientMode !== 'edit' || this.viewOnly || this.frozen || !this.model) {
+			return false
+		}
+		const value = typeof text === 'string' ? text.trim() : ''
+		if (value === '') {
+			return false
+		}
+		let done = false
+		this.guard(() => {
+			const r = actions.sortBlockName(this.model, L.blocks[i], value, { measure: (it) => this.measure(it) })
+			if (r.ops.length === 0) {
+				return
+			}
+			L.open.delete(i)
+			L.texts.delete(i)
+			this.sortNaming = true
+			try {
+				this.commit(r, { urgent: true })
+			} finally {
+				this.sortNaming = false
+			}
+			done = true
+		})
+		if (done && this.sortLabels === L) {
+			if (L.open.size === 0) {
+				this.endSortLabels()
+			} else {
+				this.emitSortLabels()
+			}
+		}
+		return done
+	}
+
+	/**
+	 * Job 139: ends the name fields (ui.onSortLabels(null)); with save, every
+	 * field with a typed name is saved first (nameSortBlock).
+	 *
+	 * @param {{save?: boolean}} [o] save the typed names (not when the board froze)
+	 * @return {boolean} fields were open
+	 */
+	endSortLabels({ save = true } = {}) {
+		const L = this.sortLabels
+		if (L === null) {
+			return false
+		}
+		if (save) {
+			for (const i of [...L.open]) {
+				const v = L.texts.get(i)
+				if (typeof v === 'string' && v.trim() !== '') {
+					this.nameSortBlock(i, v)
+				}
+			}
+		}
+		if (this.sortLabels === L) {
+			this.sortLabels = null
+			this.ui.onSortLabels?.(null)
+		}
+		return true
+	}
+
+	/**
+	 * Job 139: a selection change ends the name fields (the same ids do not).
+	 *
+	 * @param {string[]} ids the new selection
+	 */
+	sortSelectionChange(ids) {
+		if (this.sortLabels === null) {
+			return
+		}
+		const next = Array.isArray(ids) ? ids : []
+		if (next.length !== this.selection.length || next.some((id, k) => id !== this.selection[k])) {
+			this.endSortLabels()
+		}
 	}
 
 	deleteSelection() {
@@ -3346,8 +6361,9 @@ export class BoardSession {
 		this.scene?.zoomBy(0.8)
 	}
 
+	/** "Show everything": the whole board in the part the bars leave free (job 223, viewInsets), 48 px inside it like Shift+1. */
 	zoomFit() {
-		this.scene?.fit()
+		this.scene?.fit(undefined, 48, this.viewInsets())
 	}
 
 	// ---- M2: background grid (SPEC-M1 §1.2 (R12)) ----
@@ -3417,6 +6433,110 @@ export class BoardSession {
 		return true
 	}
 
+	// ---- factory job 147: other people's cursors ----
+
+	/**
+	 * The scene's sampler: the presence samples, and while the cursors are
+	 * hidden each with cursor: null, except the person followed and the
+	 * presenter of meta.summon (header).
+	 *
+	 * @param {number} nowMs current time
+	 * @return {Array<object>} RemoteSample[]
+	 */
+	remoteSamples(nowMs) {
+		const all = this.presence.sample(nowMs)
+		if (this.cursors) {
+			return all
+		}
+		const keep = [this.follower?.following?.pid, summonOf(this.board?.meta?.summon)?.pid]
+		return all.map((s) => (keep.includes(s.pid) ? s : { ...s, cursor: null }))
+	}
+
+	/**
+	 * Shows or hides other people's cursors in every mode, role and frozen
+	 * state, stores it and confirms it with a toast (header).
+	 *
+	 * @return {boolean} false without a scene
+	 */
+	toggleCursors() {
+		if (!this.scene) {
+			return false
+		}
+		this.cursors = !this.cursors
+		if (this.cursors) {
+			this.storage.removeItem('local', keys.cursors())
+		} else {
+			this.storage.setItem('local', keys.cursors(), '0')
+		}
+		this.scene.presenceChanged()
+		this.cursorsToast?.hideToast?.()
+		const shortcutHint = shortcut('cursors', isApplePlatform(this.win?.navigator ?? null)).hint
+		this.cursorsToast = this.info(this.cursors
+			? t('knorke', 'Other people\'s cursors shown')
+			: t('knorke', 'Other people\'s cursors hidden – {shortcut} shows them again', { shortcut: shortcutHint }), { hook: 'cursors' })
+		return true
+	}
+
+	// ---- factory job 154: what the mouse wheel does ----
+
+	/**
+	 * The board menu's "Mouse wheel: …": the next stage Automatic → Zoom → Pan →
+	 * Automatic in the scene, stored in localStorage knorke.wheel ('zoom', 'pan';
+	 * Automatic removes the key; the storage helpers never throw, a failed write
+	 * leaves the scene switched) and confirmed with the toast
+	 * [data-knorke-toast=wheel], which hides the previous one first (header). No op,
+	 * no undo step, no poke; following goes on.
+	 *
+	 * @return {boolean} false without a scene
+	 */
+	cycleWheel() {
+		if (!this.scene) {
+			return false
+		}
+		const next = WHEEL_STAGES[(Math.max(0, WHEEL_STAGES.indexOf(this.scene.getWheel())) + 1) % WHEEL_STAGES.length]
+		this.scene.setWheel(next)
+		if (next === 'auto') {
+			this.storage.removeItem('local', keys.wheel())
+		} else {
+			this.storage.setItem('local', keys.wheel(), next)
+		}
+		this.wheelToast?.hideToast?.()
+		const text = next === 'zoom'
+			? t('knorke', 'Mouse wheel: zoom. Scrolling zooms, also on a trackpad.')
+			: next === 'pan'
+				? t('knorke', 'Mouse wheel: pan. {shortcut} + wheel zooms.', { shortcut: shortcut('hold-mod', isApplePlatform(this.win?.navigator ?? null)).hint })
+				: t('knorke', 'Mouse wheel: automatic. A wheel zooms, a trackpad pans.')
+		this.wheelToast = this.info(text, { hook: 'wheel' })
+		return true
+	}
+
+	// ---- factory job 142: one-time tip about selecting with a finger ----
+
+	/**
+	 * The scene's onTouchPan: shows the tip once per browser (header). The key
+	 * is stored as the tip appears, through the storage helpers that never
+	 * throw; without storage the session's own flag keeps it to once.
+	 *
+	 * @return {boolean} true when the tip was shown now
+	 */
+	maybeTouchTip() {
+		if (this.touchTipShown || this.frozen || this.destroyed || this.clientMode !== 'edit') {
+			return false
+		}
+		if (this.storage.getItem('local', keys.touchTip()) === '1') {
+			return false
+		}
+		this.touchTipShown = true
+		this.storage.setItem('local', keys.touchTip(), '1')
+		this.ui.onTouchTip?.(true)
+		return true
+	}
+
+	/** The tip's OK: it goes; the stored key stays, so it never comes back in this browser. */
+	dismissTouchTip() {
+		this.ui.onTouchTip?.(false)
+	}
+
 	// ---- stage 4: context menu (SPEC-M1 §6.6 ContextMenu.vue, R19 T4-02/T4-03) ----
 
 	/**
@@ -3447,7 +6567,14 @@ export class BoardSession {
 			world = null
 		}
 		this.menuSeq++
-		this.menu = { id, at, world, ids: [...this.selection], seq: this.menuSeq, frame: this.menuFrame(id, world), locker: this.menuLocker(id) }
+		// job 173: the cell of a table under W (from the scene's intent); job 195: the node of a mind map (none: its root);
+		// job 199: the lane of a frame
+		const target = id !== null ? this.model.get(id) : null
+		let cell = (target?.t === 'table' || target?.t === 'mindmap' || target?.t === 'frame') && typeof i.cell === 'string' && hasSub(target, i.cell) ? i.cell : null
+		if (cell === null && target?.t === 'mindmap') cell = mindTree(target).root
+		// job 208: and the column of a frame with columns
+		const col = target?.t === 'frame' && typeof i.col === 'string' && COL_KEY_RE.test(i.col) && hasSub(target, i.col) ? i.col : null
+		this.menu = { id, at, world, ids: [...this.selection], seq: this.menuSeq, frame: this.menuFrame(id, world), locker: this.menuLocker(id), cell, col }
 		this.emitMenu()
 		return true
 	}
@@ -3475,8 +6602,8 @@ export class BoardSession {
 	 * The locker of "Unlock all locked by {name}" when a menu opens (job 062).
 	 *
 	 * @param {string|null} id the menu's target
-	 * @return {{by: string, name: string}|null} the target's lock when someone else with a known pid and
-	 *   name holds it; else null
+	 * @return {{by: string, name: string, guest?: true}|null} the target's lock when someone else with a
+	 *   known pid and name holds it ((job 151) guest: true when that person locked as a guest); else null
 	 */
 	menuLocker(id) {
 		const it = id !== null ? this.model.get(id) : null
@@ -3487,7 +6614,7 @@ export class BoardSession {
 		if (typeof by !== 'string' || by === '' || by === this.me?.pid || typeof name !== 'string' || name === '') {
 			return null
 		}
-		return { by, name }
+		return it.lock.guest === true ? { by, name, guest: true } : { by, name }
 	}
 
 	/**
@@ -3518,28 +6645,77 @@ export class BoardSession {
 	}
 
 	/**
-	 * The menu state for the shell; items, grid, gridSnap, unlockAll (board
-	 * menu), unlockFrame (the menu's frame: the target, or in the board menu
+	 * The menu state for the shell; items, grid, gridSnap, cursors (job 147), wheel (job 154: the scene's stage),
+	 * unlockAll (board menu), unlockFrame (the menu's frame: the target, or in the board menu
 	 * the frame under W) and unlockBy with unlockByName (the target's locker,
-	 * job 062) as they are now, not live.
+	 * job 062; job 151: plus unlockByGuest: true when that locker is a guest,
+	 * the key is missing otherwise) as they are now, not live.
 	 */
 	emitMenu() {
 		const m = this.menu
 		const by = m?.locker ? this.unlockByIds(m.locker.by).length : 0
 		this.ui.onContextMenu?.(m ? {
 			id: m.id, at: [...m.at], seq: m.seq, items: this.model?.size ?? 0,
-			grid: this.scene?.getGrid?.() === true, gridSnap: this.scene?.getGridSnap?.() === true,
+			grid: this.scene?.getGrid?.() === true, gridSnap: this.scene?.getGridSnap?.() === true, cursors: this.cursors,
+			wheel: this.scene?.getWheel?.() ?? null,
 			unlockAll: m.id === null ? this.unlockAllIds().length : 0,
 			unlockFrame: m.frame !== null ? this.unlockFrameIds(m.frame).length : 0,
 			unlockBy: by,
 			unlockByName: by > 0 ? m.locker.name : null,
+			...(by > 0 && m.locker.guest === true ? { unlockByGuest: true } : {}),
+			...this.menuTable(m),
+			...this.menuMindmap(m),
+			...this.menuLanes(m),
 		} : null)
+	}
+
+	/**
+	 * (Job 199) The lanes of a menu: on a lane of the one selected frame with
+	 * lanes, {lanes: {index, count, locked, cols}} (contextbar.js menuEntries;
+	 * job 208: cols {index, count} of the column of the menu, null without
+	 * columns), else nothing.
+	 *
+	 * @param {object} m the menu state
+	 * @return {object} {lanes} or {}
+	 */
+	menuLanes(m) {
+		const it = m.cell !== null && m.id !== null && this.selection.length === 1 && this.selection[0] === m.id ? this.model?.get(m.id) : null
+		if (!hasLanes(it)) {
+			return {}
+		}
+		const bands = laneBands(it)
+		const index = bands.findIndex((b) => b.key === m.cell)
+		const cols = colBands(it)
+		const ci = cols.findIndex((b) => b.key === m.col)
+		// job 225: group, the lane (column) is in a group
+		const cl = cols.length === 0 ? null : ci < 0 ? {} : { index: ci, count: cols.length, group: cols[ci].g !== null }
+		return index < 0 ? {} : { lanes: { index, count: bands.length, locked: isLocked(it), group: bands[index].g !== null, cols: cl } }
+	}
+
+	/**
+	 * (Job 173) The table of a menu: on a cell of the one selected table,
+	 * {table: {rows, cols, locked}} (contextbar.js menuEntries), else nothing.
+	 *
+	 * @param {object} m the menu state
+	 * @return {object} {table} or {}
+	 */
+	menuTable(m) {
+		const it = m.cell !== null && m.id !== null && this.selection.length === 1 && this.selection[0] === m.id ? this.model?.get(m.id) : null
+		if (!it || it.t !== 'table') {
+			return {}
+		}
+		const count = (map) => (map && typeof map === 'object' ? Object.keys(map).length : 0)
+		return { table: { rows: count(it.data?.rows), cols: count(it.data?.cols), locked: isLocked(it) } }
 	}
 
 	/**
 	 * Runs a context-menu entry (§6.6) and closes the menu. The entries on
 	 * items act on the selection the scene set before the intent. Every entry
-	 * but edit-text and note-here gives the canvas the focus back. paste-here
+	 * but edit-text, note-here, sort-colors and sort-frame (job 139: the shell
+	 * decides), insert-template (job 180: ui.onTemplates, the dialog takes
+	 * it), save-template with a draft (job 182: ui.onSaveTemplate, the
+	 * dialog takes it) and export-pdf with a dialog (job 207: ui.onExportPdf)
+	 * gives the canvas the focus back. paste-here
 	 * stays synchronous up to navigator.clipboard.read() (user activation).
 	 *
 	 * @param {string} name entry (contextbar.js MENU_ITEMS)
@@ -3574,15 +6750,45 @@ export class BoardSession {
 		case 'edit-text':
 			this.editTextOf(m.id)
 			return true
+		case 'react':
+			// job 172: the picker at the menu's point takes the focus
+			this.openReactionPicker(this.selection.length === 1 ? this.selection[0] : m.id, { x: m.at[0], y: m.at[1], w: 0, h: 0 })
+			return true
+		case 'tags':
+			// job 191: the tag panel at the menu's point takes the focus
+			this.openTagPanel({ x: m.at[0], y: m.at[1], w: 0, h: 0 })
+			return true
+		case 'swap-direction':
+			this.swapDirection()
+			break
 		case 'connect':
 			this.connectSelection()
 			break
+		case 'arrange':
+			// job 230: the bar's panel "Arrange" opens and takes the focus
+			this.ui.onArrange?.()
+			return true
+		case 'sort-colors':
+		case 'sort-frame':
+			// job 139: the shell puts the focus (canvas after a pointer, the first name field after a key)
+			if (name === 'sort-colors') {
+				this.sortByColor()
+			} else {
+				this.sortFrameByColor()
+			}
+			return true
 		case 'group':
 			// a blocked entry stays in the menu (M2, R20): its activation shows the reason
 			this.groupSelection()
 			break
 		case 'ungroup':
 			this.ungroupSelection()
+			break
+		case 'frame-around':
+			// job 278: a greyed entry shows its reason; else the new frame's title editor takes the focus
+			if (this.frameAroundSelection() === 'sent') {
+				return true
+			}
 			break
 		case 'lock':
 			this.lockSelection()
@@ -3601,11 +6807,68 @@ export class BoardSession {
 		case 'zoom-selection':
 			this.zoomToSelection()
 			break
+		case 'export-png':
+			// job 178: the selection the scene set before the intent (a frame: selected by the right click)
+			this.exportPng('selection')
+			break
+		case 'export-svg':
+			// job 200: the same set as the PNG's, as vectors
+			this.exportVector('selection', 'svg')
+			break
+		case 'export-pdf':
+			// job 207: the shell's dialog asks for the page size (it takes the focus)
+			if (this.openPdfExport('selection') && this.ui.onExportPdf) {
+				return true
+			}
+			break
+		case 'export-bpmn':
+			// job 205: the BPMN diagram of the same set
+			this.exportBpmn('selection')
+			break
+		case 'export-csv':
+			// job 179: the same set as the image's
+			this.exportBoardCsv('selection')
+			break
+		case 'save-template': {
+			// job 182: the selection as it is now; the shell's save dialog takes the focus
+			const d = this.templateDraft('selection')
+			if (d && this.ui.onSaveTemplate) {
+				this.ui.onSaveTemplate(d)
+				return true
+			}
+			break
+		}
+		case 'only-sticky':
+		case 'only-shape':
+		case 'only-text':
+		case 'only-connector':
+		case 'only-frame':
+		case 'only-group':
+			// job 144: "Filter selection", the entries of the bar's count button
+			this.filterSelection(name.slice('only-'.length))
+			break
 		case 'paste-here':
 			this.pasteHere(m.world)
 			break
 		case 'note-here':
 			this.noteHere(m.world)
+			return true
+		case 'pad-here':
+			// job 193: its title editor opens and keeps the focus, like note-here's editor
+			this.padHere(m.world)
+			return true
+		case 'comment':
+			// job 189: on an item its open thread or a new one there; on the empty canvas a free one at W
+			if (m.id !== null) {
+				// job 195: on a mind map the node of the menu
+				this.commentOn(this.selection.length === 1 ? this.selection[0] : m.id, m.cell ?? undefined)
+			} else if (m.world) {
+				this.composeComment({ item: null, x: m.world.x, y: m.world.y })
+			}
+			return true
+		case 'insert-template':
+			// job 180: the shell opens the template dialog (it takes the focus)
+			this.ui.onTemplates?.()
 			return true
 		case 'select-all':
 			this.selectAll()
@@ -3621,6 +6884,59 @@ export class BoardSession {
 			break
 		case 'grid-snap':
 			this.toggleGridSnap()
+			break
+		case 'cursors':
+			this.toggleCursors()
+			break
+		case 'wheel':
+			this.cycleWheel()
+			break
+		case 'row-above':
+		case 'row-below':
+		case 'col-left':
+		case 'col-right':
+		case 'row-delete':
+		case 'col-delete':
+		case 'table-csv':
+			// job 173: on the cell under W when the menu opened
+			this.tableMenuAction(name, m.id, m.cell ?? null)
+			break
+		case 'lane-rename':
+		case 'lane-above':
+		case 'lane-below':
+		case 'column-add':
+		case 'column-rename':
+		case 'column-left':
+		case 'column-right':
+		case 'lane-group':
+		case 'lane-group-rename':
+		case 'column-group':
+		case 'column-group-rename':
+			// job 199: an editor of a lane's name takes the focus (job 208: of a column's; job 225: of a group's)
+			this.laneMenuAction(name, m.id, m.cell ?? null, m.col ?? null)
+			return true
+		case 'lane-up':
+		case 'lane-down':
+		case 'lane-delete':
+		case 'column-move-left':
+		case 'column-move-right':
+		case 'column-delete':
+		case 'lane-ungroup':
+		case 'column-ungroup':
+			// job 199: on the lane under W when the menu opened (job 208: on its column; job 225: on its group)
+			this.laneMenuAction(name, m.id, m.cell ?? null, m.col ?? null)
+			break
+		case 'mm-child':
+		case 'mm-sibling':
+			// job 195: the new node's editor takes the focus
+			this.mindmapMenuAction(name, m.id, m.cell ?? null)
+			return true
+		case 'mm-fold':
+		case 'mm-rearrange':
+		case 'mm-delete':
+		case 'mm-text':
+			// job 195: on the node under W when the menu opened
+			this.mindmapMenuAction(name, m.id, m.cell ?? null)
 			break
 		default:
 			return false
@@ -3670,12 +6986,182 @@ export class BoardSession {
 		return id
 	}
 
-	/** "Select all" (like Ctrl/⌘+A): every item of the board but the locked ones (M2, R20). */
+	/**
+	 * (Job 188) "Add note pad here": like a click with the note tool's type
+	 * 'pad' at W (box centre at W, parent through containerFor; job 193: its
+	 * title editor opens, creation and title are one undo step).
+	 *
+	 * @param {{x: number, y: number}|null} world W of the menu (null: viewport center)
+	 * @return {string|null} new id
+	 */
+	padHere(world) {
+		if (this.viewOnly || this.frozen || !this.model) {
+			return null
+		}
+		const at = world ?? this.viewportCenter()
+		let id = null
+		this.guard(() => {
+			id = this.createNow({ type: 'create', t: 'pad', at: { x: at.x, y: at.y }, rect: null })
+		})
+		return id
+	}
+
+	/**
+	 * (Job 201) A shape from the shapes panel: like a click with the shape
+	 * tool and this kind at the point (box centre there, the kind's own size
+	 * and look, parent through containerFor, one undo step; a shape with
+	 * text opens its editor, a symbol none), then selected. (Job 203) The
+	 * kind image needs its picture {uri, w, h} (an entry of an own library):
+	 * data.img, and the proportions of the entry (shapeImage.js pictureSize).
+	 *
+	 * @param {string} kind data.kind (registry enum; anything else creates nothing)
+	 * @param {{x: number, y: number}|null} [screen] point in canvas pixels (the drop point;
+	 *   null: the middle of the view)
+	 * @param {{uri: string, w: number, h: number}|null} [picture] (job 203) the picture of an own shape
+	 * @return {string|null} new id
+	 */
+	placeShape(kind, screen = null, picture = null) {
+		if (this.viewOnly || this.frozen || !this.model || !this.scene || !checkField('shape', 'data.kind', kind).ok) {
+			return null
+		}
+		const pic = kind === 'image' ? placeablePicture(picture) : null
+		if (kind === 'image' && pic === null) {
+			return null
+		}
+		const ok = !!screen && Number.isFinite(screen.x) && Number.isFinite(screen.y)
+		const at = ok ? this.scene.screenToWorld(screen.x, screen.y) : this.viewportCenter()
+		let id = null
+		this.guard(() => {
+			id = this.createNow(pic === null
+				? { type: 'create', t: 'shape', at: { x: at.x, y: at.y }, rect: null, data: { kind } }
+				: { type: 'create', t: 'shape', at: { x: at.x, y: at.y }, rect: null, data: { kind, img: splitImage(pic.uri) }, size: pictureSize(pic.w, pic.h) })
+		})
+		return id
+	}
+
+	/**
+	 * (Job 204) "Pool with lanes" from the shapes panel: the frame tool's
+	 * option "Swimlanes" with its click size (LANE_FRAME_W × LANE_FRAME_H)
+	 * centred at the point, given as the dragged box, so the pool takes the
+	 * items lying wholly inside it like a drawn frame (createNow: three named
+	 * lanes, its title editor, one undo step), then selected.
+	 *
+	 * @param {{x: number, y: number}|null} [screen] point in canvas pixels (the drop point;
+	 *   null: the middle of the view)
+	 * @return {string|null} new id
+	 */
+	placeLanes(screen = null) {
+		if (this.viewOnly || this.frozen || !this.model || !this.scene) {
+			return null
+		}
+		const ok = !!screen && Number.isFinite(screen.x) && Number.isFinite(screen.y)
+		const at = ok ? this.scene.screenToWorld(screen.x, screen.y) : this.viewportCenter()
+		let id = null
+		this.guard(() => {
+			const rect = { x: at.x - LANE_FRAME_W / 2, y: at.y - LANE_FRAME_H / 2, w: LANE_FRAME_W, h: LANE_FRAME_H }
+			id = this.createNow({ type: 'create', t: 'frame', at: { x: at.x, y: at.y }, rect, lanes: true })
+		})
+		return id
+	}
+
+	/**
+	 * "Filter selection" (job 144; the bar's count button, the menu entries
+	 * only-<kind>): keeps only the items of one kind of the current selection
+	 * (model/groups.js selectionKinds, computed again now; 'group' keeps the
+	 * fully selected groups whole). An empty entry or one that is the whole
+	 * selection changes nothing. Only the selection changes: no op, no undo
+	 * step, no toast. Nothing outside mode edit, in viewOnly or while frozen.
+	 *
+	 * @param {string} kind sticky, shape, text, connector, frame or group
+	 * @return {boolean} the selection changed
+	 */
+	filterSelection(kind) {
+		if (this.clientMode !== 'edit' || this.viewOnly || this.frozen || !this.model) {
+			return false
+		}
+		const known = [...new Set(this.selection.filter((id) => this.model.has(id)))]
+		const entry = selectionKinds(this.model, known).find((k) => k.kind === kind)
+		if (!entry || entry.ids.length === known.length) {
+			return false
+		}
+		this.select(entry.ids)
+		return true
+	}
+
+	/**
+	 * (Job 230) "By tag" of the chip's "Narrow selection": keeps only the
+	 * items of the current selection that carry the tag (notes, model/tags.js
+	 * noteTagIds). A tag no selected item has, or one every selected item
+	 * has, changes nothing. Like filterSelection: only the selection changes
+	 * (no op, no undo step, no toast), nothing outside mode edit, in viewOnly
+	 * or while frozen.
+	 *
+	 * @param {string} tagId tag id
+	 * @return {boolean} the selection changed
+	 */
+	filterSelectionByTag(tagId) {
+		if (this.clientMode !== 'edit' || this.viewOnly || this.frozen || !this.model || typeof tagId !== 'string') {
+			return false
+		}
+		const byId = tagMap(this.boardTags())
+		if (!byId.has(tagId)) {
+			return false
+		}
+		const known = [...new Set(this.selection.filter((id) => this.model.has(id)))]
+		const keep = known.filter((id) => noteTagIds(this.model.get(id), byId).includes(tagId))
+		if (keep.length === 0 || keep.length === known.length) {
+			return false
+		}
+		this.select(keep)
+		return true
+	}
+
+	/**
+	 * "Select all" (like Ctrl/⌘+A): every item of the board but the locked ones (M2, R20); (job 190)
+	 * those are offered in mode edit (scene.setLockedOffer, the bar's "Select n locked items").
+	 */
 	selectAll() {
 		if (!this.model) {
 			return
 		}
-		this.select(this.unlockedOf([...this.model.ids()]))
+		const all = [...this.model.ids()]
+		this.select(this.unlockedOf(all))
+		if (this.clientMode === 'edit' && !this.frozen && typeof this.scene?.setLockedOffer === 'function') {
+			if (this.scene.setLockedOffer(all.filter((id) => isLocked(this.model.get(id))))) {
+				this.emitSelection()
+			}
+		}
+	}
+
+	/**
+	 * Job 190: the offered locked items that still exist and are locked (the scene's offer after a plain
+	 * marquee, Ctrl/⌘+A or "Select all"); [] outside mode edit, in viewOnly and while frozen.
+	 *
+	 * @return {string[]} item ids
+	 */
+	lockedOfferIds() {
+		if (this.clientMode !== 'edit' || this.viewOnly || this.frozen || !this.model || typeof this.scene?.getLockedOffer !== 'function') {
+			return []
+		}
+		const ids = this.scene.getLockedOffer()
+		return Array.isArray(ids) ? [...new Set(ids)].filter((id) => this.model.has(id) && isLocked(this.model.get(id))) : []
+	}
+
+	/**
+	 * Job 190, "Select n locked items" of the context bar: selects exactly the offered items that are
+	 * still there and locked (replaces the selection, like an Alt marquee); the offer ends. Only the
+	 * selection changes: no op, no undo step, no toast.
+	 *
+	 * @return {boolean} something was selected
+	 */
+	selectLockedOffer() {
+		const ids = this.lockedOfferIds()
+		if (ids.length === 0) {
+			return false
+		}
+		this.scene.setLockedOffer?.(null)
+		this.select(ids)
+		return true
 	}
 
 	/**
@@ -3723,10 +7209,13 @@ export class BoardSession {
 		return true
 	}
 
-	/** Toast [data-knorke-toast=paste-blocked] (§6.5.3 R19): use the keyboard instead. */
+	/**
+	 * Toast [data-knorke-toast=paste-blocked] (§6.5.3 R19): use the keyboard
+	 * instead; the key from the one formatter (util/shortcuts.js, job 141).
+	 */
 	pasteBlocked() {
-		const shortcut = isApplePlatform(this.win?.navigator ?? null) ? '⌘V' : 'Ctrl+V'
-		this.toast(t('knorke', 'Paste with {shortcut} instead: the browser did not allow reading the clipboard.', { shortcut }), { hook: 'paste-blocked' })
+		const { hint } = shortcut('paste', isApplePlatform(this.win?.navigator ?? null))
+		this.toast(t('knorke', 'Paste with {shortcut} instead: the browser did not allow reading the clipboard.', { shortcut: hint }), { hook: 'paste-blocked' })
 	}
 
 	zoom100() {
@@ -3789,6 +7278,19 @@ export class BoardSession {
 		if (upserts.length === 0 && removes.length === 0) {
 			return
 		}
+		// job 146 (R22): the absolute boxes of the selected items this flush can
+		// move (the item itself or its frame); a changed box reports the
+		// selection again, so the "Arrange" fields show the real position
+		const boxes = new Map()
+		for (const id of this.selection) {
+			if (this.model.has(id) && (all.has(id) || all.has(this.model.get(id).parent))) {
+				boxes.set(id, this.model.abs(id))
+			}
+		}
+		// job 240: the tick "1:1" of the selected shapes, also when only it changed (another person)
+		const squares = new Map(this.selection.filter((id) => all.has(id) && this.model.has(id)).map((id) => [id, squareOn(this.model.get(id))]))
+		// job 190: the number of offered locked items follows (unlocked or deleted by others)
+		const offered = this.lockedOfferIds().length
 		const summary = this.model.apply({ upserts, removes })
 		this.scene?.update(summary)
 		let reported = false
@@ -3801,12 +7303,37 @@ export class BoardSession {
 				reported = true
 			}
 		}
-		if ((lockMoved || (groupMoved && this.selection.length > 0)) && !reported) {
+		const boxMoved = [...boxes].some(([id, b]) => this.model.has(id) && !sameAbs(b, this.model.abs(id)))
+		const offerMoved = this.lockedOfferIds().length !== offered
+		const squareMoved = [...squares].some(([id, sq]) => this.model.has(id) && squareOn(this.model.get(id)) !== sq)
+		if ((lockMoved || boxMoved || offerMoved || squareMoved || (groupMoved && this.selection.length > 0)) && !reported) {
 			this.emitSelection()
 		}
 		// R17 K4: the vote list follows the model (one ui.onVotes per tick)
 		this.voteItemsChanged()
 		this.checkMenu()
+		// job 172: the picker, the names and the list follow their note
+		this.checkReactions(all)
+		// job 191: the tag panels follow their notes and the counts
+		this.checkTags()
+		this.emitEmpty()
+	}
+
+	/**
+	 * (Job 180) ui.onEmpty(empty) when the local model turned empty or got its
+	 * first item. (Job 271) Runs after every load and change of the local
+	 * model, so it also reports ui.onItems() (the board search counts again).
+	 */
+	emitEmpty() {
+		if (!this.model) {
+			return
+		}
+		this.ui.onItems?.()
+		const empty = this.model.size === 0
+		if (empty !== this.lastEmpty) {
+			this.lastEmpty = empty
+			this.ui.onEmpty?.(empty)
+		}
 	}
 
 	flushDeferred() {
@@ -3827,12 +7354,22 @@ export class BoardSession {
 			return
 		}
 		this.flushVisible(this.replica.applyServer(items, removed))
+		if (this.slideRole !== null) {
+			// job 272: the shown frame may be gone or have moved
+			this.slideShow.sync()
+			this.emitSlides()
+		}
+		// job 267: a new AI card gets the height of its content; an AI result is selected once it is here
+		this.ai.fixHeights(items ?? [])
+		this.ai.selectArrived()
 	}
 
 	/**
 	 * @param {{seq: number, rev: number|null, res: string[]}} acks acks
 	 */
 	onAcks(acks) {
+		// job 216: stale vote ops of an earlier answer without a votes block stay dropped
+		this.staleVotes = []
 		const { ids, failed, busy } = this.replica.ack(acks)
 		this.trackBusy(busy === true)
 		this.flushVisible(ids)
@@ -3878,6 +7415,8 @@ export class BoardSession {
 		let denied = false
 		let serverError = false
 		let closed = false
+		/** job 146: the own "Arrange" patch came back bad (one toast arrange-bad per answer) */
+		let arrangeBad = false
 		/** items whose ops came back itemlocked (M2, R20): one toast with their number */
 		const held = new Set()
 		// per item only the newest rejected text: a batch can carry two text
@@ -3886,12 +7425,23 @@ export class BoardSession {
 		const rescues = new Map()
 		/** result codes of rejected vote ops (SPEC-M1 §4.6) */
 		const voteCodes = []
+		/** job 172: a reaction patch came back with a code the user hears of */
+		let reactFailed = false
 		for (const failure of failed) {
 			const { op } = failure
 			let { code } = failure
+			if (op && isReactionPatch(op)) {
+				// no rescue, no undo: gone (the note went) stays silent
+				reactFailed = reactFailed || !['gone', 'dup', BUSY].includes(code)
+				continue
+			}
 			if (op && op.o === 'vote') {
 				// votes are no item state: no rescue, no undo; VoteState corrects below
 				voteCodes.push(code)
+				if (code === 'stale') {
+					// job 216: carried onto the state of this answer's votes block (onVotes)
+					this.staleVotes.push({ op, maybeApplied: failure.maybeApplied === true })
+				}
 				continue
 			}
 			if (!KNOWN_CODES.includes(code)) {
@@ -3929,15 +7479,20 @@ export class BoardSession {
 			if ((code === 'bad' || code === 'gone') && this.undoPending.has(op.id)) {
 				undoFailed = true
 			}
+			if (code === 'bad' && this.isArrangeOp(op)) {
+				arrangeBad = true
+			}
 			const rejected = this.rejectedText(op)
-			if (rejected !== null && code === 'locked' && op.id === this.takeoverId) {
+			// job 173: a cell of a table has its own lease key
+			const rkey = rejected !== null ? leaseKey(op.id, rejected.cell) : null
+			if (rejected !== null && code === 'locked' && rkey === this.takeoverId) {
 				// Sent before this tab's take-over reached the server (every request
 				// from the take-over on carries me.tk until it is through, and its
 				// answer clears takeoverId before its acks are read): not a lost
 				// lease. The text goes out again right behind the take-over.
-				this.takeoverText = { id: op.id, path: rejected.path, text: rejected.text }
+				this.takeoverText = { id: op.id, cell: rejected.cell, path: rejected.path, text: rejected.text }
 			} else if (rejected !== null) {
-				rescues.set(op.id, [op.id, rejected.text, code])
+				rescues.set(rkey, [rkey, rejected.text, code])
 			} else if (code === 'bad') {
 				console.warn('[knorke] op rejected as bad', op)
 			}
@@ -3958,8 +7513,17 @@ export class BoardSession {
 		if (serverError) {
 			this.toast(t('knorke', 'A change could not be saved because of a server error.'))
 		}
+		if (arrangeBad) {
+			// job 146 (R22): the model is back on the confirmed state, and flushVisible
+			// has reported the selection with it (the fields spring back)
+			this.arrangeSent = null
+			this.toast(t('knorke', 'Position could not be set'), { hook: 'arrange-bad' })
+		}
 		if (closed) {
 			this.voteToast('vote-closed', t('knorke', 'Voting has ended.'))
+		}
+		if (reactFailed) {
+			this.toast(t('knorke', 'Your reaction could not be saved.'), { hook: 'react-failed' })
 		}
 		if (voteCodes.length > 0) {
 			this.voteFailed(voteCodes)
@@ -3979,10 +7543,27 @@ export class BoardSession {
 	}
 
 	/**
+	 * Job 146: the rejected op is the own newest "Arrange" patch, recognised by
+	 * value (the Replica copies ops and merges later ops of one item into
+	 * them): the same item and every key that patch sent with the same value.
+	 *
+	 * @param {object} op rejected op
+	 * @return {boolean}
+	 */
+	isArrangeOp(op) {
+		const a = this.arrangeSent
+		if (a === null || !op || op.o !== 'patch' || op.id !== a.id || !op.p || typeof op.p !== 'object') {
+			return false
+		}
+		return Object.keys(a.p).every((k) => Object.prototype.hasOwnProperty.call(op.p, k) && op.p[k] === a.p[k])
+	}
+
+	/**
 	 * Rejected vote ops (SPEC-M1 §4.6): limit → "You have no votes left.",
 	 * closed → "Voting has ended.", denied → "No permission" (once); the
 	 * optimistic votes go back to the server state plus what is still pending
-	 * (the votes block of the same answer corrects the server part).
+	 * (the votes block of the same answer corrects the server part); stale
+	 * (job 216) stays silent, onVotes carries the change onto that block.
 	 *
 	 * @param {string[]} codes result codes of the rejected vote ops
 	 */
@@ -3999,7 +7580,7 @@ export class BoardSession {
 			this.toast(t('knorke', 'No permission'))
 		}
 		for (const c of codes) {
-			if (!['limit', 'closed', 'denied', 'gone', 'dup'].includes(c)) {
+			if (!['limit', 'closed', 'denied', 'gone', 'dup', 'stale'].includes(c)) {
 				console.warn('[knorke] vote op rejected: ' + c)
 			}
 		}
@@ -4023,15 +7604,35 @@ export class BoardSession {
 		if (op.o !== 'patch' || !op.p) {
 			return null
 		}
-		for (const path of this.textPathsOf(op.id)) {
+		for (const path of this.textPathsIn(op)) {
 			if (Object.prototype.hasOwnProperty.call(op.p, path) && typeof op.p[path] === 'string') {
 				if (this.hasNewerText(op.id, path)) {
 					return null
 				}
-				return { path, text: op.p[path] }
+				// job 173: the cell of a table's text path; job 195: the node of a mind map's
+				return { path, text: op.p[path], cell: subOfPath(path) }
 			}
 		}
 		return null
+	}
+
+	/**
+	 * @param {object} op a patch
+	 * @return {string[]} the text paths of the op's item (textPathsOf), (job 173) and for a table (or an
+	 *   unknown item) the cell paths data.cells.<col>.<row> the patch carries
+	 */
+	textPathsIn(op) {
+		const paths = this.textPathsOf(op.id)
+		const known = this.replica.visible(op.id) ?? (this.model?.has(op.id) ? this.model.get(op.id) : null)
+		// job 195: and a mind map's node texts data.texts.<pot>.<key>
+		if ((!known || known.t === 'table' || known.t === 'mindmap') && op.p && typeof op.p === 'object') {
+			for (const path of Object.keys(op.p)) {
+				if (subOfPath(path) !== null) {
+					paths.push(path)
+				}
+			}
+		}
+		return paths
 	}
 
 	/**
@@ -4060,16 +7661,17 @@ export class BoardSession {
 	}
 
 	/**
-	 * @param {string} id item id
+	 * @param {string} key lease key: the item id, (job 173) '<id>#<cell>' for a cell of a table
 	 * @param {string} text rejected text
 	 * @param {string} code result code
 	 */
-	rescue(id, text, code) {
-		const notice = this.noticeFor(id, code)
-		if (this.editingId === id) {
+	rescue(key, text, code) {
+		const [id, cell] = leaseParts(key)
+		const notice = this.noticeFor(key, code)
+		if (this.editKey() === key) {
 			// The editor may already show a notice (lease lost through presence).
-			if (!this.leaseLost.has(id)) {
-				this.loseLease(id, notice)
+			if (!this.leaseLost.has(key)) {
+				this.loseLease(key, notice)
 			}
 			return
 		}
@@ -4079,12 +7681,12 @@ export class BoardSession {
 		// discarded without an intent, so an earlier rescued text would vanish,
 		// and the focus would leave the editor the user is typing in.
 		if (exists && this.scene && this.editingId === null && this.rescueEditorId === null) {
-			this.loseLease(id, null)
-			if (this.scene.openTextEditor(id, { text, notice }) !== false) {
-				this.rescueEditorId = id
+			this.loseLease(key, null)
+			if (this.scene.openTextEditor(id, cell !== null ? { text, notice, cell } : { text, notice }) !== false) {
+				this.rescueEditorId = key
 				return
 			}
-			this.leaseLost.delete(id)
+			this.leaseLost.delete(key)
 		}
 		// Every other case collects the text in the copy dialog.
 		this.ui.onRescue?.({ id, text, gone: !exists })
@@ -4099,11 +7701,18 @@ export class BoardSession {
 	 * @param {string} id item of the open editor
 	 */
 	checkEditorLock(id) {
-		if (this.leaseLost.has(id) || !this.model?.has(id) || isLocked(this.model.get(id))) {
+		const key = this.editKey() ?? id
+		if (this.leaseLost.has(key) || !this.model?.has(id)) {
 			return
 		}
-		if (isLocked(this.replica.visible(id))) {
-			this.loseLease(id, this.noticeFor(id, 'itemlocked'))
+		const v = this.replica.visible(id)
+		if (!isLocked(this.model.get(id)) && isLocked(v)) {
+			this.loseLease(key, this.noticeFor(key, 'itemlocked'))
+			return
+		}
+		// job 173: the row or the column of the open cell (or the table) is gone; job 195: the node of a mind map
+		if (this.editingId === id && this.editingCell !== null && (!v || !hasSub(v, this.editingCell))) {
+			this.loseLease(key, t('knorke', 'Not saved. Copy your text before closing.'))
 		}
 	}
 
@@ -4115,15 +7724,20 @@ export class BoardSession {
 	 * participant closed their editor), the server would accept it and
 	 * overwrite their newer text. The dropped text is still in the editor.
 	 *
-	 * @param {string} id item id
+	 * @param {string} key lease key: the item id, (job 173) '<id>#<cell>' for a cell of a table
 	 * @param {string|null} notice notice for the open editor (null: none to set)
 	 */
-	loseLease(id, notice) {
-		this.leaseLost.add(id)
+	loseLease(key, notice) {
+		const [id, cell] = leaseParts(key)
+		this.leaseLost.add(key)
 		if (notice !== null) {
-			this.scene?.setEditorNotice(id, notice)
+			if (cell !== null) {
+				this.scene?.setEditorNotice(id, notice, cell)
+			} else {
+				this.scene?.setEditorNotice(id, notice)
+			}
 		}
-		const paths = this.textPathsOf(id)
+		const paths = cell !== null ? [subPath(cell)] : this.textPathsOf(id)
 		if (paths.length > 0) {
 			this.flushVisible(this.replica.dropQueuedPaths(id, paths))
 		}
@@ -4139,7 +7753,9 @@ export class BoardSession {
 			return t('knorke', 'Not saved: this item is locked. Copy your text before closing.')
 		}
 		if (code === 'locked') {
-			const holder = id ? this.presence.leaseHolder(id) : null
+			// job 173: id may be a lease key of a cell
+			const [item, cell] = id ? leaseParts(id) : [null, null]
+			const holder = item ? this.presence.leaseHolder(item, cell) : null
 			return t('knorke', 'Not saved: {name} is editing this item. Copy your text before closing.', { name: holder?.name || t('knorke', 'someone else') })
 		}
 		return t('knorke', 'Not saved. Copy your text before closing.')
@@ -4148,19 +7764,24 @@ export class BoardSession {
 	/**
 	 * @param {string|null} id item now being edited
 	 * @param {boolean} takeover the user took over the text lease
+	 * @param {string|null} [cell] (job 173) the cell of a table
 	 */
-	onEditing(id, takeover) {
-		const prev = this.editingId
+	onEditing(id, takeover, cell = null) {
+		const prevKey = this.editKey()
 		this.editingId = typeof id === 'string' ? id : null
-		if (this.rescueEditorId !== null && this.rescueEditorId !== this.editingId) {
+		this.editingCell = this.editingId !== null && typeof cell === 'string' ? cell : null
+		const key = this.editKey()
+		if (this.rescueEditorId !== null && this.rescueEditorId !== key) {
 			this.rescueEditorId = null
 		}
-		if (prev !== null && prev !== this.editingId) {
-			if (!this.dropEmptyNewText(prev)) {
-				if (this.newEdit !== null && this.newEdit.id === prev) {
+		if (prevKey !== null && prevKey !== key) {
+			const prev = prevKey
+			const [prevId] = leaseParts(prevKey)
+			if (!this.dropEmptyNewText(prevId)) {
+				if (this.newEdit !== null && this.newEdit.id === prevId) {
 					this.newEdit = null
 				}
-				this.remeasureClosed(prev)
+				this.remeasureClosed(prevKey)
 			}
 			// Keep announcing the closed item (me.e) until its last text op is
 			// acknowledged: the server writes presence BEFORE the ops of the same
@@ -4171,19 +7792,45 @@ export class BoardSession {
 			this.leaseLost.delete(prev)
 			this.textSession++
 		}
-		if (takeover && this.editingId !== null) {
+		if (takeover && key !== null) {
 			// Taking over: me.tk goes out with the next sync and stays pending
 			// until a request carrying it got through, also when the editor
 			// closes first (the lease tail keeps announcing the item, and its
 			// final text must not go out without the take-over).
-			this.takeoverId = this.editingId
-			this.leaseLost.delete(this.editingId)
+			this.takeoverId = key
+			this.leaseLost.delete(key)
 		}
 		this.dropStaleTakeover()
 		if (this.editingId === null) {
 			this.flushDeferred()
 		}
 		this.sync?.poke()
+		// job 279: the context bar shows B, I, S and the list button while a Markdown editor is open
+		if (prevKey !== key) this.emitSelection()
+	}
+
+	/**
+	 * (Job 279) An editor whose text understands Markdown is open: a note, a
+	 * shape, a text item, or a cell of a table (not a frame title, a pad title,
+	 * a lane, a mind map node or a connector label).
+	 *
+	 * @return {boolean}
+	 */
+	richEditing() {
+		const it = this.editingId !== null && this.model?.has(this.editingId) ? this.model.get(this.editingId) : null
+		if (!it) return false
+		if (it.t === 'table') return this.editingCell !== null
+		return (it.t === 'sticky' || it.t === 'shape' || it.t === 'text')
+	}
+
+	/**
+	 * (Job 279) B, I, S or the list button of the context bar: the open editor formats its selection.
+	 *
+	 * @param {'bold'|'italic'|'strike'|'list'} what the button
+	 * @return {boolean} the text changed
+	 */
+	formatText(what) {
+		return this.richEditing() && this.scene?.formatText?.(what) === true
 	}
 
 	/**
@@ -4191,8 +7838,9 @@ export class BoardSession {
 	 * and the item is still empty. The editor sends no final intent when the
 	 * value equals its start value (Esc or a click beside it without typing,
 	 * M0 rule), so textNow() never sees this close; the session deletes the
-	 * item here, in the undo step of its creation. Not while the lease is lost
-	 * (the editor showed a notice), the board is frozen or view-only.
+	 * item here, in the undo step of its creation; an empty note or shape
+	 * stays (job 138). Not while the lease is lost (the editor showed a
+	 * notice), the board is frozen or view-only.
 	 *
 	 * @param {string} id item whose editor closed
 	 * @return {boolean} true when the item was deleted
@@ -4221,11 +7869,30 @@ export class BoardSession {
 	 *
 	 * @param {string} id item whose editor closed
 	 */
-	remeasureClosed(id) {
-		if (this.frozen || this.viewOnly || this.leaseLost.has(id) || !this.model?.has(id)) {
+	remeasureClosed(key) {
+		const [id] = leaseParts(key)
+		if (this.frozen || this.viewOnly || this.leaseLost.has(key) || !this.model?.has(id)) {
 			return
 		}
 		const it = this.knownItem(id)
+		if (it?.t === 'mindmap') {
+			// job 195: the mind map's box as measured now (a concurrent change), into the step of the node's text
+			const r = withBox(it, { p: {}, inv: {} }, this.nodeMeasure())
+			if (Object.keys(r.p).length > 0 && !isLocked(this.model.get(id))) {
+				const mergeKey = this.lastTextKey?.id === key ? this.lastTextKey.key : null
+				this.guard(() => this.commit({ ops: [{ o: 'patch', id, p: r.p }], inverse: [{ o: 'patch', id, p: r.inv }] }, { urgent: true, mergeKey }))
+			}
+			return
+		}
+		if (it?.t === 'table') {
+			// job 173: the table's w/h as measured now, into the step of the cell's text
+			const r = withSize(it, { p: {}, inv: {} }, this.cellMeasure())
+			if (Object.keys(r.p).length > 0 && !isLocked(this.model.get(id))) {
+				const mergeKey = this.lastTextKey?.id === key ? this.lastTextKey.key : null
+				this.guard(() => this.commit({ ops: [{ o: 'patch', id, p: r.p }], inverse: [{ o: 'patch', id, p: r.inv }] }, { urgent: true, mergeKey }))
+			}
+			return
+		}
 		if (it?.t !== 'text') {
 			return
 		}
@@ -4238,9 +7905,9 @@ export class BoardSession {
 		this.guard(() => this.commit(actions.remeasure(this.model, id, h), { urgent: true, mergeKey }))
 	}
 
-	/** @return {string|null} the item announced as me.e (open editor, else the lease tail) */
+	/** @return {string|null} the lease key announced as me.e (and me.ec, job 173): open editor, else the lease tail */
 	announcedEdit() {
-		return this.editingId ?? this.leaseTail
+		return this.editKey() ?? this.leaseTail
 	}
 
 	/**
@@ -4249,7 +7916,10 @@ export class BoardSession {
 	 *   acknowledged yet (queued or in flight), or text waiting for the take-over
 	 */
 	hasPendingText(id) {
-		return this.takeoverText?.id === id || this.replica.pendingOps().ops.some((op) => op.id === id)
+		// job 173: id may be the lease key of a cell; any pending op of its table counts
+		const [item] = leaseParts(id)
+		const st = this.takeoverText
+		return (st !== null && leaseKey(st.id, st.cell) === id) || this.replica.pendingOps().ops.some((op) => op.id === item)
 	}
 
 	/**
@@ -4268,7 +7938,7 @@ export class BoardSession {
 			// not inside the scene callback that got us here (rescue may open an editor)
 			queueMicrotask(() => {
 				if (!this.destroyed) {
-					this.rescue(st.id, st.text, 'locked')
+					this.rescue(leaseKey(st.id, st.cell), st.text, 'locked')
 				}
 			})
 		}
@@ -4281,16 +7951,18 @@ export class BoardSession {
 	 * @param {object} me the presence that was sent
 	 */
 	onPresenceSent(me) {
-		if (!me || me.tk !== 1 || me.e !== this.takeoverId || this.takeoverId === null) {
+		// job 173: the lease key names a cell too (me.ec)
+		const sentKey = me && typeof me.e === 'string' ? leaseKey(me.e, me.ec) : null
+		if (!me || me.tk !== 1 || sentKey !== this.takeoverId || this.takeoverId === null) {
 			return
 		}
 		this.takeoverId = null
 		const st = this.takeoverText
 		this.takeoverText = null
-		if (!st || st.id !== me.e || this.hasNewerText(st.id, st.path) || this.frozen) {
+		if (!st || leaseKey(st.id, st.cell) !== sentKey || this.hasNewerText(st.id, st.path) || this.frozen) {
 			return
 		}
-		const ids = this.sync?.enqueue([{ o: 'patch', id: st.id, p: { [st.path]: st.text } }], { urgent: this.editingId !== st.id })
+		const ids = this.sync?.enqueue([{ o: 'patch', id: st.id, p: { [st.path]: st.text } }], { urgent: this.editKey() !== sentKey })
 		this.flushVisible(ids)
 	}
 
@@ -4314,17 +7986,18 @@ export class BoardSession {
 	onPresence(map) {
 		this.presence.update(map, this.now())
 		this.scene?.presenceChanged()
-		this.sync?.setRemoteDragging(this.presence.hasDragging())
+		// job 171: someone pointing keeps the fast cadence like a drag (view-only devices stay at viewMs)
+		this.sync?.setRemoteDragging(this.presence.hasDragging() || this.presence.hasLaser())
 		this.emitParticipants()
 		// SPEC-M1 §6.5.6: every presence card moves a follower's camera
 		this.follower?.onPresence()
-		const id = this.editingId
+		const key = this.editKey()
 		// While a take-over (me.tk) has not reached the server, answers to older
-		// requests still name the previous holder: no verdict yet.
-		if (id !== null && !this.leaseLost.has(id) && this.takeoverId !== id) {
-			const holder = this.presence.leaseHolder(id)
+		// requests still name the previous holder: no verdict yet. (job 173) Per cell.
+		if (key !== null && !this.leaseLost.has(key) && this.takeoverId !== key) {
+			const holder = this.presence.leaseHolder(this.editingId, this.editingCell)
 			if (holder && holder.pid !== this.me?.pid) {
-				this.loseLease(id, this.noticeFor(id, 'locked'))
+				this.loseLease(key, this.noticeFor(key, 'locked'))
 			}
 		}
 	}
@@ -4353,9 +8026,18 @@ export class BoardSession {
 			this.frozen = true
 			this.closeMenu()
 			this.closeStepper()
+			// job 172: no reacting on a frozen board; names and the list stay, without action
+			this.closeReactionPicker()
+			this.pushReactions()
+			this.emitReactionPopup()
+			// job 139: the name fields end, a typed name is lost (nothing can be sent)
+			this.endSortLabels({ save: false })
+			// job 189: no "New comment" pick on a frozen board; reading stays
+			this.cancelCommentPick()
+			this.emitComments()
 			this.scene?.setViewOnly(true)
 			if (this.editingId !== null) {
-				this.loseLease(this.editingId, this.noticeFor(this.editingId, s))
+				this.loseLease(this.editKey(), this.noticeFor(this.editKey(), s))
 			}
 			const st = this.takeoverText
 			this.takeoverText = null
@@ -4438,6 +8120,8 @@ export class BoardSession {
 				}
 			}
 		}
+		// job 190: the number of offered locked items follows the reloaded model too
+		const offered = this.lockedOfferIds().length
 		this.model.load(items)
 		this.scene?.reset()
 		// R17 K4: the reloaded model refreshes the vote list too
@@ -4447,8 +8131,11 @@ export class BoardSession {
 			this.selection = rest
 			this.scene?.setSelection(rest)
 			this.emitSelection()
+		} else if (this.lockedOfferIds().length !== offered) {
+			this.emitSelection()
 		}
 		this.checkMenu()
+		this.emitEmpty()
 		if (snap.board) {
 			// the snapshot is authoritative (also a lower metaRev after a restore)
 			this.takeBoard(snap)
@@ -4509,19 +8196,31 @@ export class BoardSession {
 			const v = this.viewV()
 			return v ? { v } : null
 		}
-		const e = this.announcedEdit()
+		const announced = this.announcedEdit()
+		// job 173: the lease key of a cell is e plus ec; job 199: the name of a lane has no lease (job 208: nor a column's)
+		const parts = announced === null ? [null, null] : leaseParts(announced)
+		// job 225: nor a group's
+		const [e, ec] = typeof parts[1] === 'string' && [LANE_KEY_RE, COL_KEY_RE, LGROUP_KEY_RE, CGROUP_KEY_RE].some((re) => re.test(parts[1])) ? [null, null] : parts
 		const me = {
 			c: this.pointer ? [r1(this.pointer[0]), r1(this.pointer[1])] : null,
 			s: this.selection.slice(0, PRESENCE_IDS),
 			d: this.dragPreview.slice(0, PRESENCE_IDS).map((d) => [d[0], r1(d[1]), r1(d[2])]),
 			e,
 		}
-		if (this.takeoverId !== null && e === this.takeoverId) {
+		if (ec !== null) {
+			me.ec = ec
+		}
+		if (this.takeoverId !== null && announced === this.takeoverId) {
 			me.tk = 1
 		}
 		const v = this.viewV()
 		if (v) {
 			me.v = v
+		}
+		// job 171: the laser trail of the last LASER_WINDOW_MS (only in this full me)
+		const l = this.laserWire()
+		if (l) {
+			me.l = l
 		}
 		return me
 	}
@@ -4531,11 +8230,24 @@ export class BoardSession {
 		if (c && Number.isFinite(c.scale)) {
 			this.ui.onZoom?.(Math.round(c.scale * 100))
 		}
+		// job 272: the cover around the shown slide follows the camera
+		this.emitSlideRect(c)
 		// R22 (P7-08): the stepper never moves the camera; any other camera
 		// change (wheel, trackpad, zoom keys, a follow jump, fit, zoomToItem)
 		// leaves it over another item: close it
 		if (this.stepper !== null && cameraMoved(this.stepper.cam, c)) {
 			this.closeStepper()
+		}
+		// job 172: so do the reaction picker, the names and the list
+		if (this.reactPicker !== null && cameraMoved(this.reactPicker.cam, c)) {
+			this.closeReactionPicker()
+		}
+		if (this.reactPopup !== null && cameraMoved(this.reactPopup.cam, c)) {
+			this.closeReactionPopup()
+		}
+		// job 191: and the list of a note's tags
+		if (this.tagPanel?.kind === 'list' && cameraMoved(this.tagPanel.cam, c)) {
+			this.closeTagPanel({ focus: false })
 		}
 		// presence v: an own camera change goes out soon (not while following someone)
 		const now = this.now()
@@ -4561,7 +8273,10 @@ export class BoardSession {
 
 	emitSelection() {
 		this.checkMenu()
+		this.selectionReports++
 		this.ui.onSelection?.(this.selectionInfo())
+		// job 191: the tag panel works on the selection
+		this.checkTags()
 	}
 
 	/**
@@ -4585,6 +8300,33 @@ export class BoardSession {
 	 * groupBlock, grouped, ungroupBlock and oneGroup come from
 	 * model/groups.js groupSummary over the whole selection (0, null, false
 	 * while the session cannot write).
+	 * Job 135 (colour picker): fills = the distinct fill values (fieldValue)
+	 * of the unlocked selected items in selection order, at most two (the
+	 * split fill button of a mixed selection); boardColors = the custom
+	 * colours of the whole board (contextbar.js boardColors over every model
+	 * item, locked ones too), computed again for every report, so a colour
+	 * just set or set by someone else shows from the next report on.
+	 * Job 139: sortable = the loose notes of the selection "Sort by color"
+	 * moves, frameSortable = the notes in the one selected frame (both
+	 * actions.sortableNotes; 0 while the session cannot write).
+	 * Job 144: kinds = [{kind, count}] of "Filter selection" over the whole
+	 * selection, locked items too (model/groups.js filterKinds; [] while it
+	 * is not filterable or the session cannot write).
+	 * Job 153: swappable = the unlocked selected connectors whose tips differ
+	 * (actions.swappableIds: what "Swap direction" changes; 0 while the
+	 * session cannot write).
+	 * Job 172: reactable = exactly one note is selected (locked too), the
+	 * client mode is edit and this person may react (mayReact).
+	 * Job 190: lockedOffer = how many offered locked items still exist and
+	 * are locked (lockedOfferIds; 0 without an offer and outside mode edit).
+	 * Job 211: labelled = every unlocked selected item is a symbol, BPMN
+	 * event, gateway or (job 235) own shape (shapes.js hasLabel: its text is a
+	 * label below it).
+	 * Job 240: square = the tick "1:1" of "Arrange" (model/shapes.js squareOn)
+	 * when exactly one unlocked shape is selected, else null.
+	 * Job 227: fills and the colour fields carry the colour an item is drawn
+	 * in (shownField: an old palette colour as its new tone), so the bar marks
+	 * the new swatch and an old and a new Light blue count as one colour.
 	 *
 	 * @return {object}
 	 */
@@ -4622,6 +8364,61 @@ export class BoardSession {
 			grouped: groups.grouped,
 			ungroupBlock: groups.ungroupBlock,
 			oneGroup: groups.oneGroup,
+			// job 278: "Frame around" (shown while frameable; frameBlock: why it is greyed)
+			frameable: false,
+			frameBlock: null,
+			fills: [],
+			boardColors: this.model ? boardColors(modelItems(this.model)) : [],
+			sortable: 0,
+			frameSortable: 0,
+			kinds: [],
+			// job 230: the tags of the selected notes with their counts (the chip's "Narrow selection")
+			tags: [],
+			swappable: 0,
+			// job 172: the bar's and the menu's "Add reaction": exactly one note, in mode edit
+			reactable: all.length === 1 && all[0].t === 'sticky' && this.clientMode === 'edit' && this.mayReact(),
+			// job 279: the links of the one selected item ("Open link") and an open editor with Markdown (B, I, S, list)
+			links: all.length === 1 ? itemLinks(all[0]) : [],
+			richEditing: this.richEditing(),
+			// job 189: the bar's and the menu's "Comment": exactly one item of the five types, in mode edit
+			commentable: this.clientMode === 'edit' && this.mayComment() && commentableIds(all.map((it) => it.id), (id) => this.model?.get(id) ?? null),
+			// job 191: the bar's and the menu's "Tags": the unlocked selected notes, in mode edit
+			taggable: this.clientMode === 'edit' && this.mayTag() ? items.filter((it) => it.t === 'sticky').length : 0,
+			// job 190: the bar's "Select n locked items"
+			lockedOffer: this.lockedOfferIds().length,
+			// job 195: the one selected mind map and its focused node (the bar's sections mm-node and mm-layout)
+			mindmap: this.selectedMindmap(all),
+			// job 211: only labels below their shapes (the bar has no text alignment for them)
+			labelled: items.length > 0 && items.every((it) => it.t === 'shape' && hasLabel(fieldValue(it, 'data.kind'))),
+			// job 260: only basic and flowchart shapes (the bar's border palette with "Default" instead of Black)
+			redesigned: items.length > 0 && items.every((it) => it.t === 'shape' && REDESIGN_KINDS.includes(fieldValue(it, 'data.kind'))),
+			// job 240: the tick "1:1" of "Arrange"
+			square: all.length === 1 && items.length === 1 && items[0].t === 'shape' ? squareOn(items[0]) : null,
+			// job 267: the bar's "Summarise" and "Cluster by topic"
+			ai: this.ai.offer(all),
+		}
+		if (writable && this.model && all.length > 0) {
+			const fp = frameAroundPlan(this.model, all.map((it) => it.id))
+			out.frameable = fp.box !== null
+			out.frameBlock = fp.box !== null ? fp.blocked : null
+		}
+		if (writable && this.model) {
+			out.kinds = filterKinds(this.model, all.map((it) => it.id))
+			out.tags = selectionTags(all, this.boardTags()).map((tg) => ({ ...tg, color: shownColor(tg.color) }))
+			out.sortable = actions.sortableNotes(this.model, all.map((it) => it.id)).length
+			out.swappable = actions.swappableIds(this.model, items.map((it) => it.id)).length
+			if (all.length === 1 && all[0].t === 'frame') {
+				out.frameSortable = actions.sortableNotes(this.model, [], { frame: all[0].id }).length
+			}
+		}
+		for (const it of items) {
+			const v = fieldRule(it.t, 'style.fill') === null ? null : shownField(it, 'style.fill')
+			if (typeof v === 'string' && !out.fills.includes(v)) {
+				out.fills.push(v)
+				if (out.fills.length === 2) {
+					break
+				}
+			}
 		}
 		for (const [key, path] of Object.entries(SELECTION_FIELDS)) {
 			let value
@@ -4631,7 +8428,7 @@ export class BoardSession {
 					value = null
 					break
 				}
-				const v = fieldValue(it, path) ?? null
+				const v = shownField(it, path)
 				if (value === undefined) {
 					value = v
 				} else if (JSON.stringify(value) !== JSON.stringify(v)) {
@@ -4652,6 +8449,30 @@ export class BoardSession {
 			}
 		}
 		return out
+	}
+
+	/**
+	 * (Job 195) The mind map of selection v2: exactly one selected mind map,
+	 * {id, layout, locked, node: {key, root, color (its own c or null), shape,
+	 * kids, folded}|null (the focus)}, else null.
+	 *
+	 * @param {object[]} all the selected items
+	 * @return {object|null}
+	 */
+	selectedMindmap(all) {
+		if (all.length !== 1 || all[0].t !== 'mindmap') {
+			return null
+		}
+		const it = all[0]
+		const tree = mindTree(it)
+		const key = this.mmFocus !== null && this.mmFocus.id === it.id ? this.mmFocus.key : null
+		const e = key !== null ? tree.nodes.get(key) : null
+		return {
+			id: it.id,
+			layout: tree.layout,
+			locked: isLocked(it),
+			node: e ? { key, root: e.parent === null, color: typeof e.n.c === 'string' ? shownColor(e.n.c) : null, shape: drawnShape(e.n, e.parent === null, tree.layout, e.depth), kids: e.kids.length, folded: e.n.f === true } : null,
+		}
 	}
 
 	emitUndo() {
@@ -4711,7 +8532,8 @@ export class BoardSession {
 		}
 		const consider = (id, path, text) => {
 			if (typeof id === 'string' && typeof text === 'string' && text !== '' && confirmedText(id, path) !== text) {
-				byId.set(id, text)
+				// job 173: one text per cell of a table
+				byId.set(leaseKey(id, subOfPath(path)), text)
 			}
 		}
 		for (const op of this.replica.pendingOps().ops) {
@@ -4719,7 +8541,7 @@ export class BoardSession {
 				const path = textPathOf(op.t)
 				consider(op.id, path, path ? getPath(op.p ?? {}, path) : undefined)
 			} else if (op.o === 'patch' && op.p) {
-				for (const path of this.textPathsOf(op.id)) {
+				for (const path of this.textPathsIn(op)) {
 					if (Object.prototype.hasOwnProperty.call(op.p, path)) {
 						consider(op.id, path, op.p[path])
 					}
@@ -4734,13 +8556,16 @@ export class BoardSession {
 			if (i.open === true) {
 				// the open editor's text: always (§4.2, §6.4), also when it reached the server
 				if (typeof i.id === 'string' && typeof i.value === 'string' && i.value !== '') {
-					byId.set(i.id, i.value)
+					byId.set(leaseKey(i.id, i.cell), i.value)
 				}
 			} else {
 				consider(i.id, typeof i.path === 'string' ? i.path : 'data.text', i.value)
 			}
 		}
-		return [...byId].map(([id, text]) => ({ id, text, gone: !this.model?.has(id) }))
+		return [...byId].map(([key, text]) => {
+			const [id] = leaseParts(key)
+			return { id, text, gone: !this.model?.has(id) }
+		})
 	}
 
 	/**
@@ -4762,9 +8587,14 @@ export class BoardSession {
 		}
 		// the replica's visible state has the own commits (the model defers an item being edited)
 		const item = this.replica.visible(id) ?? (this.model?.has(id) ? this.model.get(id) : null)
-		const path = item ? textPathOf(item.t) : null
+		// job 173: the open cell of a table
+		const cell = this.editingCell
+		const path = item ? (cell !== null ? subPath(cell) : textPathOf(item.t)) : null
 		const value = path ? getPath(item, path) : undefined
-		return typeof value === 'string' && value !== '' ? [{ type: 'text', id, path, value, open: true }] : []
+		if (typeof value !== 'string' || value === '') {
+			return []
+		}
+		return [cell !== null ? { type: 'text', id, path, value, cell, open: true } : { type: 'text', id, path, value, open: true }]
 	}
 
 	/**
@@ -4803,6 +8633,8 @@ export class BoardSession {
 		if (this.destroyed || !this.sync) {
 			return true
 		}
+		// job 139: typed names of the name fields are saved before the wait
+		this.endSortLabels()
 		this.flushEditor()
 		const settled = () => this.destroyed || this.frozen || this.sync.finalStatus !== null
 			|| (this.replica.pendingCount() === 0 && this.takeoverText === null)
@@ -4865,6 +8697,8 @@ export class BoardSession {
 			})
 		}
 		on(win, 'pagehide', () => {
+			// job 139: typed names of the name fields go with the keepalive
+			this.endSortLabels()
 			this.flushEditor()
 			this.sync?.flushKeepalive()
 			this.saveCamera()
@@ -4896,8 +8730,12 @@ export class BoardSession {
 		if (this.destroyed) {
 			return
 		}
+		// job 139: typed names first, while the session can still commit them
+		this.endSortLabels()
 		this.destroyed = true
 		this.menu = null
+		this.comments.close()
+		this.ai.destroy()
 		this.autoEnd?.ctl?.abort()
 		this.autoEnd = null
 		this.follower?.destroy()

@@ -27,14 +27,21 @@
  *   overlapping own pills at LOD 2 are painted edge, edge, body, body,
  *   digit, digit, so their bodies merge and digits may overlap
  * - buildBadges: one Konva.Shape without hit graph whose sceneFunc paints
+ * - (job 233) the badge: a VOTE_BADGE_PX circle for the own count, a white
+ *   "+" circle for a votable item without one; its centre on the top-right
+ *   corner moved out by max(0, VOTE_BADGE_CLEAR_PX − pad · scale) px per
+ *   axis, so it never covers the text box (notes, shapes, text, rotated,
+ *   zoom 0.1–4); badgeAt hits 16 px (mouse) / 22 px (pen, finger) around a
+ *   drawn badge, never through another item, the topmost of several
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { SceneModel } from '../../../src/model/SceneModel.js'
-import { BADGES_NONE, buildBadges, paintBadges, planBadges, topRight } from '../../../src/scene/nodes/badges.js'
+import { BADGES_NONE, badgeAt, badgeCentre, badgeShapes, buildBadges, padOf, paintBadges, planBadges, topRight } from '../../../src/scene/nodes/badges.js'
 import {
-	FONT_FAMILY, LOD2_ENTER, VOTE_DOT_BORDER, VOTE_DOT_BORDER_PX, VOTE_DOT_GAP_PX, VOTE_DOT_INSET_PX, VOTE_DOT_PAD_PX, VOTE_DOT_PX, VOTE_RING_PX,
-	VOTE_RING_STROKE_PX, VOTE_SCOPE_COLOR, VOTE_SCOPE_STROKE_PX, VOTE_TOTAL_FILL, contrastTextOn,
+	FONT_FAMILY, LOD2_ENTER, SHAPE_TEXT_PADDING, STICKY_PADDING, VOTE_BADGE_CLEAR_PX, VOTE_BADGE_FONT_PX, VOTE_BADGE_HIT_MOUSE_PX,
+	VOTE_BADGE_HIT_TOUCH_PX, VOTE_BADGE_PLUS_PX, VOTE_BADGE_PX, VOTE_BADGE_RING_PX, VOTE_DOT_BORDER, VOTE_DOT_BORDER_PX, VOTE_DOT_GAP_PX,
+	VOTE_DOT_PAD_PX, VOTE_DOT_PX, VOTE_RING_STROKE_PX, VOTE_SCOPE_COLOR, VOTE_SCOPE_STROKE_PX, VOTE_TOTAL_FILL, contrastTextOn,
 } from '../../../src/model/tokens.js'
 import { PALETTE } from '../../../src/sync/presence.js'
 import { frameItem, note } from './sceneHarness.mjs'
@@ -82,8 +89,8 @@ function recorder() {
 	}
 	let font = ctx.font
 	Object.defineProperty(ctx, 'font', { get: () => font, set: (x) => { font = x; calls.push(['set', 'font', x]) } })
-	for (const m of ['beginPath', 'closePath', 'arc', 'lineTo', 'fill', 'stroke', 'strokeRect', 'fillText']) {
-		ctx[m] = (...args) => calls.push([m, ...args, m === 'fill' || m === 'fillText' ? ctx.fillStyle : m === 'stroke' || m === 'strokeRect' ? ctx.strokeStyle : undefined])
+	for (const m of ['beginPath', 'closePath', 'arc', 'lineTo', 'fill', 'stroke', 'strokeRect', 'fillText', 'fillRect']) {
+		ctx[m] = (...args) => calls.push([m, ...args, m === 'fill' || m === 'fillText' || m === 'fillRect' ? ctx.fillStyle : m === 'stroke' || m === 'strokeRect' ? ctx.strokeStyle : undefined])
 	}
 	ctx.measureText = (s) => ({ width: String(s).length * 0.6 * Number(/([\d.]+)px/.exec(font)[1]) })
 	return ctx
@@ -170,12 +177,14 @@ describe('paintBadges', () => {
 		assert.ok(!ctx.calls.some((c) => c[0] === 'fillText'), 'no text without items')
 	})
 
-	test('own circle in the state color at the corner, digits in contrastTextOn(color); the total to its left in VOTE_TOTAL_FILL', () => {
+	test('(job 233) the own count: a VOTE_BADGE_PX circle in the state color at the badge centre, digits in contrastTextOn(color); the total pill one gap to its left in VOTE_TOTAL_FILL', () => {
 		const m = board()
 		const ctx = recorder()
 		const color = '#1565c0'
-		paintBadges(ctx, planBadges(m, [A], state({ badges: new Map([[A, { mine: 3, total: 12 }]]), markVotable: false })), scale, color)
-		assert.ok(ctx.calls.some((c) => c[0] === 'set' && c[1] === 'font' && c[2] === `bold ${12 * px}px ${FONT_FAMILY}`))
+		const plan = planBadges(m, [A], state({ badges: new Map([[A, { mine: 3, total: 12 }]]), markVotable: false }), { scale })
+		paintBadges(ctx, plan, scale, color)
+		assert.ok(ctx.calls.some((c) => c[0] === 'set' && c[1] === 'font' && c[2] === `bold ${VOTE_BADGE_FONT_PX * px}px ${FONT_FAMILY}`), 'the badge font')
+		assert.ok(ctx.calls.some((c) => c[0] === 'set' && c[1] === 'font' && c[2] === `bold ${12 * px}px ${FONT_FAMILY}`), 'the total font')
 		// per pill: the white edge (grown by half the border), then the body (shrunk by half of it)
 		const fills = ctx.calls.filter((c) => c[0] === 'fill').map((c) => c[1])
 		assert.deepEqual(fills, [VOTE_DOT_BORDER, color, VOTE_DOT_BORDER, VOTE_TOTAL_FILL])
@@ -184,47 +193,61 @@ describe('paintBadges', () => {
 		assert.ok(!ctx.calls.some((c) => c[0] === 'stroke'), 'no stroke: the edge is a fill')
 		const arcs = ctx.calls.filter((c) => c[0] === 'arc')
 		assert.equal(arcs.length, 8, 'two half circles per fill')
-		const r = (VOTE_DOT_PX / 2) * px
+		const R = (VOTE_BADGE_PX / 2) * px
 		const b = VOTE_DOT_BORDER_PX * px
-		// own circle: centre VOTE_DOT_INSET_PX inside the corner (200, 0)
-		const cx = 200 - VOTE_DOT_INSET_PX * px
-		const cy = VOTE_DOT_INSET_PX * px
-		for (const [i, rad] of [[0, r + b / 2], [1, r + b / 2], [2, r - b / 2], [3, r - b / 2]]) {
-			assert.ok(near(arcs[i][1], cx) && near(arcs[i][2], cy) && near(arcs[i][3], rad), `one digit: a circle, arc ${i}`)
+		// a note at 50 %: d = 11 − 16 · 0.5 = 3 px out from the corner (200, 0) on each axis
+		const d = (VOTE_BADGE_CLEAR_PX - STICKY_PADDING * scale) * px
+		const cx = 200 + d
+		const cy = -d
+		assert.ok(near(plan.items[0].cx, cx) && near(plan.items[0].cy, cy), JSON.stringify(plan.items[0]))
+		for (const [i, rad] of [[0, R + b / 2], [1, R + b / 2], [2, R - b / 2], [3, R - b / 2]]) {
+			assert.ok(near(arcs[i][1], cx) && near(arcs[i][2], cy) && near(arcs[i][3], rad), `one digit: a circle around the centre, arc ${i}`)
 		}
-		// the edge covers [r − b/2, r + b/2] around the outline of radius r: the pixels of a b-wide stroke on it
-		assert.ok(near(arcs[0][3] - arcs[2][3], b) && near((arcs[0][3] + arcs[2][3]) / 2, r))
-		// total pill: two digits, right edge one gap left of the own circle
-		const right = cx - r - VOTE_DOT_GAP_PX * px
+		assert.ok(near(arcs[0][3] - arcs[2][3], b) && near((arcs[0][3] + arcs[2][3]) / 2, R))
+		// total pill: two digits, VOTE_DOT_PX high, right edge one gap left of the badge
+		const r = (VOTE_DOT_PX / 2) * px
+		const right = cx - R - VOTE_DOT_GAP_PX * px
 		const w = Math.max(2 * r, 2 * 0.6 * 12 * px + 2 * VOTE_DOT_PAD_PX * px)
 		for (const [i, rad] of [[4, r + b / 2], [6, r - b / 2]]) {
-			assert.ok(near(arcs[i][1], right - w + r) && near(arcs[i][3], rad), `left half circle of the total pill, arc ${i}`)
+			assert.ok(near(arcs[i][1], right - w + r) && near(arcs[i][2], cy) && near(arcs[i][3], rad), `left half circle of the total pill, arc ${i}`)
 			assert.ok(near(arcs[i + 1][1], right - r) && near(arcs[i + 1][3], rad), `right half circle of the total pill, arc ${i + 1}`)
 		}
 		assert.deepEqual(arcs.map((a) => [a[4], a[5]]), Array(4).fill([[Math.PI / 2, 3 * Math.PI / 2], [-Math.PI / 2, Math.PI / 2]]).flat())
 		assert.equal(ctx.calls.filter((c) => c[0] === 'closePath').length, 4, 'every pill outline is closed')
 	})
 
-	test('an empty ring without an own vote: white inside, a VOTE_RING_STROKE_PX ring in the state color (two discs, no stroke); the total moves left of it', () => {
+	test('(job 233) a votable item without an own vote: a white VOTE_BADGE_PX circle with a VOTE_BADGE_RING_PX ring and a "+" in the state color (fills only); the total moves left of it', () => {
 		const m = board()
 		const ctx = recorder()
-		const plan = planBadges(m, [B], state({ badges: new Map([[B, { mine: 0, total: 4 }]]) }))
+		const plan = planBadges(m, [B], state({ badges: new Map([[B, { mine: 0, total: 4 }]]) }), { scale })
 		paintBadges(ctx, plan, scale, '#c62828')
-		// the scope outline is the only stroke; the ring is two discs: the own color, then white inside
-		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'stroke' || c[0] === 'strokeRect').map((c) => c[0]), ['strokeRect'])
+		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'stroke' || c[0] === 'strokeRect').map((c) => c[0]), ['strokeRect'], 'only the scope outline is a stroke')
 		const fills = ctx.calls.filter((c) => c[0] === 'fill').map((c) => c[1])
 		assert.deepEqual(fills, ['#c62828', VOTE_DOT_BORDER, VOTE_DOT_BORDER, VOTE_TOTAL_FILL])
 		const arcs = ctx.calls.filter((c) => c[0] === 'arc')
-		// the former stroke: VOTE_RING_STROKE_PX wide on a circle of ringR, i.e. [ringR − sw/2, ringR + sw/2]
-		const ringR = (VOTE_RING_PX / 2 - VOTE_RING_STROKE_PX / 2) * px
-		const sw = VOTE_RING_STROKE_PX * px
-		const cx = plan.items[0].x - VOTE_DOT_INSET_PX * px
-		assert.ok(near(arcs[0][3], ringR + sw / 2) && near(arcs[1][3], ringR - sw / 2), JSON.stringify(arcs.slice(0, 2)))
-		for (const a of arcs.slice(0, 2)) assert.ok(near(a[1], cx) && near(a[2], VOTE_DOT_INSET_PX * px) && a[4] === 0 && near(a[5], 2 * Math.PI))
-		// the total sits one gap left of the ring (outer radius VOTE_RING_PX / 2)
-		const rightTotal = cx - (VOTE_RING_PX / 2) * px - VOTE_DOT_GAP_PX * px
+		const R = (VOTE_BADGE_PX / 2) * px
+		const sw = VOTE_BADGE_RING_PX * px
+		const { cx, cy } = plan.items[0]
+		assert.ok(near(arcs[0][3], R) && near(arcs[1][3], R - sw), JSON.stringify(arcs.slice(0, 2)))
+		for (const a of arcs.slice(0, 2)) assert.ok(near(a[1], cx) && near(a[2], cy) && a[4] === 0 && near(a[5], 2 * Math.PI))
+		// the "+": two bars of VOTE_BADGE_PLUS_PX, a ring width thick, in the state color, centred
+		const P = VOTE_BADGE_PLUS_PX * px
+		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'fillRect').map((c) => c.slice(1).map((v) => (typeof v === 'number' ? Math.round(v * 1000) / 1000 : v))), [
+			[cx - P / 2, cy - sw / 2, P, sw, '#c62828'], [cx - sw / 2, cy - P / 2, sw, P, '#c62828'],
+		].map((c) => c.map((v) => (typeof v === 'number' ? Math.round(v * 1000) / 1000 : v))))
+		// the total sits one gap left of the circle
+		const rightTotal = cx - R - VOTE_DOT_GAP_PX * px
 		assert.ok(near(arcs[3][1], rightTotal - (VOTE_DOT_PX / 2) * px), 'right half circle of the total pill')
-		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]), ['4'], 'a ring has no number')
+		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]), ['4'], 'the "+" circle has no number')
+	})
+
+	test('(job 233) without a badge the total takes its place: centred on the badge centre', () => {
+		const m = board()
+		const plan = planBadges(m, [B], state({ badges: new Map([[B, { mine: 0, total: 4 }]]), markVotable: false }), { scale })
+		const sh = badgeShapes(plan.items[0], px, 0.6 * VOTE_BADGE_FONT_PX * px, 0.6 * 12 * px)
+		assert.equal(sh.own, null)
+		assert.equal(sh.plus, null)
+		assert.ok(near((sh.total.left + sh.total.right) / 2, plan.items[0].cx) && near(sh.total.cy, plan.items[0].cy))
 	})
 
 	test('G16 contrast in Node: for every PALETTE entry (and its upper-case form, S-9) the digits reach ≥ 4.5:1 on the own circle', () => {
@@ -249,8 +272,9 @@ describe('paintBadges', () => {
 		paintBadges(ctx, planBadges(m, [A, B, C, D], state({ badges })), scale, '#2e7d32')
 		assert.deepEqual(ctx.calls.filter((c) => c[0] === 'stroke' || c[0] === 'strokeRect').map((c) => c[0]), ['strokeRect'], 'only the scope outline')
 		const sets = ctx.calls.filter((c) => c[0] === 'set' && c[1] === 'fillStyle').map((c) => c[2])
-		// own: edge, body, digits; rings (B none, D votable without a vote): own color, inside; totals: edge, body, digits
-		assert.deepEqual(sets, [VOTE_DOT_BORDER, '#2e7d32', contrastTextOn('#2e7d32'), '#2e7d32', VOTE_DOT_BORDER, VOTE_DOT_BORDER, VOTE_TOTAL_FILL, contrastTextOn(VOTE_TOTAL_FILL)])
+		// own: edge, body, digits; "+" circles (B, D votable without a vote): own color, inside, the bars; totals: edge, body, digits
+		assert.deepEqual(sets, [VOTE_DOT_BORDER, '#2e7d32', contrastTextOn('#2e7d32'), '#2e7d32', VOTE_DOT_BORDER, '#2e7d32', VOTE_DOT_BORDER, VOTE_TOTAL_FILL, contrastTextOn(VOTE_TOTAL_FILL)])
+		assert.equal(ctx.calls.filter((c) => c[0] === 'fillRect').length, 4, 'two bars per "+"')
 		// one beginPath per fill: own 2 × 2, rings 2 × 2 (B and D), totals 3 × 2
 		assert.equal(ctx.calls.filter((c) => c[0] === 'fill').length, 14)
 		assert.equal(ctx.calls.filter((c) => c[0] === 'beginPath').length, 14)
@@ -266,13 +290,13 @@ describe('paintBadges', () => {
 		assert.ok(low < LOD2_ENTER, 'a scale of the LOD 2 overview')
 		const color = '#6a1b9a'
 		const badges = new Map([[A, { mine: 1, total: null }], [B, { mine: 2, total: null }]])
-		const plan = planBadges(m, [A, B], state({ badges, markVotable: false }), { rings: false })
+		const plan = planBadges(m, [A, B], state({ badges, markVotable: false }), { rings: false, scale: low })
 		paintBadges(ctx, plan, low, color)
 		const wpx = 1 / low
-		const r = (VOTE_DOT_PX / 2) * wpx
+		const r = (VOTE_BADGE_PX / 2) * wpx
 		const b = VOTE_DOT_BORDER_PX * wpx
-		const cxA = plan.items[0].x - VOTE_DOT_INSET_PX * wpx
-		const cxB = plan.items[1].x - VOTE_DOT_INSET_PX * wpx
+		const cxA = plan.items[0].cx
+		const cxB = plan.items[1].cx
 		// the two pills really overlap: their centres are closer than the sum of their body radii
 		assert.ok(cxB - cxA < 2 * (r - b / 2), `bodies overlap: ${cxB - cxA} < ${2 * (r - b / 2)}`)
 		// the drawing calls in order: fills with their style, the centre x and radius of their first arc; texts with theirs
@@ -304,6 +328,133 @@ describe('paintBadges', () => {
 		const pts = ctx.calls.filter((c) => c[0] === 'lineTo').map((c) => [Math.round(c[1]), Math.round(c[2])])
 		assert.deepEqual(pts, [[150, -50], [150, 150], [50, 150], [50, -50]])
 		assert.ok(ctx.calls.some((c) => c[0] === 'stroke' && c[1] === VOTE_SCOPE_COLOR))
+	})
+
+	test('job 149: with live the totals are hollow pills at the same place: white edge, pill in VOTE_TOTAL_FILL, white body VOTE_RING_STROKE_PX smaller, digits in VOTE_TOTAL_FILL; fills only, one style per group', () => {
+		const m = board()
+		const badges = new Map([[A, { mine: 2, total: 12 }], [B, { mine: 0, total: 7 }]])
+		const plan = planBadges(m, [A, B], state({ badges, markVotable: false }))
+		const solid = recorder()
+		paintBadges(solid, plan, scale, '#1565c0')
+		const ctx = recorder()
+		paintBadges(ctx, plan, scale, '#1565c0', { live: true })
+		assert.deepEqual(plan.counts, { rings: 0, badges: 1, totals: 2, outline: null }, 'the plan is the same, live or not')
+		const sets = ctx.calls.filter((c) => c[0] === 'set' && c[1] === 'fillStyle').map((c) => c[2])
+		// own: edge, body, digits; live totals: edge, pill, inside, digits
+		assert.deepEqual(sets, [VOTE_DOT_BORDER, '#1565c0', contrastTextOn('#1565c0'), VOTE_DOT_BORDER, VOTE_TOTAL_FILL, VOTE_DOT_BORDER, VOTE_TOTAL_FILL])
+		assert.ok(!ctx.calls.some((c) => c[0] === 'stroke' || c[0] === 'strokeRect'), 'fills only')
+		// the drawing calls of the totals in order: fill style, first arc's centre x and radius
+		const ops = []
+		let arc = null
+		for (const c of ctx.calls) {
+			if (c[0] === 'beginPath') arc = null
+			else if (c[0] === 'arc' && arc === null) arc = c
+			else if (c[0] === 'fill') ops.push({ op: 'fill', style: c[1], x: arc[1], r: arc[3] })
+			else if (c[0] === 'fillText') ops.push({ op: 'fillText', style: c[4], text: c[1] })
+		}
+		// the own pill of A comes first: edge, body, digits
+		const totals = ops.slice(3)
+		assert.deepEqual(totals.map((o) => [o.op, o.style]), [
+			['fill', VOTE_DOT_BORDER], ['fill', VOTE_DOT_BORDER],
+			['fill', VOTE_TOTAL_FILL], ['fill', VOTE_TOTAL_FILL],
+			['fill', VOTE_DOT_BORDER], ['fill', VOTE_DOT_BORDER],
+			['fillText', VOTE_TOTAL_FILL], ['fillText', VOTE_TOTAL_FILL],
+		], 'all edges, then all pills, then all insides, then all digits')
+		assert.deepEqual(totals.slice(6).map((o) => o.text), ['12', '7'])
+		const r = (VOTE_DOT_PX / 2) * px
+		const b = VOTE_DOT_BORDER_PX * px
+		const sw = VOTE_RING_STROKE_PX * px
+		for (const [i, rad] of [[0, r + b / 2], [2, r - b / 2], [4, r - b / 2 - sw]]) {
+			assert.ok(near(totals[i].r, rad) && near(totals[i + 1].r, rad), `radius of fill pass ${i / 2}: ${totals[i].r} ≈ ${rad}`)
+		}
+		// same size and place as the solid total pill: its edge and body arcs are the live ones
+		const arcsOf = (c) => c.calls.filter((x) => x[0] === 'arc').map((x) => x.slice(1, 4))
+		assert.deepEqual(arcsOf(ctx).slice(4, 12), arcsOf(solid).slice(4, 12), 'edge and pill of the totals match the result pills')
+		assert.deepEqual(solid.calls.filter((c) => c[0] === 'fillText').map((c) => [c[1], c[4]]), [['2', contrastTextOn('#1565c0')], ['12', contrastTextOn(VOTE_TOTAL_FILL)], ['7', contrastTextOn(VOTE_TOTAL_FILL)]], 'without live: unchanged')
+		assert.ok(ratio(VOTE_DOT_BORDER, VOTE_TOTAL_FILL) >= 4.5, 'live digits on the white inside')
+		// live without totals paints exactly what the solid painting does
+		const own = planBadges(m, [A], state({ badges: new Map([[A, { mine: 1, total: null }]]), markVotable: false }))
+		const p1 = recorder()
+		const p2 = recorder()
+		paintBadges(p1, own, scale, '#1565c0')
+		paintBadges(p2, own, scale, '#1565c0', { live: true })
+		assert.deepEqual(p2.calls, p1.calls)
+	})
+})
+
+describe('job 233: the badge keeps clear of the text and is a big target', () => {
+	test('padOf: notes STICKY_PADDING, shapes SHAPE_TEXT_PADDING, others 0', () => {
+		assert.deepEqual(['sticky', 'shape', 'text', 'frame'].map(padOf), [STICKY_PADDING, SHAPE_TEXT_PADDING, 0, 0])
+	})
+
+	test('AK9: at zoom 0.1–4 and every rotation the circle and its white edge never reach the text box of a note, a shape or a text item', () => {
+		const R = VOTE_BADGE_PX / 2 + VOTE_DOT_BORDER_PX / 2
+		for (const t of ['sticky', 'shape', 'text']) {
+			for (const scale of [0.1, 0.25, 0.3, 0.5, 0.62, 0.7, 1, 1.5, 2, 4]) {
+				for (const r of [0, 30, 90, 200]) {
+					const a = { x: 100, y: 50, w: 200, h: 160, r }
+					const pad = padOf(t)
+					const c = badgeCentre(a, pad, scale)
+					// the centre in the item's own (unrotated) frame, origin at its centre
+					const th = -r * Math.PI / 180
+					const dx = c.x - (a.x + a.w / 2)
+					const dy = c.y - (a.y + a.h / 2)
+					const lx = dx * Math.cos(th) - dy * Math.sin(th)
+					const ly = dx * Math.sin(th) + dy * Math.cos(th)
+					// the text box: the item less pad on every side; its nearest point to the centre
+					const hx = a.w / 2 - pad
+					const hy = a.h / 2 - pad
+					const nx = Math.max(-hx, Math.min(hx, lx))
+					const ny = Math.max(-hy, Math.min(hy, ly))
+					const dist = Math.hypot(lx - nx, ly - ny) * scale
+					assert.ok(dist >= R - 1e-9, `${t} at ${scale}, ${r}°: ${dist.toFixed(2)} px < ${R}`)
+				}
+			}
+		}
+	})
+
+	test('AK9: at 100 % a note\'s badge sits right on its corner (the padding holds it), a text item\'s moves out', () => {
+		const a = { x: 0, y: 0, w: 200, h: 200, r: 0 }
+		assert.deepEqual(badgeCentre(a, STICKY_PADDING, 1), { x: 200, y: 0 })
+		const c = badgeCentre(a, 0, 1)
+		assert.ok(near(c.x, 200 + VOTE_BADGE_CLEAR_PX) && near(c.y, -VOTE_BADGE_CLEAR_PX))
+		const z = badgeCentre(a, STICKY_PADDING, 0.25)
+		assert.ok(near(z.x, 200 + (VOTE_BADGE_CLEAR_PX - STICKY_PADDING * 0.25) / 0.25), 'at 25 % the note moves out by 6.5 px (job 259: padding 18)')
+	})
+
+	test('AK10: badgeAt hits within 16 px (mouse) and 22 px (pen, finger) of a drawn badge, also outside its item', () => {
+		const m = board()
+		const badges = new Map([[A, { mine: 1, total: null }]])
+		const plan = planBadges(m, [A, B], state({ badges }), { scale: 1 })
+		// A at 100 %: centre on its corner (200, 0)
+		const at = (dx, dy) => ({ x: 200 + dx, y: dy })
+		assert.equal(badgeAt(plan, at(10, -10), 1, VOTE_BADGE_HIT_MOUSE_PX, null), A, '10 px right and above the corner: 14.1 px')
+		assert.equal(badgeAt(plan, at(12, -12), 1, VOTE_BADGE_HIT_MOUSE_PX, null), null, '17 px: no mouse hit')
+		assert.equal(badgeAt(plan, at(12, -12), 1, VOTE_BADGE_HIT_TOUCH_PX, null), A, '17 px: a finger hit')
+		assert.equal(badgeAt(plan, at(16, -16), 1, VOTE_BADGE_HIT_TOUCH_PX, null), null, '22.6 px: none')
+		// B votable without a vote: its "+" circle counts too
+		assert.equal(badgeAt(plan, { x: 500, y: 0 }, 1, VOTE_BADGE_HIT_MOUSE_PX, null), B)
+		// screen px: at 50 % the same world distance is half as many px
+		const half = planBadges(m, [A], state({ badges, markVotable: false }), { scale: 0.5 })
+		const c = half.items[0]
+		assert.equal(badgeAt(half, { x: c.cx + 30, y: c.cy }, 0.5, VOTE_BADGE_HIT_MOUSE_PX, null), A, '30 world = 15 px')
+		assert.equal(badgeAt(half, { x: c.cx + 34, y: c.cy }, 0.5, VOTE_BADGE_HIT_MOUSE_PX, null), null, '34 world = 17 px')
+	})
+
+	test('AK10 / risk: a press inside another item belongs to that item; on its own item the badge counts; of two badges the topmost item wins', () => {
+		const m = board()
+		const badges = new Map([[A, { mine: 1, total: null }], [B, { mine: 2, total: null }]])
+		const plan = planBadges(m, [A, B], state({ badges, markVotable: false }), { scale: 1 })
+		const w = { x: 195, y: 8 }
+		assert.equal(badgeAt(plan, w, 1, VOTE_BADGE_HIT_TOUCH_PX, A), A, 'inside A, on its badge')
+		assert.equal(badgeAt(plan, w, 1, VOTE_BADGE_HIT_TOUCH_PX, C), null, 'inside another item C: no badge hit (C wins)')
+		// two badges in reach: the paint order decides
+		const close = { items: [{ id: A, cx: 0, cy: 0, mine: 1, ring: false }, { id: B, cx: 10, cy: 0, mine: 1, ring: false }] }
+		assert.equal(badgeAt(close, { x: 5, y: 0 }, 1, VOTE_BADGE_HIT_MOUSE_PX, null, (a, b) => (a === A ? 1 : -1)), A, 'A above B')
+		assert.equal(badgeAt(close, { x: 5, y: 0 }, 1, VOTE_BADGE_HIT_MOUSE_PX, null, (a, b) => (a === A ? -1 : 1)), B, 'B above A')
+		// a total alone is no badge
+		assert.equal(badgeAt({ items: [{ id: A, cx: 0, cy: 0, mine: 0, ring: false, total: 3 }] }, { x: 0, y: 0 }, 1, 22, null), null)
+		assert.equal(badgeAt(null, { x: 0, y: 0 }, 1, 22, null), null)
 	})
 })
 

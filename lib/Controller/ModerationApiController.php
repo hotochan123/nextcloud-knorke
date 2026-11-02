@@ -64,21 +64,25 @@ final class ModerationApiController extends Controller {
         parent::__construct(Application::APP_ID, $request);
     }
 
-    /** Route 22 `POST /api/v1/boards/{id}/vote` {per, perItem, scope, types, minutes} (§4.12.1). */
+    /** Route 22 `POST /api/v1/boards/{id}/vote` {per, perItem, scope, types, minutes, live, accountsOnly} (§4.12.1, jobs 149, 175). */
     #[NoAdminRequired]
     public function startVote(int $id): Response {
         return $this->run(function () use ($id): Response {
-            $body = JsonBody::read($this->request, ['per', 'perItem', 'scope', 'types', 'minutes']);
+            $body = JsonBody::read($this->request, ['per', 'perItem', 'scope', 'types', 'minutes', 'live', 'accountsOnly']);
             $p = $this->moderator($id);
             return $this->answer($this->votes->start($p, $id, $body, self::nowMs()));
         });
     }
 
-    /** Route 23 `PATCH /api/v1/boards/{id}/vote` {action, minutes?} (§4.12, §4.12.1). */
+    /**
+     * Route 23 `PATCH /api/v1/boards/{id}/vote` {action, minutes?} (§4.12, §4.12.1).
+     * A `live` or `accountsOnly` in the body is ignored: both are fixed from
+     * start to end (jobs 149, 175).
+     */
     #[NoAdminRequired]
     public function updateVote(int $id): Response {
         return $this->run(function () use ($id): Response {
-            $body = JsonBody::read($this->request, ['action', 'minutes']);
+            $body = JsonBody::read($this->request, ['action', 'minutes', 'live', 'accountsOnly']);
             $p = $this->moderator($id);
             $action = $body['action'] ?? null;
             if (!is_string($action)) {
@@ -102,9 +106,29 @@ final class ModerationApiController extends Controller {
     #[NoAdminRequired]
     public function summon(int $id): Response {
         return $this->run(function () use ($id): Response {
-            $body = JsonBody::read($this->request, ['client']);
+            $body = JsonBody::read($this->request, ['client', 'frame']);
             $p = $this->moderator($id);
-            return $this->answer($this->moderation->summon($p, $id, $body['client'] ?? null, self::nowMs()));
+            return $this->answer($this->moderation->summon($p, $id, $body['client'] ?? null, self::nowMs(), $body['frame'] ?? null));
+        });
+    }
+
+    /** `PUT /api/v1/boards/{id}/summon` {frame} (factory job 272): the presented frame of the running summon. */
+    #[NoAdminRequired]
+    public function moveSummon(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            $body = JsonBody::read($this->request, ['frame']);
+            $this->moderator($id);
+            return $this->answer($this->moderation->moveSummon($id, $body['frame'] ?? null, self::nowMs()));
+        });
+    }
+
+    /** `PUT /api/v1/boards/{id}/slides` {order} (factory job 272): the saved slide order meta.slides. */
+    #[NoAdminRequired]
+    public function slides(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            $body = JsonBody::read($this->request, ['order']);
+            $this->moderator($id);
+            return $this->answer($this->moderation->slides($id, $body['order'] ?? null, self::nowMs()));
         });
     }
 
@@ -115,6 +139,16 @@ final class ModerationApiController extends Controller {
             JsonBody::guardRoute($this->request);
             $this->moderator($id);
             return $this->answer($this->moderation->endSummon($id, self::nowMs()));
+        });
+    }
+
+    /** `PUT /api/v1/boards/{id}/private` {action: start|reveal, frame?} (factory job 275): private writing. */
+    #[NoAdminRequired]
+    public function privateWriting(int $id): Response {
+        return $this->run(function () use ($id): Response {
+            $body = JsonBody::read($this->request, ['action', 'frame']);
+            $p = $this->moderator($id);
+            return $this->answer($this->moderation->privateWriting($p, $id, $body['action'] ?? null, $body['frame'] ?? null, self::nowMs()));
         });
     }
 

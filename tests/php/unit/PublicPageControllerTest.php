@@ -9,10 +9,13 @@ namespace OCA\Knorke\Tests\Unit;
 
 use OCA\Knorke\Controller\PageController;
 use OCA\Knorke\Controller\PublicPageController;
+use OCA\Knorke\Db\VoteStore;
 use OCA\Knorke\Http\GuestPageResponse;
+use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\LinkThrottle;
 use OCA\Knorke\Tests\Support\Fake;
 use OCA\Knorke\Tests\Support\FakeBoardStore;
+use OCA\Knorke\Tests\Support\SqliteDb;
 use OCP\AppFramework\Http\ContentSecurityPolicy;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\AppFramework\Services\IInitialState;
@@ -21,6 +24,7 @@ use OCP\IAppConfig;
 use OCP\IConfig;
 use OCP\IRequest;
 use OCP\IURLGenerator;
+use OCP\IUser;
 use OCP\IUserSession;
 use OCP\Security\Bruteforce\IThrottler;
 use PHPUnit\Framework\TestCase;
@@ -40,6 +44,8 @@ final class PublicPageControllerTest extends TestCase {
     private array $notice = [];
     /** Knorke app config public_template (null = not set). */
     private ?string $publicTemplate = null;
+    /** Job 245: the owner policy (null = none, as before). */
+    private ?LinkPolicy $policy = null;
 
     private function appConfig(): IAppConfig {
         return Fake::of(IAppConfig::class, ['getValueString' => function (string $app, string $key, string $default = '', ?bool $lazy = false): string {
@@ -73,6 +79,8 @@ final class PublicPageControllerTest extends TestCase {
             PageControllerTest::limits(),
             Fake::of(ITimeFactory::class, ['now' => fn (): \DateTimeImmutable => new \DateTimeImmutable('@1760000000')]),
             PageControllerTest::privacy($this->lang, $this->notice, $this->theming['privacyUrl'] ?? ''),
+            new VoteStore((new SqliteDb())->connection()),
+            $this->policy,
         );
     }
 
@@ -184,5 +192,35 @@ final class PublicPageControllerTest extends TestCase {
         $this->state = [];
         $this->controller($boards)->show('Ab3dEf6hIj9kLm2nOp5qRs8t');
         $this->assertSame(['{"text":null,"url":""}', '{"imprintUrl":"","privacyUrl":""}'], [$this->state['privacy'], $this->state['legal']], 'nothing set (C47)');
+    }
+
+    // ── Job 245 ────────────────────────────────────────────────────────────
+
+    public function testLinksNotAllowedForTheOwnerShowTheDisabledState(): void {
+        $boards = new FakeBoardStore();
+        $b = $boards->addBoard('alice');
+        $boards->insertLink($b, 'Ab3dEf6hIj9kLm2nOp5qRs8t', 'edit', 'alice', 1);
+        $boards->insertLink($b, 'Vt3dEf6hIj9kLm2nOp5qRs8t', 'vote', 'alice', 1);
+        $allowed = false;
+        $this->policy = new class($allowed) extends LinkPolicy {
+            public function __construct(private bool &$allowed) {
+            }
+
+            public function allows(string $ownerUid, ?IUser $known = null): bool {
+                return $ownerUid === 'alice' && $this->allowed;
+            }
+        };
+        foreach (['Ab3dEf6hIj9kLm2nOp5qRs8t', 'Vt3dEf6hIj9kLm2nOp5qRs8t'] as $token) {
+            $this->state = [];
+            $this->controller($boards)->show($token);
+            $this->assertSame('"disabled"', $this->state['linkState'], $token);
+            $this->assertSame('null', $this->state['boardId'], 'nothing about the board');
+            $this->assertSame('null', $this->state['linkInfo'] ?? 'null', 'no linkInfo');
+        }
+        $allowed = true;
+        $this->state = [];
+        $this->controller($boards)->show('Ab3dEf6hIj9kLm2nOp5qRs8t');
+        $this->assertSame('"ok"', $this->state['linkState']);
+        $this->assertSame((string)$b, $this->state['boardId']);
     }
 }

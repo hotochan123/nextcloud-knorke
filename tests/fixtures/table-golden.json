@@ -1,0 +1,1561 @@
+{
+	"checks": [
+		{
+			"name": "a new 3 × 3 table",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "3 × 3 with cells",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "Name",
+						"r00000002": "Alice"
+					},
+					"c00000003": {
+						"r00000003": "x"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "cells empty",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {}
+			},
+			"ok": true
+		},
+		{
+			"name": "0 rows",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {}
+			},
+			"ok": false
+		},
+		{
+			"name": "50 rows",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					},
+					"r00000004": {
+						"o": "i3"
+					},
+					"r00000005": {
+						"o": "i4"
+					},
+					"r00000006": {
+						"o": "i5"
+					},
+					"r00000007": {
+						"o": "i6"
+					},
+					"r00000008": {
+						"o": "i7"
+					},
+					"r00000009": {
+						"o": "i8"
+					},
+					"r00000010": {
+						"o": "i9"
+					},
+					"r00000011": {
+						"o": "ia"
+					},
+					"r00000012": {
+						"o": "ib"
+					},
+					"r00000013": {
+						"o": "ic"
+					},
+					"r00000014": {
+						"o": "id"
+					},
+					"r00000015": {
+						"o": "ie"
+					},
+					"r00000016": {
+						"o": "if"
+					},
+					"r00000017": {
+						"o": "ig"
+					},
+					"r00000018": {
+						"o": "ih"
+					},
+					"r00000019": {
+						"o": "ii"
+					},
+					"r00000020": {
+						"o": "ij"
+					},
+					"r00000021": {
+						"o": "ik"
+					},
+					"r00000022": {
+						"o": "il"
+					},
+					"r00000023": {
+						"o": "im"
+					},
+					"r00000024": {
+						"o": "in"
+					},
+					"r00000025": {
+						"o": "io"
+					},
+					"r00000026": {
+						"o": "ip"
+					},
+					"r00000027": {
+						"o": "iq"
+					},
+					"r00000028": {
+						"o": "ir"
+					},
+					"r00000029": {
+						"o": "is"
+					},
+					"r00000030": {
+						"o": "it"
+					},
+					"r00000031": {
+						"o": "iu"
+					},
+					"r00000032": {
+						"o": "iv"
+					},
+					"r00000033": {
+						"o": "iw"
+					},
+					"r00000034": {
+						"o": "ix"
+					},
+					"r00000035": {
+						"o": "iy"
+					},
+					"r00000036": {
+						"o": "iz"
+					},
+					"r00000037": {
+						"o": "j01"
+					},
+					"r00000038": {
+						"o": "j02"
+					},
+					"r00000039": {
+						"o": "j03"
+					},
+					"r00000040": {
+						"o": "j04"
+					},
+					"r00000041": {
+						"o": "j05"
+					},
+					"r00000042": {
+						"o": "j06"
+					},
+					"r00000043": {
+						"o": "j07"
+					},
+					"r00000044": {
+						"o": "j08"
+					},
+					"r00000045": {
+						"o": "j09"
+					},
+					"r00000046": {
+						"o": "j0a"
+					},
+					"r00000047": {
+						"o": "j0b"
+					},
+					"r00000048": {
+						"o": "j0c"
+					},
+					"r00000049": {
+						"o": "j0d"
+					},
+					"r00000050": {
+						"o": "j0e"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "51 rows",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					},
+					"r00000004": {
+						"o": "i3"
+					},
+					"r00000005": {
+						"o": "i4"
+					},
+					"r00000006": {
+						"o": "i5"
+					},
+					"r00000007": {
+						"o": "i6"
+					},
+					"r00000008": {
+						"o": "i7"
+					},
+					"r00000009": {
+						"o": "i8"
+					},
+					"r00000010": {
+						"o": "i9"
+					},
+					"r00000011": {
+						"o": "ia"
+					},
+					"r00000012": {
+						"o": "ib"
+					},
+					"r00000013": {
+						"o": "ic"
+					},
+					"r00000014": {
+						"o": "id"
+					},
+					"r00000015": {
+						"o": "ie"
+					},
+					"r00000016": {
+						"o": "if"
+					},
+					"r00000017": {
+						"o": "ig"
+					},
+					"r00000018": {
+						"o": "ih"
+					},
+					"r00000019": {
+						"o": "ii"
+					},
+					"r00000020": {
+						"o": "ij"
+					},
+					"r00000021": {
+						"o": "ik"
+					},
+					"r00000022": {
+						"o": "il"
+					},
+					"r00000023": {
+						"o": "im"
+					},
+					"r00000024": {
+						"o": "in"
+					},
+					"r00000025": {
+						"o": "io"
+					},
+					"r00000026": {
+						"o": "ip"
+					},
+					"r00000027": {
+						"o": "iq"
+					},
+					"r00000028": {
+						"o": "ir"
+					},
+					"r00000029": {
+						"o": "is"
+					},
+					"r00000030": {
+						"o": "it"
+					},
+					"r00000031": {
+						"o": "iu"
+					},
+					"r00000032": {
+						"o": "iv"
+					},
+					"r00000033": {
+						"o": "iw"
+					},
+					"r00000034": {
+						"o": "ix"
+					},
+					"r00000035": {
+						"o": "iy"
+					},
+					"r00000036": {
+						"o": "iz"
+					},
+					"r00000037": {
+						"o": "j01"
+					},
+					"r00000038": {
+						"o": "j02"
+					},
+					"r00000039": {
+						"o": "j03"
+					},
+					"r00000040": {
+						"o": "j04"
+					},
+					"r00000041": {
+						"o": "j05"
+					},
+					"r00000042": {
+						"o": "j06"
+					},
+					"r00000043": {
+						"o": "j07"
+					},
+					"r00000044": {
+						"o": "j08"
+					},
+					"r00000045": {
+						"o": "j09"
+					},
+					"r00000046": {
+						"o": "j0a"
+					},
+					"r00000047": {
+						"o": "j0b"
+					},
+					"r00000048": {
+						"o": "j0c"
+					},
+					"r00000049": {
+						"o": "j0d"
+					},
+					"r00000050": {
+						"o": "j0e"
+					},
+					"r00000051": {
+						"o": "j0f"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "0 columns",
+			"data": {
+				"cols": {},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "20 columns",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 40
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 40
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 40
+					},
+					"c00000004": {
+						"o": "i3",
+						"w": 40
+					},
+					"c00000005": {
+						"o": "i4",
+						"w": 40
+					},
+					"c00000006": {
+						"o": "i5",
+						"w": 40
+					},
+					"c00000007": {
+						"o": "i6",
+						"w": 40
+					},
+					"c00000008": {
+						"o": "i7",
+						"w": 40
+					},
+					"c00000009": {
+						"o": "i8",
+						"w": 40
+					},
+					"c00000010": {
+						"o": "i9",
+						"w": 40
+					},
+					"c00000011": {
+						"o": "ia",
+						"w": 40
+					},
+					"c00000012": {
+						"o": "ib",
+						"w": 40
+					},
+					"c00000013": {
+						"o": "ic",
+						"w": 40
+					},
+					"c00000014": {
+						"o": "id",
+						"w": 40
+					},
+					"c00000015": {
+						"o": "ie",
+						"w": 40
+					},
+					"c00000016": {
+						"o": "if",
+						"w": 40
+					},
+					"c00000017": {
+						"o": "ig",
+						"w": 40
+					},
+					"c00000018": {
+						"o": "ih",
+						"w": 40
+					},
+					"c00000019": {
+						"o": "ii",
+						"w": 40
+					},
+					"c00000020": {
+						"o": "ij",
+						"w": 40
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "21 columns",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 40
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 40
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 40
+					},
+					"c00000004": {
+						"o": "i3",
+						"w": 40
+					},
+					"c00000005": {
+						"o": "i4",
+						"w": 40
+					},
+					"c00000006": {
+						"o": "i5",
+						"w": 40
+					},
+					"c00000007": {
+						"o": "i6",
+						"w": 40
+					},
+					"c00000008": {
+						"o": "i7",
+						"w": 40
+					},
+					"c00000009": {
+						"o": "i8",
+						"w": 40
+					},
+					"c00000010": {
+						"o": "i9",
+						"w": 40
+					},
+					"c00000011": {
+						"o": "ia",
+						"w": 40
+					},
+					"c00000012": {
+						"o": "ib",
+						"w": 40
+					},
+					"c00000013": {
+						"o": "ic",
+						"w": 40
+					},
+					"c00000014": {
+						"o": "id",
+						"w": 40
+					},
+					"c00000015": {
+						"o": "ie",
+						"w": 40
+					},
+					"c00000016": {
+						"o": "if",
+						"w": 40
+					},
+					"c00000017": {
+						"o": "ig",
+						"w": 40
+					},
+					"c00000018": {
+						"o": "ih",
+						"w": 40
+					},
+					"c00000019": {
+						"o": "ii",
+						"w": 40
+					},
+					"c00000020": {
+						"o": "ij",
+						"w": 40
+					},
+					"c00000021": {
+						"o": "ik",
+						"w": 40
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "width 39",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 39
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "width 40",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 40
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "width 160.5",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160.5
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "width 1000",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 1000
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "width 1001",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 1001
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "width as a string",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": "160"
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "width missing",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0"
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "column key C1234567a",
+			"data": {
+				"cols": {
+					"C1234567a": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "column key with 7 characters",
+			"data": {
+				"cols": {
+					"c1234567": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "a row key as column key",
+			"data": {
+				"cols": {
+					"r12345678": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "row key R0000000a",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"R0000000a": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "order key a (invalid z)",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "a",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "row order missing",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "orphan cell (no such column)",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000009": {
+						"r00000001": "x"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "orphan cell (no such row)",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000009": "x"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "1000 code points",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "1000 emoji (code points, not bytes)",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "1001 code points",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "1001 code points before cleaning, 1000 after",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n"
+					}
+				}
+			},
+			"ok": true
+		},
+		{
+			"name": "empty text",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": ""
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "text empty after cleaning",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "\u0007"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "text as a number",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": 5
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "text as a map",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": {
+							"a": "x"
+						}
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "extra key in data",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				},
+				"title": "x"
+			},
+			"ok": false
+		},
+		{
+			"name": "extra key in a column",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160,
+						"color": "#ffffff"
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "extra key in a row",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0",
+						"h": 50
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "rows missing",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "cols missing",
+			"data": {
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					}
+				}
+			},
+			"ok": false
+		},
+		{
+			"name": "no data at all",
+			"data": {},
+			"ok": false
+		}
+	],
+	"orders": [
+		{
+			"name": "by o",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i2",
+						"w": 100
+					},
+					"c00000002": {
+						"o": "i0",
+						"w": 200.5
+					},
+					"c00000003": {
+						"o": "i1",
+						"w": 40
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i1"
+					},
+					"r00000002": {
+						"o": "i0g"
+					}
+				}
+			},
+			"cols": [
+				"c00000002",
+				"c00000003",
+				"c00000001"
+			],
+			"rows": [
+				"r00000002",
+				"r00000001"
+			],
+			"x": [
+				0,
+				200.5,
+				240.5
+			],
+			"w": 340.5
+		},
+		{
+			"name": "equal o: by key",
+			"data": {
+				"cols": {
+					"c0000000b": {
+						"o": "i0",
+						"w": 160
+					},
+					"c0000000a": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000001": {
+						"o": "i1",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r0000000z": {
+						"o": "i0"
+					},
+					"r0000000y": {
+						"o": "i0"
+					}
+				}
+			},
+			"cols": [
+				"c0000000a",
+				"c0000000b",
+				"c00000001"
+			],
+			"rows": [
+				"r0000000y",
+				"r0000000z"
+			],
+			"x": [
+				0,
+				160,
+				320
+			],
+			"w": 480
+		},
+		{
+			"name": "byte order, not number order",
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i9",
+						"w": 50
+					},
+					"c00000002": {
+						"o": "ia",
+						"w": 60
+					},
+					"c00000003": {
+						"o": "i1g",
+						"w": 70
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					}
+				}
+			},
+			"cols": [
+				"c00000003",
+				"c00000001",
+				"c00000002"
+			],
+			"rows": [
+				"r00000001"
+			],
+			"x": [
+				0,
+				70,
+				120
+			],
+			"w": 180
+		}
+	],
+	"csv": {
+		"item": {
+			"t": "table",
+			"w": 480,
+			"h": 108,
+			"data": {
+				"cols": {
+					"c00000001": {
+						"o": "i0",
+						"w": 160
+					},
+					"c00000002": {
+						"o": "i1",
+						"w": 160
+					},
+					"c00000003": {
+						"o": "i2",
+						"w": 160
+					}
+				},
+				"rows": {
+					"r00000001": {
+						"o": "i0"
+					},
+					"r00000002": {
+						"o": "i1"
+					},
+					"r00000003": {
+						"o": "i2"
+					},
+					"r00000004": {
+						"o": "i3"
+					}
+				},
+				"cells": {
+					"c00000001": {
+						"r00000001": "Name",
+						"r00000002": "=1+1",
+						"r00000003": "Ärger, \"sagt\" er",
+						"r00000004": "@home"
+					},
+					"c00000002": {
+						"r00000001": "Wert",
+						"r00000002": "-5",
+						"r00000003": "+49 30",
+						"r00000004": "3,5"
+					},
+					"c00000003": {
+						"r00000002": "zwei\nZeilen",
+						"r00000004": "\tTab"
+					}
+				}
+			},
+			"style": {
+				"header": "on"
+			}
+		},
+		"text": "﻿Name,Wert,\r\n'=1+1,-5,\"zwei\nZeilen\"\r\n\"Ärger, \"\"sagt\"\" er\",'+49 30,\r\n'@home,\"3,5\",'\tTab\r\n"
+	},
+	"csvSemicolon": {
+		"name": "the csv item with the separator ; (job 179: a language with a decimal comma)",
+		"sep": ";",
+		"text": "﻿Name;Wert;\r\n'=1+1;-5;\"zwei\nZeilen\"\r\n\"Ärger, \"\"sagt\"\" er\";'+49 30;\r\n'@home;3,5;'\tTab\r\n"
+	}
+}

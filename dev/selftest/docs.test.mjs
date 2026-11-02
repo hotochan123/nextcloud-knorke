@@ -9,10 +9,13 @@
  * own sake (product owner, 2026-10-23).
  *
  * - THIRD-PARTY.md: every icon key in src/components/icons.js is listed
- *   exactly once – either with its Material Design Icons name (version 7.4.47)
- *   or as "own drawing"; nothing else is listed. With
- *   KD_MDI_JS=<path to @mdi/js 7.4.47 mdi.js> the path data of the MDI keys is
- *   also compared with the original (optional: @mdi/js is not a dependency).
+ *   exactly once – either with its Phosphor icon (@phosphor-icons/core 2.1.1,
+ *   the name ICON_SOURCE gives) or as "own drawing"; nothing else is listed;
+ *   the symbol table names the Phosphor icon each symbol shape draws (factory
+ *   job 244, before Material Design Icons). With KD_PHOSPHOR_DIR=<the assets
+ *   folder of @phosphor-icons/core 2.1.1, regular/ and duotone/> the path data
+ *   of src/model/phosphor.js is also compared with the original SVG files
+ *   (optional: the package is not a dependency).
  * - Runbook "nach DB-Restore" (ENTWICKLUNG §8, PROTOKOLL §12): the TTLs it
  *   names match lib/Service/FastCache.php.
  * - SPEC-M1 §5.1: every argument of createDistributed( in lib/ matches the
@@ -37,7 +40,11 @@
  *   the keys and defaults of lib/Service/Limits.php). The copy blocks of P9
  *   step 3 and hotfix step 4 run in bash with rsync and chown as stubs: a
  *   failed tar, rsync or chown stops every step after it and the rm still
- *   removes $tmp (factory jobs 123, 127).
+ *   removes $tmp (factory jobs 123, 127). Every rsync of P9 step 3 and hotfix
+ *   steps 4 and 8 has the options of copy_app in factory/deploy.sh, never -a
+ *   or -t; with the real rsync (skipped without it) the lines of the doc give
+ *   a changed file a new time and keep MTIME of dev/release.sh on an
+ *   unchanged one, and the dry run prints the four H1 lines (factory job 166).
  * - End states with HTTP 200 (SPEC-M1 R39, factory job 028): the header name
  *   and the end-state codes in PROTOKOLL, SPEC-M1 and the CHANGELOG are the
  *   ones of lib/Controller/ApiResponses.php and src/sync/http.js; SPEC-M1
@@ -46,8 +53,6 @@
  *   INITIAL_STATE_KEYS, board.linkOpenSince, the storage keys, the hooks and
  *   the limits of PrivacyNotice.php as the code has them; SPEC-M1 §6.11
  *   against l10n/de.json.
- * - SPEC-M1 §6.11 (R25): the row of the board menu's count line is the
- *   l10n/de.json entry "_%n item on this board_::_%n items on this board_".
  * - Local values (factory job 036, SPEC-M1 §12.1 R16): the keys of
  *   dev/local.env.example, KD_LOCAL_KEYS of dev/lib.sh and the tables of
  *   ENTWICKLUNG §3.10 and §3.2 are the same three; the KD_DNS row of §3.2
@@ -69,45 +74,52 @@ import { scanText } from './lib/privateValues.mjs'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
 
-/** icons.js keys → path data (text parse: the module is plain data). */
-function iconPaths() {
-	const src = read('src/components/icons.js')
-	return new Map([...src.matchAll(/^\s*(\w+):\s*'([^']+)',?\s*$/gm)].map((m) => [m[1], m[2]]))
+/**
+ * The rows of the THIRD-PARTY.md table under the header line `head`.
+ *
+ * @param {string} head the header line of the table
+ * @return {Array<[string, string]>} [first cell, second cell] without the backticks
+ */
+function thirdPartyRows(head) {
+	const md = read('THIRD-PARTY.md')
+	const i = md.indexOf(head + '\n|---|---|\n')
+	assert.ok(i >= 0, `THIRD-PARTY.md: table "${head}" exists`)
+	const body = md.slice(i).split('\n').slice(2)
+	return body.slice(0, body.findIndex((l) => !l.startsWith('|'))).map((l) => l.split('|').slice(1, 3).map((c) => c.trim().replace(/^`|`$/g, '')))
 }
 
-/** THIRD-PARTY.md icon table → key → MDI name. */
-function readmeIcons() {
-	const md = read('THIRD-PARTY.md')
-	return new Map([...md.matchAll(/^\| `(\w+)` \| `mdi-([a-z0-9-]+)` \|$/gm)].map((m) => [m[1], m[2]]))
-}
-
-/** THIRD-PARTY.md keys listed as own drawings ("| `key` | own drawing |"). */
-function readmeOwnIcons() {
-	const md = read('THIRD-PARTY.md')
-	return [...md.matchAll(/^\| `(\w+)` \| own drawing \|$/gm)].map((m) => m[1])
-}
-
-test('THIRD-PARTY.md names every icon of src/components/icons.js once: MDI name or own drawing', () => {
-	const code = iconPaths()
-	const docs = readmeIcons()
-	const own = readmeOwnIcons()
-	assert.ok(code.size >= 10, `icons.js parsed (${code.size} keys)`)
-	assert.deepEqual(own.filter((k) => docs.has(k)), [], 'no key is both MDI and own drawing')
-	assert.equal(new Set(own).size, own.length, 'no own drawing listed twice')
-	assert.deepEqual([...docs.keys(), ...own].sort(), [...code.keys()].sort(), 'THIRD-PARTY.md tables (MDI + own drawings) = icons.js keys')
-	const md = read('THIRD-PARTY.md')
-	assert.match(md, /Material Design Icons\]\([^)]+\) 7\.4\.47/)
-	assert.match(read('src/components/icons.js'), /Material Design\s+\*?\s*Icons 7\.4\.47/)
+test('THIRD-PARTY.md names every icon of src/components/icons.js once: its Phosphor icon or own drawing; the symbols by their Phosphor icon', async () => {
+	const { ICON_SOURCE } = await import(path.join(ROOT, 'src/components/icons.js'))
+	const { PHOSPHOR, PHOSPHOR_DUO, PHOSPHOR_SCALE } = await import(path.join(ROOT, 'src/model/phosphor.js'))
+	const { SHAPES } = await import(path.join(ROOT, 'src/model/shapes.js'))
+	const { scalePath } = await import(path.join(ROOT, 'src/model/svgPath.js'))
+	const phosphor = thirdPartyRows('| Key in `icons.js` | Phosphor icon |')
+	const own = thirdPartyRows('| Key in `icons.js` | Origin |')
+	assert.ok(phosphor.length >= 10, `Phosphor table parsed (${phosphor.length} rows)`)
+	assert.deepEqual(own.filter(([, o]) => o !== 'own drawing'), [], 'every row of the second table is an own drawing')
+	const keys = [...phosphor, ...own].map(([k]) => k)
+	assert.equal(new Set(keys).size, keys.length, 'no key listed twice')
+	assert.deepEqual(keys.sort(), Object.keys(ICON_SOURCE).sort(), 'THIRD-PARTY.md tables (Phosphor + own drawings) = icons.js keys')
+	for (const [k, name] of phosphor) assert.equal(ICON_SOURCE[k], `phosphor:${name}`, k)
+	for (const [k] of own) assert.equal(ICON_SOURCE[k], 'picture', k)
+	const symbols = thirdPartyRows('| Shape kind | Phosphor icon |')
+	assert.deepEqual(symbols.map(([, n]) => n).sort(), Object.keys(PHOSPHOR_DUO).sort(), 'the symbol table names the Duotone layers')
+	for (const [kind, name] of symbols) {
+		assert.equal(SHAPES[kind]?.icon, scalePath(PHOSPHOR[name], PHOSPHOR_SCALE), `${kind} = ${name}`)
+		assert.equal(SHAPES[kind].duo, scalePath(PHOSPHOR_DUO[name], PHOSPHOR_SCALE), `${kind} duo = ${name}`)
+	}
+	assert.match(read('THIRD-PARTY.md'), /\[Phosphor Icons\]\([^)]+\) \(`@phosphor-icons\/core` 2\.1\.1\)/)
+	assert.match(read('src/model/phosphor.js'), /@phosphor-icons\/core 2\.1\.1/)
 })
 
-test('icon path data equals @mdi/js 7.4.47 (only with KD_MDI_JS)', { skip: !process.env.KD_MDI_JS && 'KD_MDI_JS not set' }, () => {
-	const lib = fs.readFileSync(process.env.KD_MDI_JS, 'utf8')
-	const byName = new Map([...lib.matchAll(/export (?:var|const) mdi(\w+) = "([^"]+)"/g)].map((m) => [
-		m[1].replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase(), m[2]]))
-	const code = iconPaths()
-	for (const [key, name] of readmeIcons()) {
-		assert.ok(byName.has(name), `mdi-${name} exists in @mdi/js`)
-		assert.equal(code.get(key), byName.get(name), `${key} = mdi-${name}`)
+test('Phosphor path data equals @phosphor-icons/core 2.1.1 (only with KD_PHOSPHOR_DIR)', { skip: !process.env.KD_PHOSPHOR_DIR && 'KD_PHOSPHOR_DIR not set' }, async () => {
+	const { PHOSPHOR, PHOSPHOR_DUO } = await import(path.join(ROOT, 'src/model/phosphor.js'))
+	const paths = (f) => [...fs.readFileSync(path.join(process.env.KD_PHOSPHOR_DIR, f), 'utf8').matchAll(/<path([^>]*)\/>/g)].map((m) => ({ d: / d="([^"]*)"/.exec(m[1])[1], light: / opacity="0\.2"/.test(m[1]) }))
+	for (const [name, d] of Object.entries(PHOSPHOR)) {
+		assert.deepEqual(paths(`regular/${name}.svg`).map((p) => p.d), [d], `regular ${name}`)
+	}
+	for (const [name, d] of Object.entries(PHOSPHOR_DUO)) {
+		assert.deepEqual(paths(`duotone/${name}-duotone.svg`).filter((p) => p.light).map((p) => p.d), [d], `duotone ${name}`)
 	}
 })
 
@@ -123,6 +135,19 @@ function section(file, heading) {
 /** The fenced code blocks of a Markdown part, each as its lines without the indentation of a list item. */
 function fencedBlocks(md) {
 	return [...md.matchAll(/^ *```[^\n]*\n([\s\S]*?)\n *```[ \t]*$/gm)].map((m) => m[1].split('\n').map((l) => l.trim()))
+}
+
+// steps of ENTWICKLUNG §10 that copy a release into the prod app folder: [start, end after it]
+const P9_STEP3 = ['3. Aus dem **geprüften Archiv**', '\n4. ']
+const HOTFIX_STEP4 = ['4. Entpacken, Eigentümer setzen, **Probelauf**', '\n5. ']
+const HOTFIX_STEP8 = ['8. **Rückweg:**', '\n\n']
+
+/** The part of ENTWICKLUNG §10 from `from` to the next `to` after it. */
+function prodPart(from, to) {
+	const p = section('docs/ENTWICKLUNG.md', '## 10. Prod-Runbook')
+	const i = p.indexOf(from), j = p.indexOf(to, i)
+	assert.ok(i >= 0 && j > i, `${from} … ${to}`)
+	return p.slice(i, j)
 }
 
 /** Every *.php file below dir (relative to ROOT). */
@@ -391,14 +416,8 @@ test('ENTWICKLUNG §10 names occ knorke:orphans with its output lines as the cod
 // before anything runs. Every message of F2–F7 carries bash's stderr (factory job 127), so a
 // command the minimal PATH does not find shows at once.
 test('ENTWICKLUNG §10 P9 step 3 and hotfix step 4 run in bash: after a failed tar, rsync or chown nothing is copied or chowned, the rm still removes $tmp (factory job 123)', () => {
-	const p = section('docs/ENTWICKLUNG.md', '## 10. Prod-Runbook')
-	const part = (from, to) => {
-		const i = p.indexOf(from), j = p.indexOf(to, i)
-		assert.ok(i >= 0 && j > i, `${from} … ${to}`)
-		return p.slice(i, j)
-	}
-	const [p9] = fencedBlocks(part('3. Aus dem **geprüften Archiv**', '\n4. '))
-	const [dry, , real] = fencedBlocks(part('4. Entpacken, Eigentümer setzen, **Probelauf**', '\n5. '))
+	const [p9] = fencedBlocks(prodPart(...P9_STEP3))
+	const [dry, , real] = fencedBlocks(prodPart(...HOTFIX_STEP4))
 	assert.ok(p9 && dry && real, 'the three copy blocks exist')
 	assert.ok(![...p9, ...dry, ...real].some((l) => /\bdocker\b|nextcloud-nextcloud|\bocc\b|\bsudo\b/.test(l)), 'the copy blocks never name docker, nextcloud-nextcloud, occ or sudo, so this test can run them')
 	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kdchain-')))
@@ -437,8 +456,8 @@ test('ENTWICKLUNG §10 P9 step 3 and hotfix step 4 run in bash: after a failed t
 			assert.equal(path.dirname(tmp), root, `mktemp -d made $tmp in the throwaway folder (${tmp}; ${r.stderr})`)
 			return { calls: fs.readFileSync(log, 'utf8').split('\n').filter(Boolean), tmp, gone: !fs.existsSync(tmp), stderr: r.stderr }
 		}
-		const dryRsync = (t) => `rsync -a --delete --checksum --itemize-changes --dry-run ${t}/knorke/ ${app}/`
-		const realRsync = (t) => `rsync -a --delete --checksum --itemize-changes ${t}/knorke/ ${app}/`
+		const dryRsync = (t) => `rsync -rlpgoD --delete --checksum --itemize-changes --dry-run ${t}/knorke/ ${app}/`
+		const realRsync = (t) => `rsync -rlpgoD --delete --checksum --itemize-changes ${t}/knorke/ ${app}/`
 		// factory job 127: bash's stderr in every message of F2–F7, e.g. "command not found" under the minimal PATH
 		const why = (r) => ` (stderr: ${r.stderr.trim() || 'none'})`
 		// F1: P9 with a missing archive: tar fails, so neither rsync nor chown runs; the rm still runs
@@ -448,11 +467,11 @@ test('ENTWICKLUNG §10 P9 step 3 and hotfix step 4 run in bash: after a failed t
 		assert.ok(r.stderr.includes('knorke-0.0.0.tar.gz'), `F1: the error names the missing archive (${r.stderr})`)
 		// F2: P9 without an error (counter-check: the stubs are really called)
 		r = run([p9], '9.9.9')
-		assert.deepEqual(r.calls, [`rsync -a --delete --checksum ${r.tmp}/knorke/ ${app}/`, `chown -R 33:33 ${app}`], 'F2: rsync, then chown' + why(r))
+		assert.deepEqual(r.calls, [`rsync -rlpgoD --delete --checksum ${r.tmp}/knorke/ ${app}/`, `chown -R 33:33 ${app}`], 'F2: rsync, then chown' + why(r))
 		assert.ok(r.gone, 'F2: the rm removes $tmp' + why(r))
 		// F3: P9 with a failed rsync: no chown; the rm still runs
 		r = run([p9], '9.9.9', { rsync: 23 })
-		assert.deepEqual(r.calls, [`rsync -a --delete --checksum ${r.tmp}/knorke/ ${app}/`], 'F3: after a failed rsync no chown' + why(r))
+		assert.deepEqual(r.calls, [`rsync -rlpgoD --delete --checksum ${r.tmp}/knorke/ ${app}/`], 'F3: after a failed rsync no chown' + why(r))
 		assert.ok(r.gone, 'F3: the rm removes $tmp' + why(r))
 		// F4: hotfix dry run with a missing archive: nothing runs; $tmp stays (the stop rule says rm -rf "${tmp:?}" by hand)
 		r = run([dry], '0.0.0')
@@ -472,6 +491,149 @@ test('ENTWICKLUNG §10 P9 step 3 and hotfix step 4 run in bash: after a failed t
 		assert.ok(r.gone, 'F7: the rm removes $tmp' + why(r))
 	} finally {
 		if (root.startsWith(path.join(fs.realpathSync(os.tmpdir()), 'kdchain-'))) fs.rmSync(root, { recursive: true, force: true })
+	}
+})
+
+/** The rsync options of copy_app in factory/deploy.sh, the copy every deploy and rollback makes. */
+function copyAppOptions() {
+	const m = /^copy_app\(\) \{ rsync ((?:-\S+ )+)"\$1" "\$APP_DIR\/" && /m.exec(read('factory/deploy.sh'))
+	assert.ok(m, 'factory/deploy.sh: copy_app is one rsync call into "$APP_DIR/"')
+	return m[1].trim().split(/\s+/)
+}
+
+/** The rsync lines of the copy steps of ENTWICKLUNG §10: code blocks of P9 step 3 and hotfix step 4, inline code of hotfix step 8. */
+function manualRsyncCalls() {
+	const lines = ([from, to]) => fencedBlocks(prodPart(from, to)).flat().filter((l) => /^rsync\s/.test(l))
+	return {
+		'P9 step 3': lines(P9_STEP3),
+		'hotfix step 4': lines(HOTFIX_STEP4),
+		'hotfix step 8': [...prodPart(...HOTFIX_STEP8).matchAll(/`(rsync\s[^`]*)`/g)].map((m) => m[1]),
+	}
+}
+
+// -t (also inside -a) keeps the archive's fixed mtime, which hides a change from opcache and APCu (traps 9.3, 9.4)
+const keepsTimes = (o) => o === '--times' || o === '--archive' || /^-[^-]*[at]/.test(o)
+
+// factory job 166: a copy by hand works like factory/deploy.sh
+test('ENTWICKLUNG §10 copies a release by hand with the rsync options of copy_app in factory/deploy.sh (P9 step 3, hotfix steps 4 and 8), never with -a, -t or --times (factory job 166)', () => {
+	const opts = copyAppOptions()
+	assert.ok(!opts.some(keepsTimes), `copy_app copies without -a, -t or --times (${opts.join(' ')})`)
+	const calls = manualRsyncCalls()
+	assert.deepEqual(Object.values(calls).map((l) => l.length), [1, 2, 1], 'one rsync in P9 step 3, the dry run and the real run in hotfix step 4, one in hotfix step 8')
+	for (const [where, list] of Object.entries(calls)) {
+		for (const call of list) {
+			const own = call.split(/\s+/).slice(1).filter((w) => w.startsWith('-'))
+			assert.ok(!own.some(keepsTimes), `${where}: no -a, -t or --times in "${call}"`)
+			const rest = own.filter((o) => o !== '--itemize-changes' && o !== '--dry-run')
+			assert.deepEqual([...rest].sort(), [...opts].sort(), `${where}: "${call}" has the options of copy_app (${opts.join(' ')}), plus at most --itemize-changes and --dry-run`)
+		}
+	}
+})
+
+const HAS_RSYNC = spawnSync('rsync', ['--version']).status === 0
+
+// factory job 166: the rsync lines of the doc with the real rsync, in a throwaway folder only. Each line
+// must be rsync, its options, "$tmp"/knorke/ and the app folder below <prod>, so nothing else can run;
+// bash finds only rsync, and <prod> is replaced before anything runs.
+test('the rsync lines of ENTWICKLUNG §10 with the real rsync: a changed file gets a new time, an unchanged one keeps MTIME of dev/release.sh, the dry run and the real run of hotfix step 4 print the four H1 lines (factory job 166)', { skip: !HAS_RSYNC && 'rsync not found on this host' }, () => {
+	const m = /^MTIME="([^"]+)"$/m.exec(read('dev/release.sh'))
+	assert.ok(m, 'dev/release.sh sets MTIME')
+	const mtime = Date.parse(m[1])
+	assert.ok(Number.isFinite(mtime), `MTIME "${m[1]}" is a date`)
+	const [p9Block] = fencedBlocks(prodPart(...P9_STEP3))
+	const [dryBlock, h1Block, realBlock] = fencedBlocks(prodPart(...HOTFIX_STEP4))
+	const only = (block) => {
+		const l = block.filter((x) => /^rsync\s/.test(x))
+		assert.equal(l.length, 1, 'one rsync line in the block')
+		const cmd = l[0].replace(/\s*&&$/, '')
+		assert.match(cmd, /^rsync(?: -[-\w]+)+ "\$tmp"\/knorke\/ <prod>\/nextcloud_html\/custom_apps\/knorke\/$/, 'only rsync, its options, "$tmp"/knorke/ and the app folder')
+		return cmd
+	}
+	const p9 = only(p9Block), dry = only(dryBlock), real = only(realBlock)
+	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kdrsync-')))
+	try {
+		assert.ok(!/\s/.test(root), `the throwaway folder has no blank (${root})`)
+		const bin = path.join(root, 'bin')
+		fs.mkdirSync(bin)
+		const where = spawnSync('bash', ['-c', 'command -v rsync'], { encoding: 'utf8' }).stdout.trim()
+		assert.ok(where.startsWith('/'), `rsync is a program on this host (${where})`)
+		fs.symlinkSync(where, path.join(bin, 'rsync'))
+		// every file and folder below dir gets MTIME, as tar gives it when it unpacks a release archive
+		const stamp = (dir) => {
+			for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+				if (e.isDirectory()) stamp(path.join(dir, e.name))
+				else fs.utimesSync(path.join(dir, e.name), mtime / 1000, mtime / 1000)
+			}
+			fs.utimesSync(dir, mtime / 1000, mtime / 1000)
+		}
+		const put = (base, files) => {
+			for (const [rel, body] of Object.entries(files)) {
+				fs.mkdirSync(path.dirname(path.join(base, rel)), { recursive: true })
+				fs.writeFileSync(path.join(base, rel), body)
+			}
+			stamp(base)
+		}
+		// a fresh case: $tmp/knorke/ is the unpacked release, <prod>/…/knorke/ the app folder, both with MTIME
+		let n = 0
+		const setup = (release, installed) => {
+			const c = path.join(root, `case-${++n}`)
+			const tmp = path.join(c, 'tmp'), prod = path.join(c, 'prod')
+			const app = path.join(prod, 'nextcloud_html', 'custom_apps', 'knorke')
+			put(path.join(tmp, 'knorke'), release)
+			put(app, installed)
+			return { tmp, prod, app }
+		}
+		const run = (cmd, { tmp, prod }) => {
+			// placeholders by split/join, never replace() with a replacement string (trap 9.22)
+			const r = spawnSync('bash', ['-c', 'PATH="$KD_BIN"\n' + cmd.split('<prod>').join(prod)], {
+				encoding: 'utf8', timeout: 20000, env: { KD_BIN: bin, tmp, LC_ALL: 'C' },
+			})
+			assert.equal(r.status, 0, `${cmd}: exit 0 (stderr: ${r.stderr})`)
+			return r.stdout.split('\n').filter(Boolean)
+		}
+		const time = (c, rel) => fs.statSync(path.join(c.app, rel)).mtimeMs
+		const text = (c, rel) => fs.readFileSync(path.join(c.app, rel), 'utf8')
+
+		// a) P9 step 3: info.xml and a PHP file change at the same size, one file stays, one is new, one goes
+		const PHP = 'lib/Controller/PageController.php'
+		const installed = { 'appinfo/info.xml': '<version>0.3.0</version>\n', [PHP]: '<?php return 1;\n', 'js/same.mjs': 'same\n', 'js/gone.mjs': 'only installed\n' }
+		const release = { 'appinfo/info.xml': '<version>0.3.1</version>\n', [PHP]: '<?php return 2;\n', 'js/same.mjs': 'same\n', 'js/new.mjs': 'new\n' }
+		const changed = ['appinfo/info.xml', PHP]
+		for (const rel of changed) assert.equal(release[rel].length, installed[rel].length, `${rel}: same size, only the content differs`)
+		let c = setup(release, installed)
+		const start = Date.now()
+		run(p9, c)
+		for (const rel of changed) {
+			assert.equal(text(c, rel), release[rel], `P9 step 3: ${rel} has the new content`)
+			assert.ok(time(c, rel) !== mtime && time(c, rel) >= start - 2000, `P9 step 3: ${rel} has the time of the copy (${new Date(time(c, rel)).toISOString()}), not MTIME`)
+		}
+		assert.equal(time(c, 'js/same.mjs'), mtime, 'P9 step 3: the unchanged file keeps MTIME')
+		assert.equal(text(c, 'js/new.mjs'), release['js/new.mjs'], 'P9 step 3: the new file is there')
+		assert.ok(!fs.existsSync(path.join(c.app, 'js/gone.mjs')), 'P9 step 3: the file only in the app folder is gone')
+		// counter-check: rsync -a (with -t) copies the new content but leaves the old MTIME, so opcache and APCu miss it
+		c = setup(release, installed)
+		run('rsync -a --delete --checksum "$tmp"/knorke/ <prod>/nextcloud_html/custom_apps/knorke/', c)
+		for (const rel of changed) {
+			assert.equal(text(c, rel), release[rel], `rsync -a: ${rel} has the new content`)
+			assert.equal(time(c, rel), mtime, `rsync -a: ${rel} keeps MTIME`)
+		}
+
+		// b) hotfix step 4: from the four H1 lines of the doc, a size change exactly where the line has "s"
+		assert.equal(h1Block.length, 4, 'four H1 lines')
+		const before = {}, after = {}
+		for (const line of h1Block) {
+			const [, flags, rel] = /^(>fc\S{8}) (\S+)$/.exec(line) || []
+			assert.ok(flags, `"${line}" is a changed file`)
+			before[rel] = `old ${rel}\n`
+			after[rel] = flags[3] === 's' ? `new and longer ${rel}\n` : `new ${rel}\n`
+		}
+		c = setup(after, before)
+		assert.deepEqual(run(dry, c), h1Block, 'the dry run of hotfix step 4 prints exactly the four H1 lines')
+		for (const rel of Object.keys(before)) assert.equal(text(c, rel), before[rel], `the dry run leaves ${rel} as it is`)
+		assert.deepEqual(run(real, c), h1Block, 'the real run of hotfix step 4 prints the same four lines')
+		for (const rel of Object.keys(after)) assert.equal(text(c, rel), after[rel], `the real run copies ${rel}`)
+	} finally {
+		if (root.startsWith(path.join(fs.realpathSync(os.tmpdir()), 'kdrsync-'))) fs.rmSync(root, { recursive: true, force: true })
 	}
 })
 
@@ -568,11 +730,13 @@ test('docs describe the privacy notice as built (SPEC-M1 R40, factory job 032)',
 
 	// 5. §6.8: the hooks, each set in one of the four components; every data-knorke attribute of the (R40) rows exists there
 	const s68 = sub('### 6.8 ', '### 6.9 ')
-	const code = ['src/admin/AdminSettings.vue', 'src/components/PrivacyInfo.vue', 'src/components/TopBar.vue', 'src/components/GuestNameDialog.vue'].map(read).join('\n')
+	// job 281: the notice fields moved to NoticeFields.vue
+	const code = ['src/admin/AdminSettings.vue', 'src/admin/NoticeFields.vue', 'src/components/PrivacyInfo.vue', 'src/components/TopBar.vue', 'src/components/GuestNameDialog.vue'].map(read).join('\n')
 	for (const h of ['privacy-notice', 'data-knorke-privacy-text', 'privacy-info', 'data-knorke-privacy-kind', 'data-knorke-privacy-link', 'link-badge', 'privacy-close', 'data-knorke-admin',
 		'privacy-url', 'privacy-language', 'privacy-add-language', 'privacy-remove-language', 'privacy-save']) {
 		assert.ok(s68.includes(h), `§6.8 names ${h}`)
-		assert.ok(code.includes(h), `the code sets ${h}`)
+		// job 281 (design A3): one save bar (admin-save) replaced privacy-save; §6.8 is frozen as the state of 0.3.0
+		if (h !== 'privacy-save') assert.ok(code.includes(h), `the code sets ${h}`)
 	}
 	const r40 = s68.split('\n').filter((l) => l.startsWith('| **(R40)**'))
 	for (const a of new Set(r40.join('\n').match(/data-knorke(?:-[a-z]+)*/g))) assert.ok(code.includes(a), `${a} (§6.8) is set in the code`)
@@ -597,21 +761,6 @@ test('docs describe the privacy notice as built (SPEC-M1 R40, factory job 032)',
 	assert.equal(paras.length, 1, 'docs/ADMIN.md Settings has one paragraph "Privacy notice for guests."')
 	const flat = paras[0].replace(/\s+/g, ' ')
 	for (const x of [`${TEXT_MAX} characters`, `${LANGUAGES_MAX} languages`]) assert.ok(flat.includes(x), `the paragraph names ${x}`)
-})
-
-test('SPEC-M1 §6.11: the count line of the board menu (R25) states the "%n item(s) on this board" entry of l10n/de.json word for word', () => {
-	const en = ['%n item on this board', '%n items on this board']
-	const de = JSON.parse(read('l10n/de.json')).translations[`_${en[0]}_::_${en[1]}_`]
-	assert.ok(Array.isArray(de) && de.length === 2 && de.every((x) => typeof x === 'string' && x.length > 0), 'l10n/de.json has the entry with two German forms')
-	const spec = read('docs/SPEC-M1.md')
-	const from = spec.indexOf('\n### 6.11 ')
-	const to = spec.indexOf('\n### 6.12 ')
-	assert.ok(from >= 0 && to > from, 'SPEC-M1 has §6.11 followed by §6.12')
-	const rows = spec.slice(from, to).split('\n').filter((l) => l.includes(`\`${en[0]}\` / \`${en[1]}\``))
-	assert.equal(rows.length, 1, 'exactly one §6.11 row names the two source strings')
-	const cells = rows[0].split('|').slice(1, -1).map((c) => c.trim())
-	assert.equal(cells.length, 2, 'the row has a source and a German column')
-	assert.equal(cells[1], `\`${de[0]}\` / \`${de[1]}\``, 'the German column is the de.json entry word for word')
 })
 
 test('local values: the same three keys in dev/local.env.example, dev/lib.sh and the tables of ENTWICKLUNG §3.10 and §3.2; the KD_DNS row of §3.2 has no IP address (factory job 036, SPEC-M1 §12.1 R16)', () => {

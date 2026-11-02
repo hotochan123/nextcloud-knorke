@@ -12,10 +12,11 @@
  * follow(pid, client = null): without a client the entry of pid whose v this
  * client saw change last (presence.youngestViewKey, CLI-16). On every
  * presence card the target's viewport becomes
- *   scene.followTo(scene.cameraForRect(viewRect, 0), glideMs)
+ *   scene.followTo(scene.cameraForRect(viewRect, 0, null, MAX_SCALE), glideMs)
  * (cameraForRect centres the rectangle and fits it: "seitenrichtig
- * eingepasster Mitte"). glideMs = the observed interval between presence
- * cards, clamped to 300–2000 ms (§6.3 "Folgen" (1)); the scene jumps under
+ * eingepasster Mitte"; job 238: over the whole zoom range, up to 1000 %).
+ * glideMs = the observed interval between presence cards, clamped to
+ * 300–2000 ms (§6.3 "Folgen" (1)); the scene jumps under
  * prefers-reduced-motion. A followTo that resolves false never ends following
  * (R16 CLI-05, S-11): the next card tries again. An unchanged viewport is
  * not sent again unless the last followTo said false.
@@ -46,10 +47,16 @@
  * (R22, VC-03) A follow() without the summon flag that replaces the summon
  * follow (the PresenceBar) is an own exit too: it remembers the pair.
  *
+ * (Factory job 272) Frames as slides: while this client follows a summon
+ * that names a frame (summon.frame) and frameRect knows it, the camera fits
+ * that frame (cameraForRect(frame, FRAME_PAD_PX, frameInsets())) instead of the presenter's
+ * viewport, so every screen shows the whole slide as large as it fits.
+ *
  * No jumps under the finger (R2): while a vote session is open, jumps are
  * held back during an active 'press' and until HOLD_MS after its end; then
  * the newest held target is applied in one step.
  */
+import { MAX_SCALE } from '../model/tokens.js'
 
 /** Glide duration bounds (§6.3 "Folgen" (1)). */
 export const GLIDE_MIN_MS = 300
@@ -58,6 +65,8 @@ export const GLIDE_MAX_MS = 2000
 export const STALE_MS = 10000
 /** Jumps wait this long after the last press ended (§6.5.6, R2). */
 export const HOLD_MS = 1500
+/** (Job 272) Screen px around a presented frame. */
+export const FRAME_PAD_PX = 16
 
 /**
  * @param {unknown} s meta.summon
@@ -73,6 +82,7 @@ export function summonOf(s) {
 		name: typeof s.name === 'string' ? s.name : '',
 		seq: s.seq,
 		at: Number.isFinite(s.at) ? s.at : 0,
+		frame: typeof s.frame === 'string' && s.frame !== '' ? s.frame : null,
 	}
 }
 
@@ -107,8 +117,12 @@ export class FollowController {
 	 * @param {() => boolean} [o.sessionOpen] a vote session is open (jumps wait for presses)
 	 * @param {(state: object) => void} [o.onChange] following or chip changed
 	 * @param {(name: string) => void} [o.onLeft] the target left (toast)
+	 * @param {(id: string) => ({x: number, y: number, w: number, h: number}|null)} [o.frameRect] (job 272) world box of a frame
+	 * @param {() => ({bottom?: number}|null)} [o.frameInsets] (job 272) screen px the presentation's bar covers
 	 */
-	constructor({ scene, presence, now, sleep, self, sessionOpen = () => false, onChange = () => {}, onLeft = () => {} }) {
+	constructor({ scene, presence, now, sleep, self, sessionOpen = () => false, onChange = () => {}, onLeft = () => {}, frameRect = () => null, frameInsets = () => null }) {
+		this.frameRect = frameRect
+		this.frameInsets = frameInsets
 		this.scene = scene
 		this.presence = presence
 		this.now = now
@@ -358,6 +372,10 @@ export class FollowController {
 			}
 			return
 		}
+		if (this.target?.summon && prev?.frame !== s.frame) {
+			// (job 272) the presenter moved to another slide: there at once
+			this.step(this.now())
+		}
 		this.emitChip()
 	}
 
@@ -418,10 +436,11 @@ export class FollowController {
 			this.onLeft(name)
 			return
 		}
-		if (!e || e.view === null) {
+		const frame = this.slideRect()
+		if (!frame && (!e || e.view === null)) {
 			return
 		}
-		const view = e.view
+		const view = frame ? [frame.x, frame.y, frame.w, frame.h] : e.view
 		if (this.lastOk && this.lastView && view.every((v, i) => v === this.lastView[i]) && !this.held) {
 			return
 		}
@@ -429,7 +448,7 @@ export class FollowController {
 		if (!scene || typeof scene.cameraForRect !== 'function' || typeof scene.followTo !== 'function') {
 			return
 		}
-		const cam = scene.cameraForRect({ x: view[0], y: view[1], w: view[2], h: view[3] }, 0)
+		const cam = scene.cameraForRect({ x: view[0], y: view[1], w: view[2], h: view[3] }, frame ? FRAME_PAD_PX : 0, frame ? this.frameInsets() : null, MAX_SCALE)
 		this.lastView = view
 		if (this.holding(now)) {
 			this.held = { cam, ms: this.glideMs }
@@ -437,6 +456,26 @@ export class FollowController {
 			return
 		}
 		this.go(cam, this.glideMs)
+	}
+
+	/**
+	 * (Job 272) The presented frame's box while this client follows the summon
+	 * that names it.
+	 *
+	 * @return {{x: number, y: number, w: number, h: number}|null}
+	 */
+	slideRect() {
+		const f = this.target?.summon ? this.summon?.frame : null
+		if (!f) {
+			return null
+		}
+		let r = null
+		try {
+			r = this.frameRect(f)
+		} catch (e) {
+			r = null
+		}
+		return r && [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 0 && r.h > 0 ? r : null
 	}
 
 	/**

@@ -165,7 +165,7 @@ test('R16: E33 – reducedMotion everywhere, notes 200 × 200, ±5 %, 3 s / 5 s,
 	assert.match(e, /held <= 450/)
 	assert.match(e, /Date\.now\(\) - tRel < 1400/, 'no jump before 1.5 s')
 	const mode = e.indexOf("[data-knorke-action=vote-mode]")
-	assert.ok(mode > 0 && mode < e.indexOf('[data-knorke-action=frames]') && mode < e.indexOf("press('Shift+Digit2')"), 'Edit before the frame list and Shift+2')
+	assert.ok(mode > 0 && mode < e.indexOf('zoomToFrame(a.page, F)') && mode < e.indexOf("press('Shift+Digit2')"), 'Edit before the frame list (job 229: in the zoom menu) and Shift+2')
 	const end = e.indexOf("menuAction(a.page, 'summon-end')")
 	assert.ok(end > 0 && e.indexOf("menuAction(a.page, 'summon')", end) > end, 'a second "Bring everyone here" after "Stop presenting"')
 	assert.ok(e.lastIndexOf('swipe(g,', end) > e.indexOf("press('Shift+Digit2')"), 'Gina leaves the first presentation before it ends')

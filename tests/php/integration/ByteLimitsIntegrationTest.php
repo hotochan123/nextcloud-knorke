@@ -11,7 +11,6 @@ use OCA\Knorke\Service\AccessResult;
 use OCA\Knorke\Service\Compactor;
 use OCA\Knorke\Service\Epoch;
 use OCA\Knorke\Service\Limits;
-use OCA\Knorke\Service\LinkPolicy;
 use OCA\Knorke\Service\SyncRequest;
 use OCA\Knorke\Service\WriteBudget;
 use OCA\Knorke\Tests\Support\IntegrationCase;
@@ -145,7 +144,7 @@ final class ByteLimitsIntegrationTest extends IntegrationCase {
                 return $this->cap;
             }
         };
-        return new Compactor($this->items, $this->boards, $this->cache, Server::get(LinkPolicy::class), $limits, $this->db, Server::get(IAppConfig::class));
+        return new Compactor($this->items, $this->boards, $this->cache, $limits, $this->db, Server::get(IAppConfig::class));
     }
 
     public function testByteCapOnThisDatabase(): void {

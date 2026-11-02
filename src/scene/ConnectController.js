@@ -28,11 +28,18 @@
  * self loop by drag), and a re-targeted end never binds to the item of the
  * other end; a new connector whose free end lies inside its start item, and
  * a re-target that changes nothing, give no intent. A click without a drag
- * never reaches this controller (InputController threshold).
+ * never reaches this controller (InputController threshold), except (job
+ * 159) the click or tap on a "+" of a text item: its connector then hangs
+ * from that "+" until the next click or tap sets the end.
+ *
+ * (job 212) A new connector that starts at a "+" of a BPMN event, task or
+ * gateway leaves with the triangle of a sequence flow instead of the tool's
+ * arrow (plusEndCap; the kind at the release counts).
  */
-import { anchorNormal, anchorPoint, anchorsFor, normalizeEndpoint, routeConnector } from '../model/connectors.js'
+import { anchorNormal, anchorPoint, anchorsFor, normalizeEndpoint, plusEndCap, routeConnector } from '../model/connectors.js'
 import { q, toLocal } from '../model/geometry.js'
 import { fieldValue, isBindable } from '../model/registry.js'
+import { SELECTION_GAP_PX, STRUCT_PLUS_OFFSET_PX } from '../model/tokens.js'
 
 /**
  * @typedef {import('../model/connectors.js').Endpoint} Endpoint
@@ -72,23 +79,54 @@ export function worldAnchors(model, id) {
  * Positions of the "+" handles of one bindable item (SPEC-M1 §6.3): each
  * anchor pushed `offset` world units outwards along its side normal, rotated
  * with the item; names plus-t, plus-r, plus-b, plus-l (anchor order).
+ * (job 172) below: world units plus-b goes further out, the band of a
+ * selected note's reaction row (its selection frame reaches that far).
  *
  * @param {object} model SceneModel
  * @param {string} id bindable item
  * @param {number} offset distance in world units
+ * @param {number} [below] extra distance of plus-b (world units; missing or not > 0: none)
  * @return {Array<{name:string, x:number, y:number, ax:number, ay:number}>}
  */
-export function plusHandles(model, id, offset) {
+export function plusHandles(model, id, offset, below = 0) {
 	const a = model.abs(id)
 	if (!a) return []
 	const r = (a.r || 0) * Math.PI / 180
 	const c = Math.cos(r)
 	const s = Math.sin(r)
 	const names = ['plus-t', 'plus-r', 'plus-b', 'plus-l']
+	const extra = Number.isFinite(below) && below > 0 ? below : 0
 	return worldAnchors(model, id).map((p, i) => {
 		const [nx, ny] = anchorNormal(p.ax, p.ay)
-		return { name: names[i], x: p.x + (nx * c - ny * s) * offset, y: p.y + (nx * s + ny * c) * offset, ax: p.ax, ay: p.ay }
+		const d = names[i] === 'plus-b' ? offset + extra : offset
+		return { name: names[i], x: p.x + (nx * c - ny * s) * d, y: p.y + (nx * s + ny * c) * d, ax: p.ax, ay: p.ay }
 	})
+}
+
+/**
+ * Distance of the "+" buttons of tables, lanes and mind maps from their
+ * anchors (job 140), at every zoom: (job 262, design round 4 R4) their
+ * centre STRUCT_PLUS_OFFSET_PX screen px outside the item's edge (until
+ * then CONNECTOR_PLUS_OFFSET_PX outside the selection frame).
+ *
+ * @param {number} scale camera scale (not finite or ≤ 0: 1)
+ * @return {number} offset in world units for plusHandles
+ */
+export function plusOffset(scale) {
+	return STRUCT_PLUS_OFFSET_PX / (Number.isFinite(scale) && scale > 0 ? scale : 1)
+}
+
+/**
+ * (job 231, redesign V8) Distance of the connection points plus-t/r/b/l
+ * from their anchors: they lie on the drawn selection frame,
+ * SELECTION_GAP_PX screen px outside the box at every zoom, so none lands
+ * on a neighbouring item.
+ *
+ * @param {number} scale camera scale (not finite or ≤ 0: 1)
+ * @return {number} offset in world units for plusHandles
+ */
+export function pointOffset(scale) {
+	return SELECTION_GAP_PX / (Number.isFinite(scale) && scale > 0 ? scale : 1)
 }
 
 /**
@@ -191,16 +229,17 @@ export class ConnectController {
 	 *
 	 * @param {Endpoint} start start end (stored form)
 	 * @param {{x:number, y:number}} pointer world point
+	 * @param {boolean} [plus] (job 212) the start is the anchor of a "+" handle
 	 * @return {boolean} false for an invalid start
 	 */
-	beginConnect(start, pointer) {
+	beginConnect(start, pointer, plus = false) {
 		const ep = normalizeEndpoint(start)
 		if (ep === null || !pointer) {
 			this.#s = null
 			return false
 		}
 		const startItem = typeof ep.item === 'string' ? ep.item : null
-		this.#s = { mode: 'connect', start: ep, startItem, pointer: { ...pointer }, last: null }
+		this.#s = { mode: 'connect', start: ep, startItem, plus: plus === true, pointer: { ...pointer }, last: null }
 		return true
 	}
 
@@ -249,7 +288,11 @@ export class ConnectController {
 		if (s.mode === 'connect') {
 			const a = { box: boxOf(this.#model, s.start), ep: s.start, point: null }
 			const b = snap.target !== null ? { box: snap.box, ep: snap.ep, point: null } : { box: null, ep: snap.ep, point: null }
-			preview = a.box || !('item' in s.start) ? routeConnector(a, b, route) : null
+			// (job 197) an elbow preview already runs around the items in between, like the connector will
+			const obstacles = route === 'elbow' && typeof this.#model.obstaclesFor === 'function'
+				? this.#model.obstaclesFor([s.startItem, snap.target].filter((x) => typeof x === 'string'))
+				: null
+			preview = a.box || !('item' in s.start) ? routeConnector(a, b, route, { obstacles }) : null
 		}
 		s.last = snap
 		return { ...snap, preview }
@@ -262,7 +305,7 @@ export class ConnectController {
 	 * @return {object|null} {type:'connect', start, end, route, endCap} or
 	 *   {type:'retarget', id, which, value, before}
 	 */
-	result({ route = 'straight', endCap = 'arrow' } = {}) {
+	result({ route = 'straight', endCap = 'triangle' } = {}) {
 		const s = this.#s
 		if (!s || !s.last) return null
 		const end = normalizeEndpoint(s.last.ep)
@@ -276,7 +319,10 @@ export class ConnectController {
 					if (lx >= 0 && ly >= 0 && lx <= a.w && ly <= a.h) return null
 				}
 			}
-			return { type: 'connect', start: { ...s.start }, end, route, endCap }
+			// (job 212) from a "+" of a BPMN event, task or gateway: a sequence flow
+			const it = s.plus && s.startItem !== null ? this.#model.get(s.startItem) : null
+			const cap = it?.t === 'shape' ? plusEndCap(it.data?.kind, endCap) : endCap
+			return { type: 'connect', start: { ...s.start }, end, route, endCap: cap }
 		}
 		if (same(end, normalizeEndpoint(s.before))) return null
 		return { type: 'retarget', id: s.id, which: s.which, value: end, before: structuredClone(s.before) }

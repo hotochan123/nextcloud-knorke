@@ -180,10 +180,10 @@ test('AK4 (e) opts.grid follows knorke.grid only', async () => {
 test('AK5 (a) the board menu reports gridSnap: true, after setGridSnap(false) a new intent reports false', async () => {
 	const h = await open()
 	h.scene.callbacks.onIntent({ type: 'contextMenu', id: null, at: [640, 400] })
-	assert.deepEqual(h.ui.menu.at(-1), { id: null, at: [640, 400], seq: 1, items: 2, grid: false, gridSnap: true, unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
+	assert.deepEqual(h.ui.menu.at(-1), { id: null, at: [640, 400], seq: 1, items: 2, grid: false, gridSnap: true, cursors: true, wheel: 'auto', unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
 	h.scene.setGridSnap(false)
 	h.scene.callbacks.onIntent({ type: 'contextMenu', id: null, at: [10, 20] })
-	assert.deepEqual(h.ui.menu.at(-1), { id: null, at: [10, 20], seq: 2, items: 2, grid: false, gridSnap: false, unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
+	assert.deepEqual(h.ui.menu.at(-1), { id: null, at: [10, 20], seq: 2, items: 2, grid: false, gridSnap: false, cursors: true, wheel: 'auto', unlockAll: 0, unlockFrame: 0, unlockBy: 0, unlockByName: null })
 	h.s.closeMenu()
 	assert.equal(h.ui.menu.at(-1), null, 'closed: null')
 	h.s.destroy()

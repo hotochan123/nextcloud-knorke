@@ -40,6 +40,7 @@ describe('Camera basics', () => {
 	test('set clamps the scale and ignores non-finite values', () => {
 		const c = new Camera()
 		assert.equal(c.set(0, 0, 100).scale, MAX_SCALE)
+		assert.equal(c.set(0, 0, 100).scale, 10, 'job 238 AK1: 1000 %')
 		assert.equal(c.set(0, 0, 0.0001).scale, MIN_SCALE)
 		c.set(5, 6, 1)
 		assert.deepEqual(c.set(NaN, Infinity, -1), { x: 5, y: 6, scale: 1 })

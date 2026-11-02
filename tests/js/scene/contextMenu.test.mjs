@@ -7,12 +7,16 @@
  * frozen in stage 4, phase 0, step 4.2), deterministic in Node on the fake
  * DOM with the real SceneManager, InputController, GestureController and
  * TextEditor and the recording renderer stub of sceneHarness.mjs:
- * - pointer path (the canvas's contextmenu event): an item outside the
+ * - pointer path (a right click of the mouse, job 156: at its pointerup; the
+ *   canvas's contextmenu event for the other pointers): an item outside the
  *   selection is selected first (onSelection before onIntent), an item
  *   inside keeps the selection, a transformer handle keeps it too, empty
- *   canvas clears it (id null); at = the event point in container px; the
+ *   canvas clears it (id null); at = the release point in container px; the
  *   order down → contextmenu → up (Linux, macOS) and down → up →
  *   contextmenu (Windows) give the same; preventDefault
+ * - (job 156, AK3) nothing before the pointerup, hit and at of the release
+ *   point, one menu per press in both orders; 3 px still a click, 4 px a
+ *   pan without a menu
  * - macOS Ctrl+click and a pen held still (contextmenu after a button-0
  *   pointerdown): the press is dropped, no drag, no marquee, nothing created,
  *   the tool stays; a pen's barrel button works like a right click
@@ -26,14 +30,18 @@
  *   preventDefault there: the browser's menu stays), during a moved press,
  *   a mouse pan or a finger below the tap threshold; a wheel gesture or a
  *   follow glide ends first
- * - a right-button press starts no pan, marquee or drag; the existing
- *   intents are unchanged
+ * - after a right click the existing intents are unchanged (right-drag:
+ *   rightDrag.test.mjs)
  * - (stage 4, phase 1: the gaps the mutation probes of WP-S4 found, the
  *   contract unchanged) one pointerdown opens at most one menu (rule 3); the
  *   event's pointerType wins over the pointerdown's (rule 4); a running touch
  *   gesture blocks a mouse right click (rule 5); on a handle over empty
  *   canvas id = the LAST selected item, a pen reaches a handle with the
  *   touch radius, the hit of a mouse has the 4-px mouse tolerance (rule 7)
+ * - (job 168, AK2) a right click of the pen (button 2, or button 0 with bit 2
+ *   in buttons): nothing before the pointerup, then one menu at the release
+ *   point, also after 2 s held and after a finger's contextmenu between;
+ *   10 px still a click, 11 px a pan without a menu
  */
 import { test, describe, afterEach, mock } from 'node:test'
 import assert from 'node:assert/strict'
@@ -570,25 +578,80 @@ describe('keyboard path (ContextMenu key, Shift+F10)', () => {
 	})
 })
 
-describe('right button and the existing intents', () => {
-	test('a right-button press starts no pan, marquee or drag (also with the hand tool), and selects nothing by itself', () => {
+describe('job 156 AK3: the menu of a right click opens at the pointerup', () => {
+	test('down → contextmenu → up: nothing before the pointerup, then exactly one intent; hit and at follow the release point (an item outside the selection is selected first)', () => {
 		setup()
-		for (const tool of ['select', 'hand']) {
-			h.scene.setTool(tool)
-			for (const [x, y] of [[100, 100], [800, 600]]) {
-				h.pointer('pointerdown', x, y, { button: 2 })
-				h.pointer('pointermove', x - 60, y - 60, { button: 2 })
-				h.pointer('pointermove', x - 300, y - 300, { button: 2 })
-				h.pointer('pointerup', x - 300, y - 300, { button: 2 })
-				h.frame()
-			}
-		}
-		assert.deepEqual(h.log.filter((e) => e[0] !== 'onTool'), [], 'no activity, selection, intent, preview or onUserCamera')
-		assert.deepEqual(marquees(), [])
-		assert.deepEqual(h.scene.getCamera(), { x: 0, y: 0, scale: 1 })
-		assert.equal(h.model.get(A).x, 0)
+		h.scene.setSelection([B])
+		h.log.length = 0
+		// pressed 6 px right of A (beyond the 4-px tolerance: empty canvas), released 3 px further left: on A
+		h.pointer('pointerdown', 206, 50, { button: 2, buttons: 2 })
+		const e = ctxMenu(206, 50)
+		h.pointer('pointermove', 203, 50, { button: -1, buttons: 2 })
+		assert.equal(e.defaultPrevented, true)
+		assert.deepEqual(h.log, [], 'no intent and no selection before the pointerup')
+		h.pointer('pointerup', 203, 50, { button: 2, buttons: 0 })
+		assert.deepEqual(h.log, [
+			['onSelection', [A]],
+			['onIntent', { type: 'contextMenu', id: A, at: [203, 50] }],
+		])
+		const again = ctxMenu(203, 50)
+		assert.equal(again.defaultPrevented, true)
+		assert.equal(menus().length, 1, 'a later contextmenu without a new press opens no second menu')
 	})
 
+	test('down → contextmenu → up on empty canvas: the selection is cleared at the release, id null', () => {
+		setup()
+		h.scene.setSelection([A])
+		h.log.length = 0
+		h.pointer('pointerdown', 800, 600, { button: 2, buttons: 2 })
+		ctxMenu(800, 600)
+		assert.deepEqual(h.log, [])
+		assert.deepEqual(h.scene.getSelection(), [A], 'the selection stays until the release')
+		h.pointer('pointerup', 801, 602, { button: 2, buttons: 0 })
+		assert.deepEqual(h.log, [
+			['onSelection', []],
+			['onIntent', { type: 'contextMenu', id: null, at: [801, 602] }],
+		])
+	})
+
+	test('down → up → contextmenu (Windows): the intent at the pointerup, the contextmenu after it is prevented without a second intent', () => {
+		setup()
+		h.pointer('pointerdown', 400, 100, { button: 2, buttons: 2 })
+		assert.deepEqual(h.log, [])
+		h.pointer('pointerup', 400, 100, { button: 2, buttons: 0 })
+		assert.deepEqual(h.log, [
+			['onSelection', [B]],
+			['onIntent', { type: 'contextMenu', id: B, at: [400, 100] }],
+		])
+		const e = ctxMenu(400, 100)
+		assert.equal(e.defaultPrevented, true)
+		assert.equal(menus().length, 1)
+	})
+
+	for (const order of ['down', 'up']) {
+		test(`3 px of movement still open the menu, 4 px pan and open none (contextmenu after pointer${order})`, () => {
+			setup()
+			const press = (dx) => {
+				h.pointer('pointerdown', 800, 600, { button: 2, buttons: 2 })
+				const early = order === 'down' ? ctxMenu(800, 600) : null
+				h.pointer('pointermove', 800 + dx, 600, { button: -1, buttons: 2 })
+				h.pointer('pointerup', 800 + dx, 600, { button: 2, buttons: 0 })
+				const late = order === 'up' ? ctxMenu(800 + dx, 600) : null
+				h.frame()
+				return (early ?? late).defaultPrevented
+			}
+			assert.equal(press(3), true)
+			assert.deepEqual(menus(), [{ type: 'contextMenu', id: null, at: [803, 600] }], '3 px: a click')
+			assert.deepEqual(h.scene.getCamera(), { x: 0, y: 0, scale: 1 })
+			assert.equal(press(4), true)
+			assert.equal(menus().length, 1, '4 px: no menu')
+			assert.deepEqual(h.scene.getCamera(), { x: -4, y: 0, scale: 1 }, '4 px: a pan')
+			assert.deepEqual(acts('gesture').map((a) => a.active), [true, false])
+		})
+	}
+})
+
+describe('right button and the existing intents', () => {
 	test('after a right click the left button works as before: click selects, drag moves, Delete deletes; no contextMenu among them', () => {
 		setup()
 		rightClick(100, 100)
@@ -661,13 +724,13 @@ describe('stage 4, phase 1: rules the mutation probes found untested (contract o
 		h.frame()
 		const tr = h.scene.handles().find((x) => x.name === 'tr')
 		const bl = h.scene.handles().find((x) => x.name === 'bl')
-		assert.deepEqual([tr.x, tr.y, bl.x, bl.y], [500, 0, 0, 500], 'corners of the union box, no item under them')
+		assert.deepEqual([tr.x, tr.y, bl.x, bl.y], [504, -4, -4, 504], 'corners of the union frame (4 px gap, job 140), no item under them')
 		rightClick(tr.x, tr.y)
-		assert.deepEqual(h.log, [['onIntent', { type: 'contextMenu', id: D, at: [500, 0] }]])
+		assert.deepEqual(h.log, [['onIntent', { type: 'contextMenu', id: D, at: [504, -4] }]])
 		h.scene.setSelection([D, A])
 		h.log.length = 0
 		rightClick(bl.x, bl.y)
-		assert.deepEqual(h.log, [['onIntent', { type: 'contextMenu', id: A, at: [0, 500] }]], 'no onSelection: kept')
+		assert.deepEqual(h.log, [['onIntent', { type: 'contextMenu', id: A, at: [-4, 504] }]], 'no onSelection: kept')
 		assert.deepEqual(h.scene.getSelection(), [D, A])
 	})
 
@@ -701,4 +764,63 @@ describe('stage 4, phase 1: rules the mutation probes found untested (contract o
 		rightClick(100, 100)
 		assert.deepEqual(h.log, [['onIntent', { type: 'contextMenu', id: A, at: [100, 100] }]])
 	})
+})
+
+describe('job 168 AK2: a right click of the pen opens the menu at the pointerup', () => {
+	const PEN = Object.freeze({ pointerType: 'pen', pointerId: 9 })
+	/** the side button as button 2, and as bit 2 in buttons with button 0 */
+	const DOWNS = [['button 2', { button: 2, buttons: 2 }], ['button 0 with buttons 3', { button: 0, buttons: 3 }]]
+
+	for (const [name, b] of DOWNS) {
+		test(`${name}: nothing before the pointerup, then one menu at the release point (an item outside the selection first, empty canvas clears it); also after 2 s held and after a touch contextmenu`, () => {
+			setup()
+			h.scene.setSelection([B])
+			h.log.length = 0
+			// on A (outside the selection), held 2 s on the harness clock, released 6/8 px further (10 px)
+			h.pointer('pointerdown', 100, 100, { ...PEN, ...b })
+			const e = ctxMenu(100, 100, PEN)
+			h.frame(2000)
+			h.pointer('pointermove', 106, 108, { ...PEN, button: -1, buttons: b.buttons })
+			assert.deepEqual(h.log, [], 'no intent and no selection before the pointerup')
+			h.pointer('pointerup', 106, 108, { ...PEN, button: b.button, buttons: 0 })
+			assert.equal(e.defaultPrevented, true)
+			assert.deepEqual(h.log, [
+				['onSelection', [A]],
+				['onIntent', { type: 'contextMenu', id: A, at: [106, 108] }],
+			])
+			h.log.length = 0
+			// empty canvas with a finger's contextmenu between pointerdown and pointerup: the pen's menu still opens
+			h.pointer('pointerdown', 800, 600, { ...PEN, ...b })
+			const t = ctxMenu(800, 600, { pointerType: 'touch', pointerId: 9 })
+			assert.deepEqual(h.log, [])
+			h.pointer('pointerup', 800, 600, { ...PEN, button: b.button, buttons: 0 })
+			assert.equal(t.defaultPrevented, true)
+			assert.deepEqual(h.log, [
+				['onSelection', []],
+				['onIntent', { type: 'contextMenu', id: null, at: [800, 600] }],
+			])
+		})
+	}
+
+	for (const order of ['down', 'up']) {
+		test(`10 px still open the menu, 11 px pan and open none (contextmenu after pointer${order})`, () => {
+			setup()
+			const press = (dx) => {
+				h.pointer('pointerdown', 800, 600, { ...PEN, button: 2, buttons: 2 })
+				const early = order === 'down' ? ctxMenu(800, 600, PEN) : null
+				h.pointer('pointermove', 800 + dx, 600, { ...PEN, button: -1, buttons: 2 })
+				h.pointer('pointerup', 800 + dx, 600, { ...PEN, button: 2, buttons: 0 })
+				const late = order === 'up' ? ctxMenu(800 + dx, 600, PEN) : null
+				h.frame()
+				return (early ?? late).defaultPrevented
+			}
+			assert.equal(press(10), true)
+			assert.deepEqual(menus(), [{ type: 'contextMenu', id: null, at: [810, 600] }], '10 px: a click')
+			assert.deepEqual(h.scene.getCamera(), { x: 0, y: 0, scale: 1 })
+			assert.equal(press(11), true)
+			assert.equal(menus().length, 1, '11 px: no menu')
+			assert.deepEqual(h.scene.getCamera(), { x: -11, y: 0, scale: 1 }, '11 px: a pan')
+			assert.deepEqual(acts('gesture').map((a) => a.active), [true, false])
+		})
+	}
 })

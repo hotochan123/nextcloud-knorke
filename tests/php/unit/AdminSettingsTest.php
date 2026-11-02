@@ -9,6 +9,7 @@ namespace OCA\Knorke\Tests\Unit;
 
 use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\Controller\PageController;
+use OCA\Knorke\Service\AiService;
 use OCA\Knorke\Service\PrivacyNotice;
 use OCA\Knorke\Settings\Admin;
 use OCA\Knorke\Settings\AdminSection;
@@ -74,7 +75,10 @@ final class AdminSettingsTest extends TestCase {
         $privacy = new PrivacyNotice($appConfig, Fake::of(IFactory::class, ['getLanguages' => fn (): array => [
             'commonLanguages' => [['code' => 'de', 'name' => 'Deutsch']], 'otherLanguages' => [['code' => 'fr', 'name' => 'Français']],
         ]]));
-        $form = new Admin($state, Fake::of(IConfig::class), PageControllerTest::limits(), $privacy);
+        // factory job 267: the AI settings ride along as privacyAdmin.ai
+        $ai = $this->createMock(AiService::class);
+        $ai->method('adminState')->willReturn(['enabled' => true, 'dailyLimit' => 30]);
+        $form = new Admin($state, Fake::of(IConfig::class), PageControllerTest::limits(), $privacy, $ai);
         $this->assertInstanceOf(ISettings::class, $form);
         $this->assertSame(['knorke', 10], [$form->getSection(), $form->getPriority()]);
         $r = $form->getForm();
@@ -84,7 +88,8 @@ final class AdminSettingsTest extends TestCase {
         $this->assertCount(12, $got);
         $this->assertSame(['"admin"', 'null', 'null', 'null'], [$got['page'], $got['privacy'], $got['legal'], $got['boardId']]);
         $admin = json_decode($got['privacyAdmin'], true);
-        $this->assertSame(['settings', 'languages', 'themingUrl', 'textMax', 'languagesMax'], array_keys($admin));
+        $this->assertSame(['settings', 'languages', 'themingUrl', 'textMax', 'languagesMax', 'ai'], array_keys($admin));
+        $this->assertSame(['enabled' => true, 'dailyLimit' => 30], $admin['ai']);
         $this->assertSame(['default' => ['text' => 'T0', 'url' => ''], 'languages' => ['de' => ['text' => 'Tde', 'url' => '']]], $admin['settings']);
         $this->assertSame([['code' => 'de', 'name' => 'Deutsch'], ['code' => 'fr', 'name' => 'Français']], $admin['languages']);
         $this->assertSame(['https://example.org/datenschutz', 2000, 20], [$admin['themingUrl'], $admin['textMax'], $admin['languagesMax']]);

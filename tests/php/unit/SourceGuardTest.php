@@ -105,4 +105,19 @@ final class SourceGuardTest extends TestCase {
             $this->assertDoesNotMatchRegularExpression('/#\[(UseSession|BruteForceProtection|AnonRateLimit|UserRateLimit)\b/', $src, $path);
         }
     }
+
+    /**
+     * Factory job 189: the comments live in Nextcloud's comment store, but
+     * Nextcloud's DAV comment endpoint stays closed. A CommentsEntityEvent
+     * listener (or an entity collection registered on it) would open
+     * /remote.php/dav/comments/knorke_board/<id> past Knorke's rights checks.
+     */
+    public function testNoDavCommentEntityIsRegistered(): void {
+        foreach (self::sources() as $path => $src) {
+            $src = self::code($src);
+            $this->assertStringNotContainsString('CommentsEntityEvent', $src, $path);
+            $this->assertStringNotContainsString('addEntityCollection', $src, $path);
+            $this->assertStringNotContainsString('registerEventHandler', $src, $path);
+        }
+    }
 }

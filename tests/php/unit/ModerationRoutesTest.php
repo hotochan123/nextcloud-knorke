@@ -41,6 +41,8 @@ use Psr\Log\LoggerInterface;
  * run through the real ModerationService and MetaService.
  */
 final class ModerationRoutesTest extends TestCase {
+    private const F1 = '01HZZZZZZZZZZZZZZZZZZZZZZ1';
+    private const F2 = '01HZZZZZZZZZZZZZZZZZZZZZZ2';
     private AccessHarness $h;
     private int $b;
     /** @var list<string> */
@@ -118,21 +120,22 @@ final class ModerationRoutesTest extends TestCase {
         $out[] = self::out($this->controller(['action' => 'start', 'ms' => 60000])->timer($this->b));
         $out[] = self::out($this->controller(['client' => 'cTabA'])->summon($this->b));
         $out[] = self::out($this->controller()->endSummon($this->b));
+        $out[] = self::out($this->controller(['order' => [self::F1]])->slides($this->b));
         return array_map(static fn (array $o): array => [$o[0], $o[1]['error'] ?? null], $out);
     }
 
     public function testWhoMayModerate(): void {
         // Owner.
-        $this->assertSame(array_fill(0, 5, [200, null]), $this->everyRoute());
-        $this->assertSame(array_fill(0, 5, 'knorke-moderate 120 600 alice'), $this->limiterCalls);
+        $this->assertSame(array_fill(0, 6, [200, null]), $this->everyRoute());
+        $this->assertSame(array_fill(0, 6, 'knorke-moderate 120 600 alice'), $this->limiterCalls);
         // Share role moderate → facilitator (user and group).
         $this->h->shareRows->add($this->b, 'user', 'bob', 'moderate');
         $this->h->uid = 'bob';
-        $this->assertSame(array_fill(0, 5, [200, null]), $this->everyRoute());
+        $this->assertSame(array_fill(0, 6, [200, null]), $this->everyRoute());
         $this->h->shareRows->add($this->b, 'group', 'staff', 'edit');
         $this->h->shareRows->add($this->b, 'group', 'knorke-e2e', 'moderate');
         $this->h->uid = 'carol';
-        $this->assertSame(array_fill(0, 5, [200, null]), $this->everyRoute(), 'moderate through a group');
+        $this->assertSame(array_fill(0, 6, [200, null]), $this->everyRoute(), 'moderate through a group');
         // edit through a share, a group or a link: 403 forbidden, nothing charged.
         $this->h->shareRows->add($this->b, 'user', 'dora', 'edit');
         $this->h->groups['staff'][] = 'erin';
@@ -142,13 +145,52 @@ final class ModerationRoutesTest extends TestCase {
         foreach (['dora', 'erin', 'fred', 'vic'] as $uid) {
             $this->h->uid = $uid;
             $this->limiterCalls = [];
-            $this->assertSame(array_fill(0, 5, [403, 'forbidden']), $this->everyRoute(), $uid);
+            $this->assertSame(array_fill(0, 6, [403, 'forbidden']), $this->everyRoute(), $uid);
             $this->assertSame([], $this->limiterCalls, "$uid: refused before the budget");
         }
         // A stranger: 404 everywhere (no ownership oracle).
         $this->h->uid = 'zoe';
-        $this->assertSame(array_fill(0, 5, [404, 'not_found']), $this->everyRoute());
+        $this->assertSame(array_fill(0, 6, [404, 'not_found']), $this->everyRoute());
         $this->assertSame(404, self::out($this->controller(['per' => 3], ['id' => '999'])->startVote(999))[0]);
+    }
+
+    /** Factory job 272: presenting frames (summon.frame, PUT summon, PUT slides). */
+    public function testPresentingFrames(): void {
+        [$status, $d] = self::out($this->controller(['frame' => self::F1])->moveSummon($this->b));
+        $this->assertSame([409, 'no_summon'], [$status, $d['error']], 'no summon to move');
+        [, $d] = self::out($this->controller(['client' => 'cTabA', 'frame' => self::F1])->summon($this->b));
+        $s = $d['board']['meta']['summon'];
+        $this->assertSame(self::F1, $s['frame']);
+        [$status, $d] = self::out($this->controller(['frame' => self::F2])->moveSummon($this->b));
+        $s2 = $d['board']['meta']['summon'];
+        $this->assertSame([200, self::F2, $s['seq'], $s['at'], $s['pid'], $s['client']], [$status, $s2['frame'], $s2['seq'], $s2['at'], $s2['pid'], $s2['client']], 'same pair, new frame');
+        [, $d] = self::out($this->controller(['order' => [self::F2, self::F1]])->slides($this->b));
+        $this->assertSame([self::F2, self::F1], $d['board']['meta']['slides']);
+        [, $d] = self::out($this->controller(['order' => []])->slides($this->b));
+        $this->assertArrayNotHasKey('slides', $d['board']['meta']);
+        // Edit right only: 403, no write.
+        $this->h->shareRows->add($this->b, 'user', 'dora', 'edit');
+        $this->h->uid = 'dora';
+        $this->assertSame(403, self::out($this->controller(['order' => [self::F1]])->slides($this->b))[0]);
+        $this->assertSame(403, self::out($this->controller(['frame' => self::F1])->moveSummon($this->b))[0]);
+    }
+
+    /** Factory job 275: PUT private (rights, body gate, answer). */
+    public function testPrivateWritingRoute(): void {
+        [$status, $d] = self::out($this->controller(['action' => 'start'])->privateWriting($this->b));
+        $this->assertSame([200, 'board', 1], [$status, $d['board']['meta']['private']['scope'], $d['board']['meta']['private']['seq']]);
+        [$status, $d] = self::out($this->controller(['action' => 'start'])->privateWriting($this->b));
+        $this->assertSame([409, 'private_on'], [$status, $d['error']]);
+        $this->assertSame(400, self::out($this->controller(['action' => 'start', 'x' => 1])->privateWriting($this->b))[0], 'unknown key');
+        $this->assertSame(400, self::out($this->controller(['action' => 'hide'])->privateWriting($this->b))[0]);
+        $this->h->shareRows->add($this->b, 'user', 'dora', 'edit');
+        $this->h->uid = 'dora';
+        $this->assertSame([403, 'forbidden'], (static fn (array $o): array => [$o[0], $o[1]['error']])(self::out($this->controller(['action' => 'reveal'])->privateWriting($this->b))));
+        $this->h->uid = 'zoe';
+        $this->assertSame(404, self::out($this->controller(['action' => 'reveal'])->privateWriting($this->b))[0]);
+        $this->h->uid = 'alice';
+        [$status, $d] = self::out($this->controller(['action' => 'reveal'])->privateWriting($this->b));
+        $this->assertSame([200, ['privateSeq' => 1]], [$status, $d['board']['meta']]);
     }
 
     public function testBudgetAndAnswerShape(): void {
@@ -191,6 +233,12 @@ final class ModerationRoutesTest extends TestCase {
             ['summon', []],
             ['summon', ['client' => 'cTabA', 'pid' => 'x']],
             ['summon', ['client' => '']],
+            ['summon', ['client' => 'cTabA', 'frame' => 'nope']],
+            ['moveSummon', ['frame' => 7]],
+            ['moveSummon', []],
+            ['slides', ['order' => 'x']],
+            ['slides', ['order' => [self::F1, self::F1]]],
+            ['slides', ['order' => [self::F1], 'frame' => self::F2]],
         ] as [$method, $body]) {
             [$status, $d] = self::out($this->controller($body)->$method($this->b));
             $this->assertSame([400, 'bad_request'], [$status, $d['error']], $method . ' ' . json_encode($body));
@@ -199,5 +247,19 @@ final class ModerationRoutesTest extends TestCase {
         [$status] = self::out($this->controller(['id' => '999'], ['id' => (string)$this->b])->endSummon($this->b));
         $this->assertSame(400, $status);
         $this->assertSame([], $this->voteCalls);
+    }
+
+    public function testLiveInTheVoteBodiesJob149(): void {
+        // Route 22 hands live to VoteService with the raw body; route 23 takes it and ignores it.
+        $this->assertSame(200, self::out($this->controller(['per' => 3, 'live' => true])->startVote($this->b))[0]);
+        $this->assertSame(200, self::out($this->controller(['action' => 'end', 'live' => false])->updateVote($this->b))[0]);
+        $this->assertSame([['start', 'u:alice', $this->b, ['per' => 3, 'live' => true]], ['update', 'u:alice', $this->b, 'end', null]], $this->voteCalls);
+    }
+
+    public function testAccountsOnlyInTheVoteBodiesJob175(): void {
+        // Route 22 hands accountsOnly to VoteService with the raw body; route 23 takes it and ignores it.
+        $this->assertSame(200, self::out($this->controller(['per' => 3, 'accountsOnly' => true])->startVote($this->b))[0]);
+        $this->assertSame(200, self::out($this->controller(['action' => 'extend', 'minutes' => 5, 'accountsOnly' => false])->updateVote($this->b))[0]);
+        $this->assertSame([['start', 'u:alice', $this->b, ['per' => 3, 'accountsOnly' => true]], ['update', 'u:alice', $this->b, 'extend', 5]], $this->voteCalls);
     }
 }

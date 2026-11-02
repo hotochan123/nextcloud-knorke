@@ -16,7 +16,7 @@ It runs inside your own Nextcloud, without an extra server process.
 
 ![A board with frames and sticky notes](docs/screenshots/board.png)
 
-**Status:** version 0.3.0 is in the Nextcloud App Store. What changed in each
+**Status:** version 0.4.0 is in the Nextcloud App Store. What changed in each
 version is in the [changelog](CHANGELOG.md).
 
 - [Features](#features)
@@ -33,26 +33,35 @@ Every feature in detail: [`docs/FEATURES.md`](docs/FEATURES.md). Settings,
 
 ## Features
 
-- **Canvas:** sticky notes, frames, shapes, text and connectors on an infinite
-  board; zoom from 5 to 400 %, smooth on boards with thousands of notes.
-- **Live together:** everyone's cursors, selections and drags in real time;
-  nobody silently overwrites what someone else is typing.
+- **Canvas:** sticky notes, frames, shapes, text, tables, note pads and
+  connectors on an infinite board; zoom from 5 to 400 %, smooth on boards with
+  thousands of notes.
+- **Live together:** everyone's cursors, selections and drags in real time, a
+  laser pointer, comment threads with @mentions, emoji reactions and tags on
+  notes.
 - **Guests with just a name:** an edit link and a voting link per board, each
   with an optional password and expiry date, a QR code and a full-screen view
   for the projector.
 - **Sharing** with people, groups and teams, with the roles "Can facilitate",
   "Can edit", "Can vote" and "Can view".
-- **Facilitation:** dot voting (anonymous, optionally with a time limit), a
-  timer everyone sees, "Bring everyone here" and following a participant's
-  view.
-- **Tidy boards quickly:** snapping with guides, a background grid, align,
-  distribute and tidy up, grouping and locking.
-- **Part of Nextcloud:** boards in Nextcloud's search, and notifications when
-  someone shares a board with you.
+- **Facilitation:** dot voting (anonymous, optionally with a time limit and
+  live counts for moderators), a timer everyone sees, "Bring everyone here" and
+  following a participant's view.
+- **Tidy boards quickly:** snapping with guides, align, distribute and tidy up,
+  sort notes by colour, grouping, locking, and a "+" handle that adds the next
+  note of a row with one click.
+- **Templates:** retrospective, SWOT analysis, Kanban and brainstorming built
+  in; boards your team suggests become templates once an administrator
+  adopts them.
+- **Export:** a board or a selection as an image (PNG) or a table (CSV, opens
+  in Excel), and the whole board as a file to insert into another board.
+- **Part of Nextcloud:** boards in Nextcloud's search, link previews and the
+  Smart Picker in Talk, Text, Mail and Deck, and notifications when someone
+  shares a board with you.
 - **Touch and pen:** tablets with a pen edit like a computer, a finger pans,
   zooms and selects; phones and tablets without a pen view and vote.
-- **Keyboard:** shortcuts for every tool, Tab through the items, undo and redo
-  of up to 50 steps.
+- **Keyboard:** shortcuts for every tool, an overview with "?", Tab through the
+  items, undo and redo of up to 50 steps.
 - **Languages:** English and German.
 
 ## Requirements
@@ -83,7 +92,8 @@ The most important ones; the full list is in
 [`docs/ADMIN.md`](docs/ADMIN.md#known-limits).
 
 - **Guest votes are not one per person.** A guest who clears the browser votes
-  again with a new identity; accounts vote once per board.
+  again with a new identity. Where this matters, start the vote with "Accounts
+  only".
 - **Votes from two tabs.** One person voting in two tabs or on two devices can
   lose a vote when more than one vote per item is allowed (with one vote per
   item, the default, it does not happen).
@@ -96,8 +106,8 @@ The most important ones; the full list is in
 - **iPad and Safari have not been measured on real hardware.** Large boards may
   draw more slowly there.
 - **Up to 5000 items per board**, connectors included.
-- **Not yet:** templates, export, comments, a minimap, search within a board,
-  mind maps, images, rich text, an activity log and undo across reloads.
+- **Not yet:** a minimap, search within a board, mind maps, images, rich text,
+  an activity log and undo across reloads.
 
 ## Development
 
@@ -129,14 +139,15 @@ agents:
 
 **Tool and models.** The agents run in Anthropic's Claude Code. Every commit of
 the development history, except the automatic merges of `main` into a job's
-branch, carries a `Co-Authored-By` trailer naming the model: up to version 0.3.0
-(12 to 23 October 2026), Claude Opus 5.5 (478 commits) and once Claude Sonnet 5.5.
+branch, carries a `Co-Authored-By` trailer naming the model: from 12 October to
+26 October 2026, Claude Opus 5.5 (over 700 commits) and once Claude Sonnet 5.5.
 
 **How a change is made.** The maintainer decides what goes in, in question
 rounds with an agent. Each feature then runs as one job of an automated
-pipeline: agents write a short specification with acceptance criteria, build
-the change with tests and run the checks; agents that did not build it review
-it for correctness, security and usability, and only then is it merged. The maintainer tries the
+pipeline: an agent writes a short specification with acceptance criteria,
+builds the change with tests, runs the checks and reviews its own change; a
+second agent that has not seen the work reviews it again for correctness,
+security and usability, and only then is it merged. The maintainer tries the
 result in the browser.
 
 **Verification.** Knorke is checked by PHP unit and integration tests,

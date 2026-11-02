@@ -27,7 +27,7 @@ import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { dispatch } from './fakeDom.mjs'
 import { SMALL_TARGET_GOAL_PX, SMALL_TARGET_PX } from '../../../src/scene/SceneManager.js'
-import { MAX_SCALE } from '../../../src/model/tokens.js'
+import { MAX_SCALE, ZOOM_TO_MAX_SCALE } from '../../../src/model/tokens.js'
 import { frameItem, note, setStubLod, setupScene, textItem } from './sceneHarness.mjs'
 
 const A = '01JA0000000000000000000001'
@@ -260,9 +260,10 @@ describe('small-target zoom (§6.3 R16, CLI-06)', () => {
 		assert.equal(h.intents().length, 2)
 	})
 
-	test('no endless zoom: when the zoom cannot enlarge the item any more (MAX_SCALE), a small item gets the vote', () => {
+	test('no endless zoom: when the zoom cannot enlarge the item any more (ZOOM_TO_MAX_SCALE, job 238: 400 %), a small item gets the vote', () => {
 		setup({ votable: () => true, items: [textItem(T, { x: 0, y: 0, w: 60, h: 9.6, style: { fontSize: 8, color: '#1a1a1a', align: 'left' } })] })
-		h.scene.setCamera({ x: 0, y: 0, scale: MAX_SCALE })
+		assert.equal(ZOOM_TO_MAX_SCALE, 4)
+		h.scene.setCamera({ x: 0, y: 0, scale: ZOOM_TO_MAX_SCALE })
 		h.frame()
 		h.log.length = 0
 		const r = h.scene.itemScreenRect(T)
@@ -270,6 +271,31 @@ describe('small-target zoom (§6.3 R16, CLI-06)', () => {
 		tap(100, 20, { type: 'touch', id: 9 })
 		assert.deepEqual(h.intents(), [{ type: 'vote', id: T, rect: r }])
 		assert.equal(users(), 0)
+	})
+
+	test('job 238 AK4: from 100 % the zoom stops at 400 % although 88 px would ask for more; above 400 % a tap on a tiny item votes', () => {
+		setup({ votable: () => true, items: [textItem(T, { x: 0, y: 0, w: 60, h: 9.6, style: { fontSize: 8, color: '#1a1a1a', align: 'left' } })] })
+		h.frame()
+		h.log.length = 0
+		assert.ok(SMALL_TARGET_GOAL_PX / 9.6 > ZOOM_TO_MAX_SCALE, '88 px ask for more than 400 %')
+		tap(10, 5, { type: 'touch', id: 1 })
+		h.frame()
+		assert.deepEqual(h.intents(), [])
+		assert.equal(users(), 1)
+		assert.equal(h.scene.getCamera().scale, ZOOM_TO_MAX_SCALE)
+		h.scene.setCamera({ x: 0, y: 0, scale: 5 })
+		h.frame()
+		h.log.length = 0
+		const tiny = textItem(T, { x: 0, y: 0, w: 6, h: 4.8, style: { fontSize: 4, color: '#1a1a1a', align: 'left' } })
+		h.model.load([tiny])
+		h.frame()
+		const r = h.scene.itemScreenRect(T)
+		assert.ok(r.h < SMALL_TARGET_PX, `${r.h} px at 500 %`)
+		tap(r.x + r.w / 2, r.y + r.h / 2, { type: 'touch', id: 2 })
+		assert.deepEqual(h.intents().map((i) => i.type), ['vote'])
+		assert.equal(users(), 0)
+		assert.equal(h.scene.getCamera().scale, 5, 'no zoom out either')
+		assert.ok(MAX_SCALE > 5)
 	})
 
 	test('a wide item: the zoom keeps it in view (margin), so a second tap votes even when it stays below 44 px', () => {

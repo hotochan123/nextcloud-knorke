@@ -10,6 +10,7 @@ namespace OCA\Knorke\Tests\Unit;
 use OCA\Knorke\Exception\HttpError;
 use OCA\Knorke\Service\Access;
 use OCA\Knorke\Service\AccessResult;
+use OCA\Knorke\Service\ItemRegistry;
 use OCA\Knorke\Service\PresenceStore;
 use OCA\Knorke\Service\Principal;
 use OCA\Knorke\Service\Role;
@@ -102,7 +103,7 @@ final class SyncServiceApplyTest extends TestCase {
     }
 
     public function testOnlyBadBatchOpensNoTransaction(): void {
-        [$rev, $res] = $this->h->apply([['o' => 'nope'], H::put(self::id(1), H::sticky(), 'pen'), H::patch(self::id(2), ['x' => 1])]);
+        [$rev, $res] = $this->h->apply([['o' => 'nope'], H::put(self::id(1), H::sticky(), 'brush'), H::patch(self::id(2), ['x' => 1])]);
         $this->assertSame([null, ['bad', 'bad', 'bad']], [$rev, $res], 'C18');
         $this->assertSame([], $this->h->log, 'no atomic(), no SQL');
         [$rev, $res] = $this->h->apply([H::put(self::id(1), H::sticky())], H::user('viewer', Role::View));
@@ -324,7 +325,7 @@ final class SyncServiceApplyTest extends TestCase {
 
     public function testUnknownStoredTypeGenericRules(): void {
         $id = self::id(1);
-        $this->h->store->seed(1, $id, ['t' => 'mindmap', 'w' => 10, 'h' => 10, 'data' => ['k' => 1]], 5);
+        $this->h->store->seed(1, $id, ['t' => 'chart', 'w' => 10, 'h' => 10, 'data' => ['k' => 1]], 5);
         $this->assertSame(['ok'], $this->h->apply([H::patch($id, ['data.k' => 2, 'w' => 500000])])[1]);
         $this->assertSame(['bad'], $this->h->apply([H::patch($id, ['w' => 2000000])])[1]);
         $f = self::id(2);
@@ -742,7 +743,7 @@ final class SyncServiceApplyTest extends TestCase {
         $m = self::id(5);
         $this->h->apply([H::put($s, H::sticky()), H::put($f, H::frame(), 'frame'), H::put($t, H::sticky(['x' => 100, 'y' => 40]))]);
         $this->assertSame(['ok'], $this->h->apply([H::put($k0, H::connector(['item' => $s], ['item' => $t]), 'connector')])[1]);
-        $this->h->store->seed(1, $m, ['t' => 'mindmap', 'w' => 10, 'h' => 10, 'z' => 'i5'], 9);
+        $this->h->store->seed(1, $m, ['t' => 'chart', 'w' => 10, 'h' => 10, 'z' => 'i5'], 9);
         $this->h->apply([H::remove($t)]);
         $n = 20;
         foreach (['a frame' => $f, 'a connector' => $k0, 'a never existing id' => self::id(99), 'an unknown stored type' => $m] as $name => $target) {
@@ -1209,7 +1210,7 @@ final class SyncServiceApplyTest extends TestCase {
         [$f, $s, $k, $u, $l] = [self::id(1), self::id(2), self::id(3), self::id(4), self::id(5)];
         $this->h->apply([H::put($f, H::frame(), 'frame'), H::put($s, H::sticky()), H::put($l, H::sticky([], 'i7'))]);
         $this->h->apply([H::put($k, H::connector(['item' => $s], ['x' => 1, 'y' => 1]), 'connector')]);
-        $this->h->store->seed(1, $u, ['t' => 'mindmap', 'w' => 10, 'h' => 10], 5);
+        $this->h->store->seed(1, $u, ['t' => 'chart', 'w' => 10, 'h' => 10], 5);
         $this->assertSame(['bad', 'bad'], $this->h->apply([H::put(self::id(6), H::frame(['group' => self::G]), 'frame'),
             H::put(self::id(7), H::connector(['item' => $s], ['x' => 1, 'y' => 1], ['group' => self::G]), 'connector')])[1], 'put of a frame or a connector with a group');
         foreach ([$f, $k, $u] as $id) {
@@ -1217,7 +1218,7 @@ final class SyncServiceApplyTest extends TestCase {
         }
         $this->assertTrue(\OCA\Knorke\Service\ItemRegistry::isGroupable('sticky'));
         $this->assertFalse(\OCA\Knorke\Service\ItemRegistry::isGroupable('frame'));
-        $this->assertFalse(\OCA\Knorke\Service\ItemRegistry::isGroupable('mindmap'));
+        $this->assertFalse(\OCA\Knorke\Service\ItemRegistry::isGroupable('chart'));
         // group null on a frame: ok, nothing to write (rolled back, no rev jump)
         $rev = $this->h->store->boards[1]['rev'];
         $frame = $this->h->store->items[1][$f];
@@ -1399,9 +1400,9 @@ final class SyncServiceApplyTest extends TestCase {
             $this->assertSame(['itemlocked'], $this->h->apply([self::unlock($x)], $p)[1], $p->id);
             $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x));
         }
-        // The locker unlocks: all three columns NULL.
+        // The locker unlocks: locked 0, the locker stays as the remembered lock (job 152).
         $this->assertSame(['ok'], $this->h->apply([self::unlock($x)], $bob)[1]);
-        $this->assertSame([null, null, null], $this->h->store->lockOf(1, $x));
+        $this->assertSame([0, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x));
         // Unlocking an unlocked item: ok, nothing written.
         $seen = $this->h->store->boards[1]['rev'];
         $this->assertSame([$seen, ['ok']], $this->h->apply([self::unlock($x)], $c['edit']));
@@ -1409,7 +1410,7 @@ final class SyncServiceApplyTest extends TestCase {
         foreach (['owner', 'mod'] as $k) {
             $this->h->apply([self::lock($x)], $bob);
             $this->assertSame(['ok'], $this->h->apply([self::unlock($x)], $c[$k])[1], $k);
-            $this->assertSame([null, null, null], $this->h->store->lockOf(1, $x), $k);
+            $this->assertSame([0, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x), $k);
         }
         // A guest's own lock.
         $this->assertSame(['ok', 'ok'], $this->h->apply([self::lock($x), self::unlock($x)], $c['guest'])[1]);
@@ -1612,5 +1613,639 @@ final class SyncServiceApplyTest extends TestCase {
         $this->h->apply([H::remove($y)]);
         $this->assertSame(['ok', 'ok'], $this->h->apply([H::put($y, H::sticky(), 'sticky', true), self::lock($y)], $c['edit'])[1]);
         $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $y), '[revive, lock] in one batch locks');
+    }
+
+    // ---- Job 152: undo of an unlock restores the original locker -----------
+
+    /** The restore op as the client sends it: the remembered lock with the expected pid; the name is never read. */
+    private static function restore(string $id, ?string $by): array {
+        return ['o' => 'patch', 'id' => $id, 'p' => ['lock' => ['by' => $by, 'name' => 'Mallory']], 'restore' => true];
+    }
+
+    /** pid of a principal id on board 1 (what lock.by carries). */
+    private static function pidOf(string $principalId): string {
+        return Access::derivePid(H::SECRET, 1, $principalId);
+    }
+
+    public function testUndoOfAForeignUnlockRestoresTheLocker(): void {
+        // AK2: bob (edit) locks X, alice (owner, moderates) unlocks it: the row
+        // remembers bob (locked 0), the item is free; alice's restore with
+        // bob's pid locks it for bob again (change row "lock":true, actor
+        // alice), and bob can lift it himself.
+        $c = self::cast();
+        [$alice, $bob, $gina] = [$c['owner'], $c['edit'], $c['guest']];
+        [$x, $y, $z] = [self::id(1), self::id(2), self::id(3)];
+        $this->h->apply([H::put($x, H::sticky()), H::put($y, H::sticky([], 'i2')), H::put($z, H::sticky([], 'i3'))]);
+        $this->h->apply([self::lock($x)], $bob);
+        $this->assertSame(['ok'], $this->h->apply([self::unlock($x)], $alice)[1]);
+        $this->assertSame([0, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x), 'the lifted lock is remembered');
+        $this->assertNull($this->snapItems($alice)[$x]['lock'], 'the item is free');
+        [$rev, $res] = $this->h->apply([self::restore($x, self::pidOf('u:bob'))], $alice);
+        $this->assertSame(['ok'], $res);
+        $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x), 'bob\'s lock again, not alice\'s, never the name sent');
+        $rows = $this->rowsAt($x, $rev);
+        $this->assertSame([['{"lock":true}', 'u:alice']], array_map(static fn (array $r): array => [$r['patch'], $r['actor']], $rows));
+        $this->assertSame(['by' => self::pidOf('u:bob'), 'name' => 'Bob'], $this->snapItems($bob)[$x]['lock']);
+        $this->assertSame(['ok'], $this->h->apply([self::unlock($x)], $bob)[1], 'bob lifts it himself');
+        $this->assertNull($this->snapItems($bob)[$x]['lock']);
+
+        // Gina's guest lock comes back as {by, name, guest: true}.
+        $this->h->apply([self::lock($y)], $gina);
+        $this->h->apply([self::unlock($y)], $alice);
+        $this->assertSame([0, 'g:gAbcdefghijk', 'Gina'], $this->h->store->lockOf(1, $y));
+        $this->assertSame(['ok'], $this->h->apply([self::restore($y, self::pidOf('g:gAbcdefghijk'))], $alice)[1]);
+        $this->assertSame([1, 'g:gAbcdefghijk', 'Gina'], $this->h->store->lockOf(1, $y));
+        $this->assertSame(['by' => self::pidOf('g:gAbcdefghijk'), 'name' => 'Gina', 'guest' => true], $this->snapItems($alice)[$y]['lock']);
+        $this->assertSame(['ok'], $this->h->apply([self::unlock($y)], $gina)[1], 'Gina lifts it herself');
+
+        // An unknown locker (account deleted) comes back unknown, with by null.
+        $this->h->apply([self::lock($z)], H::user('dora', Role::Edit, 'share'));
+        $this->h->sync->clearLocker('u:dora', $this->h->now);
+        $this->assertSame([1, null, null], $this->h->store->lockOf(1, $z));
+        $this->h->apply([self::unlock($z)], $alice);
+        $this->assertSame([0, null, null], $this->h->store->lockOf(1, $z), 'remembered as unknown');
+        $this->assertSame(['ok'], $this->h->apply([self::restore($z, null)], $alice)[1]);
+        $this->assertSame([1, null, null], $this->h->store->lockOf(1, $z));
+        $this->assertSame(['by' => null, 'name' => null], $this->snapItems($alice)[$z]['lock']);
+        $this->assertBytesInvariant();
+    }
+
+    public function testARestoreWithoutItsRememberedLockChangesNothing(): void {
+        // AK3: every case answers ok; the lock columns stay as they were and
+        // the batch is rolled back (acks.rev = the observed rev, no rev jump).
+        $c = self::cast();
+        [$alice, $bob] = [$c['owner'], $c['edit']];
+        $carol = H::user('carol', Role::Edit, 'share');
+        $bobPid = self::pidOf('u:bob');
+        $n = 0;
+        /** a fresh item locked by bob and unlocked by alice: remembered bob */
+        $fresh = function () use (&$n, $alice, $bob): string {
+            $id = self::id(++$n);
+            $this->h->apply([H::put($id, H::sticky([], 'i' . $n))]);
+            $this->h->apply([self::lock($id)], $bob);
+            $this->h->apply([self::unlock($id)], $alice);
+            $this->assertSame([0, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $id));
+            return $id;
+        };
+        $noEffect = function (string $id, array $ops, Principal $p, string $label): void {
+            $before = $this->h->store->lockOf(1, $id);
+            $seen = $this->h->store->boards[1]['rev'];
+            $this->h->log = [];
+            $this->assertSame([$seen, array_fill(0, count($ops), 'ok')], $this->h->apply($ops, $p), $label . ': ok, rolled back');
+            $this->assertSame($before, $this->h->store->lockOf(1, $id), $label . ': the lock columns stay');
+            $this->assertSame([], array_values(array_filter($this->h->log, static fn (string $l): bool => str_starts_with($l, 'updateItem'))), $label . ': nothing written');
+        };
+        // (a) carol locked X meanwhile: her lock stays
+        $x = $fresh();
+        $this->h->apply([self::lock($x)], $carol);
+        $noEffect($x, [self::restore($x, $bobPid)], $alice, '(a)');
+        $this->assertSame([1, 'u:carol', 'Carol'], $this->h->store->lockOf(1, $x));
+        // (b) carol locked and unlocked X meanwhile: carol is remembered, X stays free
+        $x = $fresh();
+        $this->h->apply([self::lock($x)], $carol);
+        $this->h->apply([self::unlock($x)], $carol);
+        $noEffect($x, [self::restore($x, $bobPid)], $alice, '(b)');
+        $this->assertSame([0, 'u:carol', 'Carol'], $this->h->store->lockOf(1, $x));
+        // (c) the pid of someone else than the remembered bob; a known locker never matches null
+        $x = $fresh();
+        $noEffect($x, [self::restore($x, self::pidOf('u:carol'))], $alice, '(c)');
+        $noEffect($x, [self::restore($x, null)], $alice, '(c) by null');
+        $noEffect($x, [self::restore($x, 'u:bob')], $alice, '(c) the principal id is no pid');
+        // (d) carol (edit, no moderation) with bob's pid: free; bob himself with his pid: locked
+        $noEffect($x, [self::restore($x, $bobPid)], $carol, '(d)');
+        $noEffect($x, [self::restore($x, $bobPid)], $c['guest'], '(d) a guest');
+        $this->assertSame(['ok'], $this->h->apply([self::restore($x, $bobPid)], $bob)[1]);
+        $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x), '(d) bob restores his own lock');
+        // (e) removed and revived meanwhile: nothing remembered
+        $x = $fresh();
+        $this->h->apply([H::remove($x)], $alice);
+        $this->assertSame([null, null, null], $this->h->store->lockOf(1, $x), '(e) remove clears all three columns');
+        $this->h->apply([H::put($x, H::sticky(), 'sticky', true)], $alice);
+        $noEffect($x, [self::restore($x, $bobPid)], $alice, '(e)');
+        $this->assertSame([null, null, null], $this->h->store->lockOf(1, $x));
+        // (f) a never locked item with by null
+        $f = self::id(50);
+        $this->h->apply([H::put($f, H::sticky([], 'i9'))]);
+        $noEffect($f, [self::restore($f, null)], $alice, '(f)');
+        $this->assertSame([null, null, null], $this->h->store->lockOf(1, $f));
+        // (g) [unlock X, restore X] in one batch: bob's lock stays, the lock columns are not written
+        $x = $fresh();
+        $this->h->apply([self::restore($x, $bobPid)], $alice);
+        $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x));
+        $noEffect($x, [self::unlock($x), self::restore($x, $bobPid)], $alice, '(g)');
+        $this->assertSame([1, 'u:bob', 'Bob'], $this->h->store->lockOf(1, $x));
+        // a gone item: gone, like a lock
+        $this->assertSame(['gone'], $this->h->apply([self::restore(self::id(99), $bobPid)], $alice)[1]);
+    }
+
+    // ── Job 173: tables ──────────────────────────────────────────────────
+
+    private const C1 = 'c00000001';
+    private const C2 = 'c00000002';
+    private const C3 = 'c00000003';
+    private const R1 = 'r00000001';
+    private const R2 = 'r00000002';
+    private const R3 = 'r00000003';
+
+    /** A new 3 × 3 table as put payload (AK2). */
+    private static function table(array $p = []): array {
+        return $p + ['x' => 0, 'y' => 0, 'w' => 480, 'h' => 108, 'r' => 0, 'z' => 'i5', 'parent' => null,
+            'data' => [
+                'cols' => [self::C1 => ['o' => 'i0', 'w' => 160], self::C2 => ['o' => 'i1', 'w' => 160], self::C3 => ['o' => 'i2', 'w' => 160]],
+                'rows' => [self::R1 => ['o' => 'i0'], self::R2 => ['o' => 'i1'], self::R3 => ['o' => 'i2']],
+            ], 'style' => []];
+    }
+
+    private static function cellPath(string $c, string $r): string {
+        return 'data.cells.' . $c . '.' . $r;
+    }
+
+    public function testTablePutPatchAndRevive(): void {
+        $t = self::id(1);
+        $this->assertSame(['ok'], $this->h->apply([H::put($t, self::table(), 'table')])[1], 'put 3 × 3');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, [self::cellPath(self::C1, self::R1) => 'Name'])])[1], 'one cell');
+        $this->assertSame('Name', $this->h->store->live(1, $t)['data']['cells'][self::C1][self::R1]);
+        // a whole data.cells (undo, the replica's compacted remove + revive)
+        $cells = [self::C1 => [self::R1 => 'Name', self::R2 => 'Alice'], self::C3 => [self::R3 => 'z']];
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['data.cells' => $cells])])[1], 'a valid whole data.cells');
+        $this->assertSame($cells, $this->h->store->live(1, $t)['data']['cells']);
+        // a row with its cells, a column with its cells
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['data.rows.' . self::R2 => null, self::cellPath(self::C1, self::R2) => null, 'h' => 72])])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['data.cols.' . self::C3 => null, 'data.cells.' . self::C3 => null, 'w' => 320])])[1]);
+        $live = $this->h->store->live(1, $t);
+        $this->assertSame([[self::C1, self::C2], [self::R1, self::R3], [self::C1 => [self::R1 => 'Name']]], [array_keys($live['data']['cols']), array_keys($live['data']['rows']), $live['data']['cells']]);
+        // a width in any depth
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['data.cols.' . self::C1 . '.w' => 240])])[1]);
+        // revive after a remove
+        $this->assertSame(['ok'], $this->h->apply([H::remove($t)])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::put($t, self::table(), 'table', true)])[1], 'revive');
+        $this->assertNotNull($this->h->store->live(1, $t));
+    }
+
+    public function testTableBadForms(): void {
+        $t = self::id(1);
+        $this->h->apply([H::put($t, self::table(), 'table')]);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, [self::cellPath('c00000009', self::R1) => 'orphan'])])[1], 'a cell without its column');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, [self::cellPath(self::C1, 'r00000009') => 'orphan'])])[1], 'a cell without its row');
+        // the 51st row
+        $rows = [];
+        for ($i = 4; $i <= 50; $i++) {
+            $rows['data.rows.' . sprintf('r%08d', $i)] = ['o' => 'j' . sprintf('%02d', $i)];
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, $rows)])[1], 'rows 4–50 (47 paths)');
+        $this->assertCount(50, $this->h->store->live(1, $t)['data']['rows']);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, ['data.rows.r00000051' => ['o' => 'j51']])])[1], 'the 51st row');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, ['data.cols.' . self::C1 . '.w' => 39])])[1], 'width 39');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, ['data.title' => 'x'])])[1], 'an extra key');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, [self::cellPath(self::C1, self::R1) => ''])])[1], 'empty text: null instead');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($t, ['data.cols' => null])])[1], 'no columns');
+        $orphan = self::table();
+        $orphan['data']['cells'] = ['c00000009' => [self::R1 => 'x']];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(2), $orphan, 'table')])[1], 'a put with an orphan cell');
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(3), self::table(['r' => 5]), 'table')])[1], 'not rotatable');
+    }
+
+    public function testTableLeasePerCell(): void {
+        $t = self::id(1);
+        $this->h->apply([H::put($t, self::table(), 'table')]);
+        $this->h->apply([H::patch($t, [self::cellPath(self::C1, self::R1) => 'bob\'s', self::cellPath(self::C2, self::R2) => 'x'])]);
+        $alice = H::user('alice');
+        $bob = H::user('bob', Role::Edit);
+        $cell = self::C1 . '.' . self::R1;
+        $map = [$bob->pid . ':c2' => ['k' => $bob->pid, 'e' => $t, 'ec' => $cell, 't' => $this->h->now, 'es' => $this->h->now]];
+        $this->h->presence->readMap = $map;
+        $this->assertSame(['locked'], $this->h->apply([H::patch($t, [self::cellPath(self::C1, self::R1) => 'alice'])], $alice, $map)[1], 'bob holds (T, c1.r1)');
+        $this->assertSame(['locked'], $this->h->apply([H::patch($t, ['data.cells' => [self::C1 => [self::R1 => 'all'], self::C2 => [self::R2 => 'x']]])], $alice, $map)[1], 'also as a whole data.cells');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, [self::cellPath(self::C2, self::R1) => 'alice'])], $alice, $map)[1], 'another cell is free');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['w' => 500])], $alice, $map)[1], 'the size is free');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, [self::cellPath(self::C1, self::R1) => 'bob2'])], $bob, $map)[1], 'the holder itself');
+        // deleting the row with bob's cell passes his lease
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, ['data.rows.' . self::R1 => null, self::cellPath(self::C1, self::R1) => null, self::cellPath(self::C2, self::R1) => null])], $alice, $map)[1], 'delete the row');
+        $this->assertArrayNotHasKey(self::R1, $this->h->store->live(1, $t)['data']['rows']);
+        // a lease on (T) without a cell guards no cell (notes keep their rule)
+        $noCell = [$bob->pid . ':c2' => ['k' => $bob->pid, 'e' => $t, 't' => $this->h->now, 'es' => $this->h->now]];
+        $this->h->presence->readMap = $noCell;
+        $this->assertSame(['ok'], $this->h->apply([H::patch($t, [self::cellPath(self::C2, self::R2) => 'y'])], $alice, $noCell)[1]);
+        // the presence map is read for a batch with a cell patch even without me
+        $this->assertTrue(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($t, [self::cellPath(self::C1, self::R2) => 'x'])]));
+        $this->assertTrue(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($t, ['data.cells' => []])]));
+        $this->assertFalse(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($t, ['data.cols.' . self::C1 . '.w' => 100])]));
+    }
+
+    public function testTableIsNoVotingType(): void {
+        $this->assertFalse(ItemRegistry::isVotable('table'));
+        $this->assertTrue(ItemRegistry::isBindable('table'), 'a connector binds to a table like to a shape');
+    }
+
+    // ── Job 195: mind maps ───────────────────────────────────────────────
+
+    private const MR = 'n00000000';
+    private const MA = 'n10000000';
+    private const MB = 'n20000000';
+    private const MC = 'n30000000';
+
+    /** A mind map put payload: the root, a main branch A with text (AK2). */
+    private static function mindmap(array $p = []): array {
+        return $p + ['x' => 0, 'y' => 0, 'w' => 300, 'h' => 60, 'r' => 0, 'z' => 'i5', 'parent' => null,
+            'data' => [
+                'nodes' => ['b0' => [self::MR => ['o' => 'i0']], 'b1' => [self::MA => ['o' => 'i0', 'p' => self::MR, 'c' => '#1864ab']]],
+                'texts' => ['b0' => [self::MR => 'Thema'], 'b1' => [self::MA => 'A']],
+            ], 'style' => []];
+    }
+
+    private static function node(string $key, string $field = ''): string {
+        return 'data.nodes.b' . $key[1] . '.' . $key . ($field === '' ? '' : '.' . $field);
+    }
+
+    private static function text(string $key): string {
+        return 'data.texts.b' . $key[1] . '.' . $key;
+    }
+
+    public function testMindmapPutPatchAndRevive(): void {
+        $m = self::id(1);
+        $this->assertSame(['ok'], $this->h->apply([H::put($m, self::mindmap(), 'mindmap')])[1], 'put');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1', 'p' => self::MR, 'd' => 'l'], self::text(self::MB) => 'B', 'w' => 400])])[1], 'a node with its text');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MC) => ['o' => 'i0', 'p' => self::MA]])])[1], 'a child of A');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MC, 'p') => self::MB, self::node(self::MC, 'o') => 'i0'])])[1], 'C moves below B');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MB, 'f') => true, self::node(self::MB, 's') => 'pill', 'style.layout' => 'right'])])[1], 'fold, shape, layout');
+        // the branch B with C deleted, children first, texts with them
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MC) => null, self::text(self::MB) => null, self::node(self::MB) => null])])[1], 'delete a branch');
+        $live = $this->h->store->live(1, $m);
+        $this->assertSame([['b0', 'b1'], ['b0', 'b1']], [array_keys($live['data']['nodes']), array_keys($live['data']['texts'])]);
+        $this->assertSame(['ok'], $this->h->apply([H::remove($m)])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::put($m, self::mindmap(), 'mindmap', true)])[1], 'revive');
+        $this->assertNotNull($this->h->store->live(1, $m));
+    }
+
+    public function testMindmapBadForms(): void {
+        $m = self::id(1);
+        $this->h->apply([H::put($m, self::mindmap(), 'mindmap')]);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1']])])[1], 'a second root');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1', 'p' => self::MC]])])[1], 'an orphan');
+        // a cycle from two moves that each were fine on their own base
+        $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1', 'p' => self::MR]])]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MA, 'p') => self::MB])])[1], 'A below B');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MB, 'p') => self::MA])])[1], 'B below A: a cycle');
+        // a child below a node just deleted (the other one's delete came first)
+        $this->h->apply([H::patch($m, [self::node(self::MA, 'p') => self::MR])]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MB) => null])])[1]);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MC) => ['o' => 'i0', 'p' => self::MB]])])[1], 'a child below a deleted node');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::text(self::MB) => 'gone'])])[1], 'a text without its node');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::text(self::MA) => ''])])[1], 'empty text: null instead');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MA, 'c') => '#ABCDEF'])])[1], 'a colour in capitals');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MA) => null])])[1], 'A with its text left behind');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, ['data.title' => 'x'])])[1], 'an extra key');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, ['data.nodes' => null])])[1], 'no nodes');
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(2), self::mindmap(['r' => 5]), 'mindmap')])[1], 'not rotatable');
+        $two = self::mindmap();
+        $two['data']['nodes']['b2'] = [self::MB => ['o' => 'i0']];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(3), $two, 'mindmap')])[1], 'a put with two roots');
+    }
+
+    /** Job 196 (AK2): the free place m of a node. */
+    public function testMindmapFreePlace(): void {
+        $m = self::id(1);
+        $this->h->apply([H::put($m, self::mindmap(), 'mindmap')]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MA, 'm') => [120.5, -40], 'w' => 420])])[1], 'A placed freely');
+        $this->assertSame([120.5, -40], $this->h->store->live(1, $m)['data']['nodes']['b1'][self::MA]['m']);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1', 'p' => self::MA, 'm' => [0, 20000]]])])[1], 'a new node with a place at the limit');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MA, 'm') => null])])[1], 'Rearrange');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MR, 'm') => [1, 2]])])[1], 'm at the root');
+        foreach (['one number' => [1], 'three numbers' => [1, 2, 3], 'a string' => ['1', 2], 'a map' => ['u' => 1, 'v' => 2],
+            'beyond the limit' => [20000.5, 0], 'a boolean' => [true, 0]] as $name => $bad) {
+            $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MA, 'm') => $bad])])[1], 'm with ' . $name);
+        }
+        // the other one deleted the node first: m alone is no node
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MB) => null])])[1]);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($m, [self::node(self::MB, 'm') => [10, 10]])])[1], 'm on a deleted node');
+        $this->assertNull($this->h->store->live(1, $m)['data']['nodes']['b1'][self::MA]['m'] ?? null);
+    }
+
+    /** Job 198 (AK3): the layouts org and tree of style.layout. */
+    public function testMindmapOrgAndTreeLayouts(): void {
+        $m = self::id(1);
+        $this->h->apply([H::put($m, self::mindmap(), 'mindmap')]);
+        foreach (['org', 'tree', 'right'] as $layout) {
+            $this->assertSame(['ok'], $this->h->apply([H::patch($m, ['style.layout' => $layout, 'w' => 300])])[1], $layout);
+            $this->assertSame($layout, $this->h->store->live(1, $m)['style']['layout']);
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, ['style.layout' => null])])[1], 'back to both (none)');
+        foreach (['xyz', 'Org', 'left', 1] as $bad) {
+            $this->assertSame(['bad'], $this->h->apply([H::patch($m, ['style.layout' => $bad])])[1], 'style.layout ' . var_export($bad, true));
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), self::mindmap(['style' => ['layout' => 'org']]), 'mindmap')])[1], 'a put in org');
+    }
+
+    public function testMindmapLeasePerNode(): void {
+        $m = self::id(1);
+        $this->h->apply([H::put($m, self::mindmap(), 'mindmap')]);
+        $this->h->apply([H::patch($m, [self::node(self::MB) => ['o' => 'i1', 'p' => self::MR], self::text(self::MB) => 'B'])]);
+        $alice = H::user('alice');
+        $bob = H::user('bob', Role::Edit);
+        $map = [$bob->pid . ':c2' => ['k' => $bob->pid, 'e' => $m, 'ec' => self::MA, 't' => $this->h->now, 'es' => $this->h->now]];
+        $this->h->presence->readMap = $map;
+        $this->assertSame(['locked'], $this->h->apply([H::patch($m, [self::text(self::MA) => 'alice'])], $alice, $map)[1], 'bob holds (M, A)');
+        $this->assertSame(['locked'], $this->h->apply([H::patch($m, ['data.texts' => ['b0' => [self::MR => 'Thema'], 'b1' => [self::MA => 'all']]])], $alice, $map)[1], 'also as a whole data.texts');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::text(self::MB) => 'alice'])], $alice, $map)[1], 'another node is free');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::node(self::MA, 'c') => '#c92a2a', 'w' => 500])], $alice, $map)[1], 'its colour and the size are free');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::text(self::MA) => 'bob2'])], $bob, $map)[1], 'the holder itself');
+        // deleting the branch with bob's node passes his lease
+        $this->assertSame(['ok'], $this->h->apply([H::patch($m, [self::text(self::MA) => null, self::node(self::MA) => null])], $alice, $map)[1], 'delete the branch');
+        $this->assertArrayNotHasKey('b1', $this->h->store->live(1, $m)['data']['nodes']);
+        // the presence map is read for a batch with a text patch even without me
+        $this->assertTrue(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($m, [self::text(self::MB) => 'x'])]));
+        $this->assertTrue(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($m, ['data.texts' => []])]));
+        $this->assertFalse(\OCA\Knorke\Service\OpValidator::touchesTextPath([H::patch($m, [self::node(self::MB, 'c') => '#c92a2a'])]));
+        $this->assertFalse(ItemRegistry::isVotable('mindmap'));
+        $this->assertFalse(ItemRegistry::isBindable('mindmap'));
+    }
+
+    /** A note pad put payload (job 188), 200 × 200 with a title. */
+    private static function pad(array $p = [], string $z = 'i5'): array {
+        return $p + ['x' => 100, 'y' => 40, 'w' => 200, 'h' => 200, 'r' => 0, 'z' => $z, 'parent' => null, 'data' => ['title' => 'Ideen'], 'style' => ['fill' => '#f5d76e']];
+    }
+
+    public function testNotePadPutAndItsLimits(): void {
+        // Job 188 (AK2): a put of a pad is ok, also as the child of a frame; a connector
+        // end at the pad is bad (not bindable), a reaction patch on it too (notes only).
+        $f = self::id(1);
+        $p = self::id(2);
+        $q = self::id(3);
+        $n = self::id(4);
+        $this->assertSame(['ok', 'ok', 'ok'], $this->h->apply([H::put($f, H::frame(), 'frame'), H::put($p, self::pad(), 'pad'), H::put($q, self::pad(['parent' => $f, 'x' => 260]), 'pad')])[1]);
+        $this->assertSame($f, $this->h->store->live(1, $q)['parent'], 'the child of the frame');
+        $this->assertSame(['title' => 'Ideen'], $this->h->store->live(1, $p)['data']);
+        $this->assertSame(['ok'], $this->h->apply([H::put($n, H::sticky(['x' => 600]))])[1]);
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(5), H::connector(['item' => $n], ['item' => $p]), 'connector')])[1], 'a connector end at the pad');
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(6), H::connector(['item' => $p, 'ax' => 0.5, 'ay' => 1], ['x' => 0, 'y' => 0]), 'connector')])[1], 'also with an anchor');
+        $bob = H::user('bob', Role::Edit, 'share');
+        $this->assertSame(['bad'], $this->h->apply([self::react($p, $bob, '1f44d')], $bob)[1], 'no reactions on a pad');
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(7), self::pad(['r' => 15]), 'pad')])[1], 'not rotatable');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($p, ['data.title' => 'Neu', 'w' => 300, 'h' => 300])])[1]);
+        $this->assertFalse(ItemRegistry::isVotable('pad'), 'no votes');
+    }
+
+    // ── Job 199: swimlanes ───────────────────────────────────────────────
+
+    private const LA = 'l00000001';
+    private const LB = 'l00000002';
+    private const LC = 'l00000003';
+
+    /** A frame with three lanes as put payload (AK2). */
+    private static function laneFrame(array $p = []): array {
+        return H::frame($p + ['w' => 1200, 'h' => 600, 'data' => ['title' => 'Prozess', 'lanes' => [
+            self::LA => ['o' => 'i0', 'h' => 200, 't' => 'Sales'],
+            self::LB => ['o' => 'i1', 'h' => 200, 't' => 'Support'],
+            self::LC => ['o' => 'i2', 'h' => 200],
+        ]]]);
+    }
+
+    public function testLanesPutPatchAndRevive(): void {
+        $f = self::id(1);
+        $this->assertSame(['ok'], $this->h->apply([H::put($f, self::laneFrame(), 'frame')])[1], 'put of a frame with 3 lanes');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.t' => 'Vertrieb'])])[1], 'a name');
+        $this->assertSame('Vertrieb', $this->h->store->live(1, $f)['data']['lanes'][self::LA]['t']);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LC . '.t' => null])])[1], 'no name');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.h' => 300, 'h' => 700])])[1], 'a height with the frame');
+        $this->assertSame(300, $this->h->store->live(1, $f)['data']['lanes'][self::LA]['h']);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.l00000004' => ['o' => 'i3', 'h' => 200], 'h' => 900])])[1], 'a whole new lane');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LB => null, 'data.lanes.' . self::LA . '.h' => 500])])[1], 'a lane deleted');
+        $this->assertSame([self::LA, self::LC, 'l00000004'], array_keys($this->h->store->live(1, $f)['data']['lanes']));
+        // heights that do not add up to h are no reason to refuse (a race of two edits)
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['h' => 650])])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::remove($f)])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::put($f, self::laneFrame(), 'frame', true)])[1], 'revive');
+        // a plain frame is unchanged, and other data of a frame is not checked by the lanes
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), H::frame(), 'frame')])[1], 'a frame without data.lanes');
+        $this->assertSame(['ok'], $this->h->apply([H::patch(self::id(2), ['data.title' => 'Neu'])])[1]);
+    }
+
+    public function testLanesBadForms(): void {
+        $f = self::id(1);
+        $this->h->apply([H::put($f, self::laneFrame(), 'frame')]);
+        $more = [];
+        for ($i = 4; $i <= 30; $i++) {
+            $more['data.lanes.' . sprintf('l%08d', $i)] = ['o' => 'j' . sprintf('%02d', $i), 'h' => 100];
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, $more)])[1], 'lanes 4–30');
+        $this->assertCount(30, $this->h->store->live(1, $f)['data']['lanes']);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.l00000031' => ['o' => 'j31', 'h' => 100]])])[1], 'the 31st lane');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.h' => 59])])[1], 'h 59');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.t' => ''])])[1], 'an empty name: null instead');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.t' => str_repeat('x', 201)])])[1], '201 code points');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.x' => 1])])[1], 'an extra key in a lane');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.L1234567a' => ['o' => 'i9', 'h' => 100]])])[1], 'a key in upper case');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.t' => ['deep' => ['tree' => 'x']]])])[1], 'a tree as name');
+        $extra = self::laneFrame();
+        $extra['data']['lanes'][self::LA]['x'] = 1;
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(2), $extra, 'frame')])[1], 'a put with an extra key in a lane');
+        $none = self::laneFrame();
+        $none['data']['lanes'] = ['__proto__' => ['o' => 'i0', 'h' => 600]];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(3), $none, 'frame')])[1], 'the key __proto__');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes' => 'x'])])[1], 'data.lanes no map');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LA . '.t' => 'Ok'])])[1], 'the frame is still fine');
+    }
+
+    // ── Job 208: swimlane columns ────────────────────────────────────────
+
+    private const CA = 'c00000001';
+    private const CB = 'c00000002';
+
+    public function testColumnsPutPatchAndRemove(): void {
+        $f = self::id(1);
+        $this->h->apply([H::put($f, self::laneFrame(), 'frame')]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols' => [self::CA => ['o' => 'i0', 'w' => 1040]], 'h' => 660])])[1], 'the first column, a whole map');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CB => ['o' => 'i1', 'w' => 300], 'w' => 1500])])[1], 'a whole new column');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.w' => 640, 'w' => 1100])])[1], 'a width with the frame');
+        $this->assertSame(640, $this->h->store->live(1, $f)['data']['cols'][self::CA]['w']);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.t' => 'Phase 1'])])[1], 'a name');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.t' => null])])[1], 'no name');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CB => null, 'data.cols.' . self::CA . '.w' => 940])])[1], 'a column deleted');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols' => null, 'data.lanes.' . self::LA . '.h' => 260])])[1], 'the last column deleted');
+        $this->assertArrayNotHasKey('cols', $this->h->store->live(1, $f)['data']);
+        $put = self::laneFrame();
+        $put['data']['cols'] = [self::CA => ['o' => 'i0', 'w' => 520, 't' => 'Discover'], self::CB => ['o' => 'i1', 'w' => 520]];
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), $put, 'frame')])[1], 'a put with columns');
+        $this->assertSame(['ok'], $this->h->apply([H::remove(self::id(2))])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), $put, 'frame', true)])[1], 'revive');
+    }
+
+    public function testColumnsBadForms(): void {
+        $f = self::id(1);
+        $put = self::laneFrame();
+        $put['data']['cols'] = [self::CA => ['o' => 'i0', 'w' => 1040]];
+        $this->h->apply([H::put($f, $put, 'frame')]);
+        $more = [];
+        for ($i = 2; $i <= 30; $i++) {
+            $more['data.cols.' . sprintf('c%08d', $i)] = ['o' => 'j' . sprintf('%02d', $i), 'w' => 100];
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, $more)])[1], 'columns 2–30');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.cols.c00000031' => ['o' => 'j31', 'w' => 100]])])[1], 'the 31st column');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.w' => 99])])[1], 'w 99');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.t' => ''])])[1], 'an empty name');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.t' => ['deep' => ['tree' => 'x']]])])[1], 'a tree as name');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.cols' => 'x'])])[1], 'data.cols no map');
+        $extra = $put;
+        $extra['data']['cols'][self::CA]['x'] = 1;
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(2), $extra, 'frame')])[1], 'a put with an extra key in a column');
+        $proto = $put;
+        $proto['data']['cols'] = ['__proto__' => ['o' => 'i0', 'w' => 1040]];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(3), $proto, 'frame')])[1], 'the key __proto__');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.cols.' . self::CA . '.t' => 'Ok'])])[1], 'the frame is still fine');
+    }
+
+    // ── Job 225: lane and column groups ──────────────────────────────────
+
+    private const GA = 'g00000001';
+    private const GB = 'g00000002';
+    private const HA = 'h00000001';
+
+    public function testGroupsPutPatchAndDissolve(): void {
+        // Job 225 (AK2): create (a whole map, the lane's g, the wider frame), rename, dissolve (null), put with groups
+        $f = self::id(1);
+        $this->h->apply([H::put($f, self::laneFrame(), 'frame')]);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups' => [self::GA => ''], 'data.lanes.' . self::LA . '.g' => self::GA, 'w' => 1248])])[1], 'the first group');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GA => 'Team'])])[1], 'a name');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LB . '.g' => self::GA])])[1], 'a second lane joins');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GB => '', 'data.lanes.' . self::LC . '.g' => self::GB])])[1], 'a second group');
+        $live = $this->h->store->live(1, $f)['data'];
+        $this->assertSame([self::GA => 'Team', self::GB => ''], $live['lgroups']);
+        $this->assertSame(self::GA, $live['lanes'][self::LB]['g']);
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GB => null, 'data.lanes.' . self::LC . '.g' => null])])[1], 'dissolve one');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups' => null, 'data.lanes.' . self::LA . '.g' => null, 'data.lanes.' . self::LB . '.g' => null, 'w' => 1200])])[1], 'dissolve the last');
+        $this->assertArrayNotHasKey('lgroups', $this->h->store->live(1, $f)['data']);
+        $put = self::laneFrame();
+        $put['data']['lgroups'] = [self::GA => 'Org'];
+        $put['data']['lanes'][self::LA]['g'] = self::GA;
+        $put['data']['cols'] = ['c00000001' => ['o' => 'i0', 'w' => 520, 'g' => self::HA], 'c00000002' => ['o' => 'i1', 'w' => 520]];
+        $put['data']['cgroups'] = [self::HA => 'Phase'];
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), $put, 'frame')])[1], 'a put with lane and column groups');
+        $this->assertSame(['ok'], $this->h->apply([H::remove(self::id(2))])[1]);
+        $this->assertSame(['ok'], $this->h->apply([H::put(self::id(2), $put, 'frame', true)])[1], 'revive');
+    }
+
+    public function testGroupsBadForms(): void {
+        // Job 225 (AK2, risks): a g naming a missing group, a group dissolved while a lane names it, the 31st group, extra keys
+        $f = self::id(1);
+        $put = self::laneFrame();
+        $put['data']['lgroups'] = [self::GA => 'Team'];
+        $put['data']['lanes'][self::LA]['g'] = self::GA;
+        $this->h->apply([H::put($f, $put, 'frame')]);
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LB . '.g' => self::GB])])[1], 'g naming a missing group');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lgroups' => null])])[1], 'dissolved while a lane names it');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lanes.' . self::LB . '.g' => 7])])[1], 'g as a number');
+        $more = [];
+        for ($i = 2; $i <= 30; $i++) {
+            $more['data.lgroups.' . sprintf('g%08d', $i)] = 'G' . $i;
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, $more)])[1], 'groups 2–30');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lgroups.g00000031' => 'G31'])])[1], 'the 31st group');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GA => ['deep' => ['tree' => 'x']]])])[1], 'a tree as name');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GA => str_repeat('x', 201)])])[1], '201 code points');
+        $this->assertSame(['bad'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::HA => 'x'])])[1], 'a column group key among the lane groups');
+        $proto = $put;
+        $proto['data']['lgroups'] = ['__proto__' => 'x'];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(2), $proto, 'frame')])[1], 'the key __proto__');
+        $cols = $put;
+        $cols['data']['cols'] = ['c00000001' => ['o' => 'i0', 'w' => 1040, 'g' => self::GA]];
+        $this->assertSame(['bad'], $this->h->apply([H::put(self::id(3), $cols, 'frame')])[1], 'a column naming a lane group');
+        $this->assertSame(['ok'], $this->h->apply([H::patch($f, ['data.lgroups.' . self::GA => 'Ok'])])[1], 'the frame is still fine');
+    }
+
+    /** A reaction op of $p on $id (job 172): data.react.p<pid> = {e} or null. */
+    private static function react(string $id, \OCA\Knorke\Service\Principal $p, ?string $e, ?string $key = null): array {
+        return H::patch($id, ['data.react.' . ($key ?? 'p' . $p->pid) => $e === null ? null : ['e' => $e, 'n' => 'sent name']]);
+    }
+
+    public function testReactionsUnderTheLock(): void {
+        // Job 172 (AK2): vote reacts with its own key; the stored n is the
+        // display name, never the one sent; view and a foreign key are denied.
+        $a = self::id(1);
+        $this->h->apply([H::put($a, H::sticky(['data' => ['text' => 'A']]))]);
+        $vic = H::user('vic', Role::Vote, 'share');
+        [$rev, $res] = $this->h->apply([self::react($a, $vic, '1f44d')], $vic);
+        $this->assertSame([12, ['ok']], [$rev, $res]);
+        $this->assertSame(['p' . $vic->pid => ['e' => '1f44d', 'n' => 'Vic']], $this->h->store->live(1, $a)['data']['react']);
+        $this->assertSame('A', $this->h->store->live(1, $a)['data']['text']);
+        $ch = $this->h->store->changesOf($a);
+        $this->assertSame('patch', $ch[1]['op']);
+        $this->assertSame(['data.react.p' . $vic->pid => ['e' => '1f44d', 'n' => 'Vic']], json_decode($ch[1]['patch'], true));
+        $this->assertSame('u:vic', $ch[1]['actor']);
+        $val = H::user('val', Role::View, 'share');
+        $this->assertSame([null, ['denied']], $this->h->apply([self::react($a, $val, '1f44d')], $val));
+        $this->assertSame([null, ['denied']], $this->h->apply([self::react($a, $vic, '1f44d', 'p' . $val->pid)], $vic), 'a foreign key');
+        // editors: every other patch on data.react is bad
+        $bob = H::user('bob', Role::Edit, 'share');
+        foreach ([
+            ['data.react' => ['p' . $bob->pid => ['e' => '1f44d', 'n' => 'B']]],
+            ['data.react.p' . $bob->pid . '.e' => '1f44d'],
+            ['data.react.p' . $bob->pid => ['e' => '1f44d'], 'data.text' => 'x'],
+        ] as $p) {
+            $this->assertSame([null, ['bad']], $this->h->apply([H::patch($a, $p)], $bob), json_encode($p));
+        }
+        $this->assertSame('A', $this->h->store->live(1, $a)['data']['text'], 'nothing of those was written');
+        // a shape is bad, a tombstone gone
+        $s = self::id(2);
+        $g = self::id(3);
+        $this->h->apply([H::put($s, H::shape(), 'shape'), H::put($g, H::sticky())]);
+        $this->h->apply([H::remove($g)]);
+        $this->assertSame(['bad'], $this->h->apply([self::react($s, $bob, '1f44d')], $bob)[1]);
+        $this->assertSame(['gone'], $this->h->apply([self::react($g, $bob, '1f44d')], $bob)[1]);
+        $this->assertSame(['gone'], $this->h->apply([self::react(self::id(9), $bob, '1f44d')], $bob)[1], 'never existed');
+        // a locked note and someone else's text lease do not stop it
+        $this->assertSame(['ok'], $this->h->apply([self::lock($a)], $bob)[1]);
+        $map = [$bob->pid . ':c1' => ['k' => $bob->pid, 'e' => $a, 't' => $this->h->now, 'es' => $this->h->now]];
+        $this->h->presence->readMap = $map;
+        $this->assertSame(['ok'], $this->h->apply([self::react($a, $vic, '2764-fe0f')], $vic, $map)[1], 'replace, locked and leased');
+        $this->assertSame(['ok'], $this->h->apply([self::react($a, $bob, '1f44d')], $bob, $map)[1]);
+        $this->assertSame(['e' => '2764-fe0f', 'n' => 'Vic'], $this->h->store->live(1, $a)['data']['react']['p' . $vic->pid]);
+        // the same emoji again: ok without a new rev
+        $before = $this->h->store->boards[1]['rev'];
+        [$rev, $res] = $this->h->apply([self::react($a, $vic, '2764-fe0f')], $vic);
+        $this->assertSame([$before, ['ok']], [$rev, $res]);
+        $this->assertSame($before, $this->h->store->boards[1]['rev']);
+        // null takes it back; after the last one data.react is missing
+        $this->assertSame(['ok'], $this->h->apply([self::react($a, $vic, null)], $vic)[1]);
+        $this->assertSame(['p' . $bob->pid], array_keys($this->h->store->live(1, $a)['data']['react']));
+        $this->assertSame(['ok'], $this->h->apply([H::patch($a, ['data.react.p' . $bob->pid => []])], $bob)[1]);
+        $this->assertArrayNotHasKey('react', $this->h->store->live(1, $a)['data']);
+        $this->assertSame(['ok'], $this->h->apply([self::react($a, $bob, null)], $bob)[1], 'nothing to take back: ok');
+        $this->assertSame($this->h->store->liveBytes(1), $this->h->store->boards[1]['item_bytes'], 'item_bytes follow the stored strings');
+    }
+
+    public function testReactionsOfAPutAndTheLimits(): void {
+        // Job 172 (AK2): a put without revive drops data.react, a put + revive
+        // keeps the valid entries; without 4-byte text e stays as it is.
+        $a = self::id(1);
+        $bob = H::user('bob', Role::Edit, 'share');
+        $react = ['p' . $bob->pid => ['e' => '1f44d', 'n' => 'Bob'], 'pcccccccccccccccc' => ['e' => 'zz', 'n' => 'C'], 'x1' => ['e' => '1f44d', 'n' => 'X']];
+        $this->h->apply([H::put($a, H::sticky(['data' => ['text' => 'A', 'react' => $react]]))]);
+        $this->assertSame(['text' => 'A'], $this->h->store->live(1, $a)['data']);
+        $this->h->apply([H::remove($a)]);
+        $this->assertSame(['ok'], $this->h->apply([H::put($a, H::sticky(['data' => ['text' => 'A', 'react' => $react]]), 'sticky', true)])[1]);
+        $this->assertSame(['text' => 'A', 'react' => ['p' . $bob->pid => ['e' => '1f44d', 'n' => 'Bob']]], $this->h->store->live(1, $a)['data']);
+        // without 4-byte UTF-8 the hex form passes unchanged, the name loses its emoji
+        $this->h->fourByte = false;
+        $flag = '1f3f4-e0067-e0062-e0065-e006e-e0067-e007f';
+        $gina = H::guest('gAAAAAAAAAAA', '🌸Gina');
+        $this->assertSame(['ok'], $this->h->apply([self::react($a, $gina, $flag)], $gina)[1]);
+        $this->assertSame(['e' => $flag, 'n' => "\u{FFFD}Gina"], $this->h->store->live(1, $a)['data']['react']['p' . $gina->pid]);
+        $this->h->fourByte = true;
+        // the 101st reaction would make the note one a put refuses: limit
+        $b = self::id(2);
+        $many = [];
+        for ($i = 0; $i < 100; $i++) {
+            $many[sprintf('p%016x', $i + 1)] = ['e' => '1f44d', 'n' => 'P' . $i];
+        }
+        $this->assertSame(['ok'], $this->h->apply([H::put($b, H::sticky(['data' => ['react' => $many]]), 'sticky', true)])[1]);
+        $this->assertCount(100, $this->h->store->live(1, $b)['data']['react']);
+        $this->assertSame(['limit'], $this->h->apply([self::react($b, $bob, '1f44d')], $bob)[1]);
+        // over the board byte budget: limit
+        $c = self::id(3);
+        $this->h->apply([H::put($c, H::sticky())]);
+        $this->h->app['max_board_bytes'] = $this->h->store->boards[1]['item_bytes'];
+        $this->assertSame(['limit'], $this->h->apply([self::react($c, $bob, '1f44d')], $bob)[1]);
+        unset($this->h->app['max_board_bytes']);
+        $this->assertSame(['ok'], $this->h->apply([self::react($c, $bob, '1f44d')], $bob)[1]);
     }
 }

@@ -161,14 +161,17 @@ class ShareService {
      * gone; teams without team support). appAccess: false (the last key,
      * only then) on the row of an existing account that cannot open Knorke
      * (appAccess()); group and team rows never carry it. Asked on every
-     * call, never kept.
+     * call, never kept. viaLink: true (after appAccess, only then) on an
+     * account row whose account is also a member through a valid link
+     * (linkMembers(), factory job 248).
      *
-     * @return array{shares: list<array{kind: string, id: string, name: string, role: string, available: bool, appAccess?: false}>,
+     * @return array{shares: list<array{kind: string, id: string, name: string, role: string, available: bool, appAccess?: false, viaLink?: true}>,
      *   policy: array{sharing: bool, groups: bool, teams: bool, groupMembersOnly: bool}}
      */
     public function list(string $ownerUid, int $board): array {
         $owner = $this->users->get($ownerUid) ?? throw new HttpError(404, 'not_found');
         $policy = $this->policy->forOwner($owner);
+        $viaLink = $this->linkMembers($ownerUid, $board);
         $out = [];
         foreach ($this->store->forBoard($board) as $r) {
             $live = $this->policy->displayName($owner, $r['kind'], $r['recipient']);
@@ -189,12 +192,37 @@ class ShareService {
                 if ($user !== null && !$this->appAccess($user)) {
                     $row['appAccess'] = false;
                 }
+                if (isset($viaLink[$r['recipient']])) {
+                    $row['viaLink'] = true;
+                }
             }
             $out[] = $row;
         }
         usort($out, static fn (array $a, array $b): int => [self::KIND_ORDER[$a['kind']] ?? 9, mb_strtolower($a['name']), $a['id']]
             <=> [self::KIND_ORDER[$b['kind']] ?? 9, mb_strtolower($b['name']), $b['id']]);
         return ['shares' => $out, 'policy' => $policy];
+    }
+
+    /**
+     * Accounts that are also members of the board through a link that is
+     * neither revoked nor expired (factory job 248, "Also in through a link"
+     * in the share dialog). Empty while links are not allowed for the owner:
+     * then such a membership grants nothing (Access::memberRole). M0 rows
+     * without a link do not count. One query per call.
+     *
+     * @return array<string, true> uid => true
+     */
+    private function linkMembers(string $ownerUid, int $board): array {
+        if (!$this->linkPolicy->allows($ownerUid)) {
+            return [];
+        }
+        $out = [];
+        foreach ($this->boards->validMembers($board, $this->nowMs()) as $m) {
+            if ($m['link']) {
+                $out[$m['uid']] = true;
+            }
+        }
+        return $out;
     }
 
     /**

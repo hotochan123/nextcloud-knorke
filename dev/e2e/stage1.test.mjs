@@ -50,7 +50,10 @@ test('stage1.mjs, round 1b: E23 covers the connector acceptance, E24 the copied 
 		[/press\('Delete'\)/, 'deleting B'],
 		[/nearPt\(it\.data\.end, dock, 2\)/, 'free end at the last docking point ±2'],
 		[/press\('Control\+z'\)[\s\S]*end\?\.item === B/, 'undo binds again'],
-		[/styleButton\(p, 'data\.route', 'elbow'\)/, 'route elbow'],
+		[/it\?\.data\?\.route === 'elbow' && it\?\.style\?\.endCap === 'arrow'/, 'job 153: a new connector is stored elbow with an arrow'],
+		[/styleButton\(p, 'data\.route', 'curved'\)/, 'route curved (job 153: elbow is the default)'],
+		[/\[data-knorke-panel=caps\] \[data-knorke-action=swap-direction\]/, 'job 153: Swap direction in the panel Tips'],
+		[/swapBtn\.click\(\)[\s\S]*press\('Control\+z'\)[\s\S]*\[data-knorke-menu-item=swap-direction\]/, 'job 153: the button, Ctrl+Z, then the menu entry'],
 		[/dblclick/, 'label by double click'],
 		[/editorKind\(p\)\) === 'label'/, 'editor kind label'],
 		[/checkEndHandles\(t, p, KC, /, 'R11: a selected connector shows exactly start and end'],
@@ -135,14 +138,14 @@ test('stage1.mjs (R11): E21, E22 and E25 compare only the transformer handles an
 	assert.match(src, /const transformNames = \(hs\) => handleNames\(hs, TRANSFORM_HANDLES\)/)
 	assert.match(src, /const plusNames = \(hs\) => handleNames\(hs, PLUS_HANDLES\)/)
 	const e21 = part('export const E21 = {', '// ── E22')
-	assert.match(e21, /sameList\(transformNames\(hs\), \['b', 'bl', 'br', 'l', 'r', 'rot', 't', 'tl', 'tr'\]\)/, 'E21 one shape: 8 + rot')
+	assert.match(e21, /sameList\(transformNames\(hs\), \['bl', 'br', 'rot', 'tl', 'tr'\]\)/, 'E21 one shape: 4 corners + rot (job 231)')
 	assert.match(e21, /sameList\(plusNames\(hs\), ALL_PLUS\)/, 'E21 one shape: 4 "+"')
 	assert.match(e21, /sameList\(transformNames\(hs2\), \['bl', 'br', 'tl', 'tr'\]\)/, 'E21 multi-selection: 4 corners')
 	assert.match(e21, /plusNames\(hs2\)\.length === 0/, 'E21 multi-selection: 0 "+"')
 	const e22 = part('export const E22 = {', '// ── E23')
-	assert.match(e22, /sameList\(plusNames\(hsT\), ALL_PLUS\)/, 'E22 text: 4 "+"')
+	assert.match(e22, /sameList\(plusNames\(hsT\), \['plus-b', 'plus-t'\]\)/, 'E22 text: the points t/b (job 231)')
 	const e25 = part('export const E25 = {', '// ── E26')
-	assert.match(e25, /sameList\(transformNames\(hs\), \['b', 'bl', 'br', 'l', 'r', 't', 'tl', 'tr'\]\)/, 'E25 frame: 8, no rot')
+	assert.match(e25, /sameList\(transformNames\(hs\), \['bl', 'br', 'tl', 'tr'\]\)/, 'E25 frame: 4 corners, no rot (job 231)')
 	assert.match(e25, /plusNames\(hs\)\.length === 0/, 'E25 frame: 0 "+"')
 })
 

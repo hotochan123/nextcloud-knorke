@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { NARROW_QUERY, bannerStrips, excerpt, resultsText } from '../../../src/components/bars.js'
+import { MID_QUERY, NARROW_QUERY, excerpt, noticeCandidates, noticeOf, pruneDismissed, resultsText } from '../../../src/components/bars.js'
 import { TIME_UP_SHOW_MS, ceilSeconds, formatClock, milestone, nextTickMs, timeUpShown, timerKey, timerOf, timerView, voteClock } from '../../../src/components/countdown.js'
 import { createSound } from '../../../src/util/sound.js'
 import { createWakeLock } from '../../../src/util/wakelock.js'
@@ -73,17 +73,37 @@ test('milestones for the live region: 1 minute, 10 seconds, end – each once wh
 	assert.equal(milestone(30000, 90000), null, '+1 min is no milestone')
 })
 
-test('banner strips (R16 (3)): precedence status > follow/chip > time up > role; one in the narrow layout; no role banner while frozen', () => {
+test('job 228 AK3 notices (R16 (3)): one at a time in every layout; precedence status > comment > follow > chip > time up > tags > role; no role banner while frozen', () => {
 	assert.equal(NARROW_QUERY, '(max-width: 600px)')
-	const all = { status: 'offline', follow: true, chip: false, timeUp: true, role: 'device_vote', frozen: false }
-	assert.deepEqual(bannerStrips(all, false), ['status', 'follow', 'time_up', 'role'])
-	assert.deepEqual(bannerStrips(all, true), ['status'])
-	assert.deepEqual(bannerStrips({ ...all, status: null }, true), ['follow'], 'following beats Time\'s up and role on a phone')
-	assert.deepEqual(bannerStrips({ status: null, follow: false, chip: true, timeUp: true, role: 'vote_ready' }, true), ['chip'])
-	assert.deepEqual(bannerStrips({ timeUp: true, role: 'vote_ready' }, true), ['time_up'], 'R16: Time\'s up before the role banners')
-	assert.deepEqual(bannerStrips({ role: 'vote_ready' }, true), ['role'])
-	assert.deepEqual(bannerStrips({ status: 'gone', role: 'view_role', frozen: true }, false), ['status'])
-	assert.deepEqual(bannerStrips({}, false), [])
+	assert.equal(MID_QUERY, '(max-width: 900px)')
+	const all = { status: 'offline', comment: true, follow: 'p1', chip: { pid: 'p2', client: 'c2' }, timeUp: true, tags: true, role: 'device_vote', frozen: false }
+	assert.deepEqual(noticeCandidates(all).map((c) => c.kind), ['status', 'comment', 'follow', 'time_up', 'tags', 'role'], 'following hides the chip')
+	assert.deepEqual(noticeOf(all), { kind: 'status', key: 'status:offline' })
+	assert.equal(noticeOf({ ...all, status: null }).kind, 'comment')
+	assert.equal(noticeOf({ ...all, status: null, comment: false }).kind, 'follow', 'following beats the rest')
+	assert.deepEqual(noticeOf({ chip: { pid: 'p2', client: 'c2' }, timeUp: true, role: 'vote_ready' }), { kind: 'chip', key: 'chip:p2:c2' })
+	assert.equal(noticeOf({ timeUp: true, tags: true, role: 'vote_ready' }).kind, 'time_up', 'R16: Time\'s up before the tag filter and the role banners')
+	assert.equal(noticeOf({ tags: true, role: 'vote_ready' }).kind, 'tags')
+	assert.deepEqual(noticeOf({ role: 'vote_ready' }), { kind: 'role', key: 'role:vote_ready' })
+	assert.equal(noticeOf({ status: 'gone', role: 'view_role', frozen: true }).kind, 'status')
+	assert.equal(noticeOf({ role: 'view_role', frozen: true }), null, 'no role banner while frozen')
+	assert.equal(noticeOf({}), null)
+})
+
+test('job 228 AK3 closing: a closed notice lets the next one show and stays away while it applies; one that went away comes back', () => {
+	const o = { follow: 'p1', role: 'device_vote' }
+	assert.equal(noticeOf(o, new Set(['follow:p1'])).kind, 'role', 'closing the follow notice shows the device hint')
+	assert.equal(noticeOf(o, new Set(['follow:p1', 'role:device_vote'])), null)
+	assert.equal(noticeOf({ follow: 'p3', role: 'device_vote' }, new Set(['follow:p1'])).kind, 'follow', 'another person is a new notice')
+	assert.equal(noticeOf({ status: 'offline', follow: 'p1' }, new Set(['status:offline'])).kind, 'follow')
+	for (const kind of ['comment', 'time_up', 'tags']) {
+		assert.equal(noticeCandidates({ comment: true, timeUp: true, tags: true }).find((c) => c.kind === kind).key, null, kind + ': its close button acts, nothing is remembered')
+	}
+	// a notice covered by a higher one is not closed; a closed one survives being covered
+	assert.deepEqual([...pruneDismissed(new Set(['follow:p1', 'role:device_vote']), { status: 'offline', follow: 'p1', role: 'device_vote' })], ['follow:p1', 'role:device_vote'])
+	assert.deepEqual([...pruneDismissed(new Set(['follow:p1', 'status:offline']), { follow: 'p1' })], ['follow:p1'], 'offline went away: it comes back next time')
+	assert.deepEqual([...pruneDismissed(new Set(['follow:p1']), {})], [], 'following ended')
+	assert.deepEqual([...pruneDismissed(new Set(['chip:p2:c2']), { chip: { pid: 'p2', client: 'c9' } })], [], 'a new presentation (other client)')
 })
 
 test('"Copy results": "1. {text} – {n}" per line, excerpts, a fallback for items without text', () => {

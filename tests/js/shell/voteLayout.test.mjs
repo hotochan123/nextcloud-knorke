@@ -148,12 +148,14 @@ test('R22 P7-08 board view: the stepper only in mode vote while this person may 
 		assert.ok(cond.includes(part), 'VoteStepper v-if has ' + part + ': ' + cond)
 	}
 	assert.equal(directive(st, 'on', 'close'), 'closeStepper')
-	const setup = findAll(ast, (e) => e.tag === 'VoteSetupDialog')[0]
+	const [setup, edit] = findAll(ast, (e) => e.tag === 'VoteSetupDialog')
 	assert.match(directive(setup, 'if'), /^setupOpen && canModerate$/)
+	// job 233: "Edit voting" only for moderators and only while its session is open
+	assert.match(directive(edit, 'if'), /^voteEditOpen && canModerate && votes && votes\.open$/)
 	assert.match(directive(findAll(ast, (e) => e.tag === 'TimerDialog')[0], 'if'), /^timerOpen && canModerate$/, 'like the timer dialog')
 	const src = readFileSync(new URL('../../../src/views/BoardView.vue', import.meta.url), 'utf8')
 	assert.match(src, /function closeStepper\(\) \{\s*stepper\.value = null\s*session\.value\?\.closeStepper\(\)\s*\}/)
-	assert.match(src, /watch\(canModerate, \(may\) => \{\s*if \(!may\) \{\s*setupOpen\.value = false\s*\}\s*\}\)/)
+	assert.match(src, /watch\(canModerate, \(may\) => \{\s*if \(!may\) \{\s*setupOpen\.value = false\s*voteEditOpen\.value = false\s*voteEndAsk\.value = false\s*\}\s*\}\)/)
 })
 
 test('R22 P7-11 panelReserve and focusPlan: narrow closes the sheet and keeps nothing free; the side panel keeps its covered part free (right; left in RTL)', () => {
@@ -170,7 +172,7 @@ test('R22 P7-11 panelReserve and focusPlan: narrow closes the sheet and keeps no
 	assert.deepEqual(focusPlan(false, board, null), { closeSheet: false, reserve: { left: 0, right: 0 } })
 })
 
-test('R22 P7-11 board view: a row text ("Show on the board") goes through focusItem: focusPlan, closePanel in the narrow layout, then zoomToItem with the reserve', () => {
+test('R22 P7-11 board view: a row text ("Show on the board") goes through focusItem: focusPlan, closePanel in the narrow layout, then zoomToItem with the reserve (job 223: after the DOM update)', () => {
 	const ast = template('src/views/BoardView.vue')
 	const panel = findAll(ast, (e) => e.tag === 'VotePanel')[0]
 	assert.equal(directive(panel, 'on', 'focus'), 'focusItem')
@@ -178,7 +180,9 @@ test('R22 P7-11 board view: a row text ("Show on the board") goes through focusI
 	const fn = src.match(/function focusItem\(id\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
 	assert.match(fn, /const plan = focusPlan\(narrow\.value, board, panel\)/)
 	assert.match(fn, /querySelector\?\.\('\[data-knorke-vote-panel\]'\)/)
-	assert.match(fn, /if \(plan\.closeSheet\) \{\s*closePanel\(\)\s*\}\s*s\.zoomToItem\(id, plan\.reserve\)/, 'the sheet closes BEFORE the zoom')
+	// job 223: zoomToItem measures the bars, so the closing sheet must be gone first: nextTick, then the zoom
+	assert.match(fn, /if \(plan\.closeSheet\) \{\s*closePanel\(\)\s*nextTick\(\(\) => session\.value\?\.zoomToItem\(id, plan\.reserve\)\)\s*return\s*\}\s*s\.zoomToItem\(id, plan\.reserve\)/, 'the sheet closes BEFORE the zoom, which waits for the DOM update')
+	assert.equal((fn.match(/zoomToItem\(/g) || []).length, 2, 'one zoom per branch, none right after closePanel')
 	assert.match(src, /import \{ focusPlan \} from '\.\.\/components\/voteLayout\.js'/)
 })
 

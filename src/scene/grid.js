@@ -11,7 +11,11 @@
  * - gridStep: the drawn step is GRID_SIZE · GRID_MAJOR_EVERY^k, the smallest
  *   one whose lines lie at least GRID_MIN_PX screen px apart (20 from scale
  *   0.5, 100 down to 0.1, 500 below); the major lines of one step are the
- *   minor lines of the next coarser one, so they stay put at a change
+ *   minor lines of the next coarser one, so they stay put at a change.
+ *   (Job 238) Above GRID_FINE_SCALE (strictly) the step is GRID_SIZE /
+ *   GRID_MAJOR_EVERY = 4, its major lines the 20 lines
+ * - gridSnapStep (job 238): the step a drag or resize snaps to, 4 above
+ *   GRID_FINE_SCALE, else GRID_SIZE (also zoomed out)
  * - gridLines: the lines in view, at whole device pixels of the grid canvas
  *   (the canvas is not transformed: a CSS gesture paints every frame with
  *   the live camera), every GRID_MAJOR_EVERY-th one a major line; the line
@@ -24,7 +28,7 @@
  *   pixels, no shimmer while panning), the minor lines first, the major ones
  *   on top
  */
-import { GRID_MAJOR_COLOR, GRID_MAJOR_EVERY, GRID_MIN_PX, GRID_MINOR_COLOR, GRID_SIZE } from '../model/tokens.js'
+import { GRID_FINE_SCALE, GRID_MAJOR_COLOR, GRID_MAJOR_EVERY, GRID_MIN_PX, GRID_MINOR_COLOR, GRID_SIZE } from '../model/tokens.js'
 
 /**
  * @typedef {{at:number, major:boolean}} GridLine a line at device px `at` of the grid canvas
@@ -35,14 +39,27 @@ import { GRID_MAJOR_COLOR, GRID_MAJOR_EVERY, GRID_MIN_PX, GRID_MINOR_COLOR, GRID
 
 /**
  * @param {number} scale camera scale
- * @return {number|null} the smallest GRID_SIZE · GRID_MAJOR_EVERY^k (k = 0, 1, …) with step · scale ≥
- *   GRID_MIN_PX; null for a scale that is not finite or ≤ 0
+ * @return {number|null} GRID_SIZE / GRID_MAJOR_EVERY for scale > GRID_FINE_SCALE (job 238), else the
+ *   smallest GRID_SIZE · GRID_MAJOR_EVERY^k (k = 0, 1, …) with step · scale ≥ GRID_MIN_PX; null for a
+ *   scale that is not finite or ≤ 0
  */
 export function gridStep(scale) {
 	if (!Number.isFinite(scale) || scale <= 0) return null
+	if (scale > GRID_FINE_SCALE) return GRID_SIZE / GRID_MAJOR_EVERY
 	let step = GRID_SIZE
 	while (step * scale < GRID_MIN_PX) step *= GRID_MAJOR_EVERY
 	return step
+}
+
+/**
+ * (Job 238) The grid a drag or resize snaps to.
+ *
+ * @param {number} scale camera scale
+ * @return {number} GRID_SIZE / GRID_MAJOR_EVERY for scale > GRID_FINE_SCALE, else GRID_SIZE (also for a
+ *   scale that is not finite or ≤ 0)
+ */
+export function gridSnapStep(scale) {
+	return Number.isFinite(scale) && scale > GRID_FINE_SCALE ? GRID_SIZE / GRID_MAJOR_EVERY : GRID_SIZE
 }
 
 /**

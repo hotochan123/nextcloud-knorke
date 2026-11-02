@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { REPEAT_MS, VoteState, cfgOf, mineOf } from '../../../src/board/votes.js'
+import { REPEAT_MS, VoteState, cfgOf, mineOf, rebaseVotes } from '../../../src/board/votes.js'
 
 const A = '01JA0000000000000000000001'
 const B = '01JA0000000000000000000002'
@@ -23,8 +23,8 @@ const open = (extra = {}) => ({ sid: 12, state: 'open', cfg: { per: 3, perItem: 
 const closed = (extra = {}) => ({ ...open(), state: 'closed', results: [[A, 7], [B, 5]], total: 2, voters: 4, closedAt: T0 + 60000, ...extra })
 
 test('cfgOf/mineOf: defaults and cleaning (per 1–99, perItem ≤ per, types ⊂ votable, [] as {})', () => {
-	assert.deepEqual(cfgOf(null), { per: 5, perItem: 1, scope: null, types: ['sticky'] })
-	assert.deepEqual(cfgOf({ per: 200, perItem: 300, scope: '', types: ['frame', 'shape', 'shape'] }), { per: 99, perItem: 99, scope: null, types: ['shape'] })
+	assert.deepEqual(cfgOf(null), { per: 5, perItem: 1, scope: null, types: ['sticky'], live: false, accountsOnly: false })
+	assert.deepEqual(cfgOf({ per: 200, perItem: 300, scope: '', types: ['frame', 'shape', 'shape'] }), { per: 99, perItem: 99, scope: null, types: ['shape'], live: false, accountsOnly: false })
 	assert.deepEqual(mineOf([]), {})
 	assert.deepEqual(mineOf({ [A]: 2, [B]: 0, [C]: 1.5 }), { [A]: 2 })
 	assert.equal(mineOf([1]), null)
@@ -243,4 +243,126 @@ test('R17 K1: lowering or keeping a number never answers limit, also overdrawn a
 	w.ack(null, { sid: 12, mine: { [A]: 2, [B]: 1, [C]: 2 } })
 	assert.deepEqual(w.propose(B, 0, T0), { ok: true, reason: null })
 	assert.deepEqual(w.propose(B, 1, T0 + REPEAT_MS), { ok: false, reason: 'limit' })
+})
+
+test('job 149: cfgOf().live only for a literal true; ack keeps tally only for the own sid, me.mod and cfg.live; a new sid, the close and mod false drop it', () => {
+	assert.equal(cfgOf({ live: true }).live, true)
+	for (const x of [false, 1, 'true', null, undefined]) {
+		assert.equal(cfgOf({ live: x }).live, false, JSON.stringify(x))
+	}
+	const MOD = { pid: 'p1', mod: true }
+	const live = (extra = {}) => open({ cfg: { per: 3, perItem: 1, scope: null, types: ['sticky'], live: true }, ...extra })
+	const v = new VoteState()
+	v.setSession(live(), MOD)
+	assert.equal(v.cfg.live, true)
+	assert.equal(v.tally, null, 'none before a votes block')
+	v.ack(null, { sid: 11, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.equal(v.tally, null, 'a foreign sid')
+	v.ack(null, { sid: 12, voters: 2, vt: 3, tally: [[B, 2], [A, 1], ['x', -1], [C], 'junk'] })
+	assert.deepEqual(v.tally, [[B, 2], [A, 1]], 'checked like results')
+	const copy = v.tally
+	copy[0][1] = 99
+	assert.deepEqual(v.tally, [[B, 2], [A, 1]], 'the getter returns a copy')
+	v.ack(null, { sid: 12, voters: 2, vt: 4 })
+	assert.deepEqual(v.tally, [[B, 2], [A, 1]], 'a block without tally keeps it')
+	v.ack(null, { sid: 12, voters: 2, vt: 4, tally: 'nope' })
+	assert.deepEqual(v.tally, [[B, 2], [A, 1]], 'a tally that is not a list is ignored')
+	v.ack(null, { sid: 12, voters: 2, vt: 5, tally: [] })
+	assert.deepEqual(v.tally, [], 'no votes: []')
+	v.ack(null, { sid: 12, voters: 2, vt: 6, tally: [[A, 1]] })
+	// a new sid drops it
+	v.setSession(live({ sid: 13 }), MOD)
+	assert.equal(v.tally, null, 'new sid')
+	v.ack(null, { sid: 13, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.deepEqual(v.tally, [[A, 1]])
+	// mod false (setSession or setMe) drops it, and later blocks are not taken
+	v.setMe({ pid: 'p1', mod: false })
+	assert.equal(v.tally, null, 'setMe mod false')
+	v.ack(null, { sid: 13, voters: 1, vt: 2, tally: [[A, 1]] })
+	assert.equal(v.tally, null, 'not taken without mod')
+	v.setMe(MOD)
+	v.ack(null, { sid: 13, voters: 1, vt: 3, tally: [[A, 2]] })
+	assert.deepEqual(v.tally, [[A, 2]])
+	v.setSession(live({ sid: 13 }), { pid: 'p1', mod: false })
+	assert.equal(v.tally, null, 'setSession with mod false')
+	v.setSession(live({ sid: 13 }), MOD)
+	v.ack(null, { sid: 13, voters: 1, vt: 4, tally: [[A, 2]] })
+	// the close drops it
+	v.setSession({ ...live({ sid: 13 }), state: 'closed', results: [[A, 2]], total: 1, voters: 1, closedAt: T0 + 1 }, MOD)
+	assert.equal(v.tally, null, 'closed')
+	v.ack(null, { sid: 13, tally: [[A, 2]] })
+	assert.equal(v.tally, null, 'not taken while closed')
+	// without cfg.live a moderator never keeps one
+	const w = new VoteState()
+	w.setSession(open(), MOD)
+	w.ack(null, { sid: 12, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.equal(w.tally, null, 'no live in cfg')
+	// without me (as before job 149) neither
+	const x = new VoteState()
+	x.setSession(live())
+	x.ack(null, { sid: 12, voters: 1, vt: 1, tally: [[A, 1]] })
+	assert.equal(x.tally, null, 'no me')
+})
+
+test('job 149: badges({live: true}) puts the tally as total beside mine (n > 0); badges() and badges({live: false}) stay as before', () => {
+	const v = new VoteState()
+	v.setSession(open({ cfg: { per: 5, perItem: 3, scope: null, types: ['sticky'], live: true } }), { pid: 'p1', mod: true })
+	v.setMine(12, { [A]: 2 }, 3)
+	v.ack(null, { sid: 12, voters: 3, vt: 5, tally: [[B, 4], [A, 3], [C, 0]] })
+	assert.deepEqual([...v.badges({ live: true })], [[A, { mine: 2, total: 3 }], [B, { mine: 0, total: 4 }]])
+	assert.deepEqual([...v.badges()], [[A, { mine: 2, total: null }]], 'without live: unchanged')
+	assert.deepEqual([...v.badges({ live: false })], [[A, { mine: 2, total: null }]])
+	for (const b of v.badges({ live: true }).values()) {
+		assert.ok(Number.isInteger(b.mine) && b.mine >= 0 && Number.isInteger(b.total) && b.total >= 0, 'SceneVoteState values')
+	}
+	// no tally yet: live changes nothing
+	const w = new VoteState()
+	w.setSession(open({ cfg: { per: 5, perItem: 3, scope: null, types: ['sticky'], live: true } }), { pid: 'p1', mod: true })
+	w.setMine(12, { [A]: 1 }, 4)
+	assert.deepEqual([...w.badges({ live: true })], [[A, { mine: 1, total: null }]])
+	// after the close only the shown results count, live or not
+	v.setSession(closed({ show: true }), { pid: 'p1', mod: true })
+	assert.deepEqual([...v.badges({ live: true })], [[A, { mine: 0, total: 7 }], [B, { mine: 0, total: 5 }]])
+})
+
+test('job 175: cfgOf().accountsOnly only for a literal true; VoteState.cfg carries it and keeps it after the close', () => {
+	assert.equal(cfgOf({ accountsOnly: true }).accountsOnly, true)
+	for (const x of ['true', 1, false, null, undefined]) {
+		assert.equal(cfgOf({ accountsOnly: x }).accountsOnly, false, JSON.stringify(x))
+	}
+	assert.equal(cfgOf({}).accountsOnly, false, 'missing')
+	assert.equal(cfgOf({ live: true, accountsOnly: true }).live, true, 'independent of live')
+	const v = new VoteState()
+	v.setSession(open({ cfg: { per: 3, perItem: 1, scope: null, types: ['sticky'], accountsOnly: true } }), { pid: 'p1', mod: false })
+	assert.equal(v.cfg.accountsOnly, true)
+	v.setSession(closed({ cfg: { per: 3, perItem: 1, scope: null, types: ['sticky'], accountsOnly: true } }), { pid: 'p1', mod: false })
+	assert.equal(v.cfg.accountsOnly, true, 'meta.vote.cfg stays after the close')
+	v.setSession(open({ sid: 13 }), { pid: 'p1', mod: false })
+	assert.equal(v.cfg.accountsOnly, false, 'a session without it')
+})
+
+test('job 216 (AK4): rebaseVotes carries each stale change n − b onto the current state, per item in order; maybe applied ops are left out', () => {
+	const op = (id, n, b) => ({ o: 'vote', s: 7, id, n, b })
+	// the other tab raised A to 2: my +1 from 1 lands on 3
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1) }], { [A]: 2 }), [[A, 3]])
+	// two stale ops on one item add up; a lowering on another item too
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1) }, { op: op(A, 3, 2) }, { op: op(B, 0, 1) }], { [A]: 2, [B]: 2 }), [[A, 4], [B, 1]])
+	// below 0 stays 0; already 0: nothing
+	assert.deepEqual(rebaseVotes([{ op: op(A, 0, 2) }], { [A]: 1 }), [[A, 0]])
+	assert.deepEqual(rebaseVotes([{ op: op(A, 0, 1) }], {}), [])
+	// maybe applied (sent without an answer before): never recomputed
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1), maybeApplied: true }], { [A]: 2 }), [])
+	// an op without a base (or with a broken one) is not recomputed
+	assert.deepEqual(rebaseVotes([{ op: { o: 'vote', s: 7, id: A, n: 2 } }, { op: op(B, 2, -1) }], { [A]: 1 }), [])
+	// a change that nets to zero: nothing
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1) }, { op: op(A, 1, 2) }], { [A]: 3 }), [])
+})
+
+test('job 216 (round 1, fresh review): rebaseVotes stops at perItem; at perItem already nothing changes; a lowering is never cut', () => {
+	const op = (id, n, b) => ({ o: 'vote', s: 7, id, n, b })
+	assert.deepEqual(rebaseVotes([{ op: op(A, 1, 0) }], { [A]: 1 }, 1), [], 'perItem 1: both tabs voted A, it stays one')
+	assert.deepEqual(rebaseVotes([{ op: op(A, 3, 1) }], { [A]: 2 }, 3), [[A, 3]], '2 + 2 stops at 3')
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1) }], { [A]: 2 }, 2), [])
+	assert.deepEqual(rebaseVotes([{ op: op(A, 1, 2) }], { [A]: 3 }, 2), [[A, 2]], 'a lowering from above perItem keeps going down')
+	assert.deepEqual(rebaseVotes([{ op: op(A, 2, 1) }], { [A]: 2 }), [[A, 3]], 'without perItem: VOTE_PER_MAX')
 })

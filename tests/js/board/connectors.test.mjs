@@ -13,9 +13,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { connectItems, copyPayload, deleteItems, duplicateItems, moveItems, pasteItems, retargetEnd } from '../../../src/board/actions.js'
+import { connectItems, copyPayload, deleteItems, duplicateItems, moveItems, pasteItems, retargetEnd, swapCaps, swappableIds } from '../../../src/board/actions.js'
 import { decodeClipAttr, encodeClip, validatePayload } from '../../../src/board/clipboard.js'
 import { anchorPoint, normalizeEndpoint } from '../../../src/model/connectors.js'
+import { applyPatch } from '../../../src/model/paths.js'
 import { q } from '../../../src/model/geometry.js'
 import { ULID_RE } from '../../../src/model/ids.js'
 import { TYPES } from '../../../src/model/registry.js'
@@ -87,11 +88,11 @@ test('connectItems: options that fail their rule fall back to the registry defau
 	assert.ok(!Object.is(p.data.start.y, -0))
 	// no tool options at all: the defaults that the put stores
 	const d = connectItems(m, { start: { x: 0, y: 0 }, end: { item: A } }, () => C2).ops[0].p
-	assert.deepEqual([d.data.route, d.style.endCap], ['straight', 'arrow'])
+	assert.deepEqual([d.data.route, d.style.endCap], ['elbow', 'triangle'], 'job 153: a new connector is elbow')
 })
 
 test('connectItems: nothing for an invalid end, a target the model does not have or that cannot be bound, or two equal ends', () => {
-	const m = new FakeModel([sticky(A), frame(F, { x: 2000 }), connector(C2, { x: 0, y: 0 }, { item: A }), { ...sticky(D), t: 'pen' }])
+	const m = new FakeModel([sticky(A), frame(F, { x: 2000 }), connector(C2, { x: 0, y: 0 }, { item: A }), { ...sticky(D), t: 'brush' }])
 	const none = { ops: [], inverse: [], selectIds: [] }
 	const mk = (start, end) => connectItems(m, { start, end }, () => C1)
 	assert.deepEqual(mk({ item: A }, null), none)
@@ -297,4 +298,67 @@ test('pasteItems: a connector bound to a payload item that cannot be bound (a fr
 	const r = pasteItems(new FakeModel([]), payload, { inPlace: true, board: 8 }, ids(ID(81), ID(82), ID(83), ID(84)))
 	assert.equal(r.skipped, 1)
 	assert.deepEqual(r.ops.filter((o) => o.t === 'connector').map((o) => o.p.data.start), [{ item: ID(82) }])
+})
+
+// ---- job 153: elbow connectors by default, swap direction ----
+
+/** A connector A → B with these stored tips (a missing key: not stored). */
+const tipped = (id, tips, extra = {}) => connector(id, { item: A }, { item: B }, { style: { stroke: '#1a1a1a', strokeWidth: 2, ...tips }, ...extra })
+
+test('job 153 AK4 swapCaps: dot–arrow → arrow–dot, none–arrow → arrow–none (both stored); arrow–arrow, a locked diamond–arrow, none–none and a note give nothing', () => {
+	const K = [ID('K1'), ID('K2'), ID('K3'), ID('K4'), ID('K5')]
+	const m = new FakeModel([
+		sticky(A), shape(B, { x: 400 }),
+		tipped(K[0], { startCap: 'dot', endCap: 'arrow' }),
+		tipped(K[1], { endCap: 'arrow' }),
+		tipped(K[2], { startCap: 'arrow', endCap: 'arrow' }),
+		tipped(K[3], { startCap: 'diamond', endCap: 'arrow' }, { lock: { by: 'pidcarol00000001', name: 'Carol' } }),
+		tipped(K[4], {}),
+	])
+	const all = [A, ...K, K[0]]
+	assert.deepEqual(swappableIds(m, all), [K[0], K[1]], 'each once, in order')
+	const r = swapCaps(m, all)
+	assert.deepEqual(r.ops, [
+		{ o: 'patch', id: K[0], p: { 'style.startCap': 'arrow', 'style.endCap': 'dot' } },
+		{ o: 'patch', id: K[1], p: { 'style.startCap': 'arrow', 'style.endCap': 'none' } },
+	])
+	assert.deepEqual(r.inverse, [
+		{ o: 'patch', id: K[0], p: { 'style.startCap': 'dot', 'style.endCap': 'arrow' } },
+		{ o: 'patch', id: K[1], p: { 'style.startCap': null, 'style.endCap': 'arrow' } },
+	])
+	// the inverse gives back exactly the stored item (a missing tip missing again); route, ends, label untouched
+	for (const [i, op] of r.ops.entries()) {
+		const before = structuredClone(m.get(op.id))
+		const swapped = applyPatch(structuredClone(before), op.p)
+		assert.deepEqual(swapped.data, before.data)
+		assert.deepEqual(applyPatch(swapped, r.inverse[i].p), before, op.id)
+	}
+	assert.deepEqual(swapCaps(m, [K[2], K[3], K[4], A]), { ops: [], inverse: [] })
+	assert.deepEqual(swapCaps(m, []), { ops: [], inverse: [] })
+	assert.deepEqual(swappableIds(m, [ID(99)]), [], 'unknown to the model')
+})
+
+test('job 153 AK4 swapCaps: a tip the rules do not know counts as none; its inverse stores it back as it was', () => {
+	const K1 = ID('K1')
+	const m = new FakeModel([sticky(A), shape(B, { x: 400 }), tipped(K1, { startCap: 'star', endCap: 'arrow' })])
+	const r = swapCaps(m, [K1])
+	assert.deepEqual(r.ops, [{ o: 'patch', id: K1, p: { 'style.startCap': 'arrow', 'style.endCap': 'none' } }])
+	assert.deepEqual(r.inverse, [{ o: 'patch', id: K1, p: { 'style.startCap': 'star', 'style.endCap': 'arrow' } }])
+	const n = new FakeModel([tipped(K1, { startCap: 'star' })])
+	assert.deepEqual(swappableIds(n, [K1]), [], 'star and missing: both none')
+})
+
+test('job 153 AK3: pasting and duplicating a connector without data.route and one with straight keep what was stored (the creation default elbow is not filled in)', () => {
+	const K1 = ID('K1')
+	const K2 = ID('K2')
+	const src = new FakeModel([
+		sticky(A, { z: 'i1' }), shape(B, { x: 400, z: 'i2' }),
+		connector(K1, { item: A }, { item: B }, { z: 'i3', data: { start: { item: A }, end: { item: B } } }),
+		connector(K2, { item: A }, { item: B }, { z: 'i4' }),
+	])
+	const routes = (r) => r.ops.filter((o) => o.t === 'connector').map((o) => ('route' in o.p.data ? o.p.data.route : 'missing'))
+	const payload = copyPayload(src, [A, B, K1, K2], { board: 7 })
+	assert.deepEqual(routes(pasteItems(new FakeModel([]), payload, { offset: { x: 100, y: 50 }, board: 8 }, ids(ID(61), ID(62), ID(63), ID(64)))), ['missing', 'straight'])
+	assert.deepEqual(routes(duplicateItems(src, [A, B, K1, K2], { offset: 20, board: 7 }, ids(ID(71), ID(72), ID(73), ID(74)))), ['missing', 'straight'])
+	assert.equal(TYPES.connector.defaults.data.route, 'elbow', 'while a new connector is elbow')
 })

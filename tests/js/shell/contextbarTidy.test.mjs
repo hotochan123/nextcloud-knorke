@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ALIGN_EDGES, DISTRIBUTE_AXES } from '../../../src/board/actions.js'
-import { icons } from '../../../src/components/icons.js'
+import { ICON_SOURCE, icons } from '../../../src/components/icons.js'
 import { TYPES } from '../../../src/model/registry.js'
 import { panelOf } from './contextbarHtml.mjs'
 import { setupOf, useSfc } from './sfc.mjs'
@@ -110,8 +110,8 @@ test('M2 tidy up (AK10): "Tidy up" has its German text in l10n/de.json', () => {
 	assert.equal(de['Tidy up'], 'Aufräumen')
 })
 
-test('M2 tidy up (AK11): icons.tidyUp is the path of MDI view-grid, apart from every align and distribute icon', () => {
-	assert.equal(icons.tidyUp, 'M3,11H11V3H3M3,21H11V13H3M13,21H21V13H13M13,3V11H21V3')
+test('M2 tidy up (AK11): icons.tidyUp is a grid (job 244: Phosphor grid-four), apart from every align and distribute icon', () => {
+	assert.equal(ICON_SOURCE.tidyUp, 'phosphor:grid-four')
 	const others = Object.entries(icons).filter(([k]) => k.startsWith('alignItems') || k.startsWith('distribute'))
 	assert.equal(others.length, 8)
 	assert.ok(others.every(([, p]) => p !== icons.tidyUp), 'not an align or distribute icon')

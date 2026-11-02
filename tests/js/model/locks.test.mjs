@@ -8,7 +8,8 @@
  * unknown locker, roles vote/view), lockValue (keys by, name in this order:
  * the server echo has the same itemKey) and lockSummary (every kind of
  * lockedBy and unlockBy, lockable/unlockable 0 while the session cannot
- * write).
+ * write). Job 151: a guest's lockValue adds guest: true, and lockSummary
+ * names a guest locker with guest: true, an account never.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -57,6 +58,31 @@ test('lockValue: {by: me.pid, name: me.name ?? null}, keys in the order by, name
 	const optimistic = item('a', lockValue(ME))
 	const echo = JSON.parse('{"id":"a","t":"sticky","x":0,"y":0,"w":200,"h":200,"r":0,"z":"i0","parent":null,"data":{},"style":{},"group":null,"lock":{"by":"pidme00000000001","name":"Alice"}}')
 	assert.equal(itemKey(optimistic), itemKey(echo))
+})
+
+test('job 151: lockValue for a guest has the keys by, name, guest (like the server echo); for an account by, name', () => {
+	const GINA = { pid: 'pidgina000000001', name: 'Gina', role: 'edit', guest: true, mod: false }
+	assert.deepEqual(Object.keys(lockValue(GINA)), ['by', 'name', 'guest'])
+	assert.deepEqual(lockValue(GINA), { by: GINA.pid, name: 'Gina', guest: true })
+	assert.deepEqual(Object.keys(lockValue({ ...ME, guest: false })), ['by', 'name'], 'an account')
+	assert.deepEqual(Object.keys(lockValue(ME)), ['by', 'name'], 'no guest key')
+	assert.deepEqual(Object.keys(lockValue({ ...ME, guest: 'yes' })), ['by', 'name'], 'only true counts')
+	const optimistic = item('a', lockValue(GINA))
+	const echo = JSON.parse('{"id":"a","t":"sticky","x":0,"y":0,"w":200,"h":200,"r":0,"z":"i0","parent":null,"data":{},"style":{},"group":null,"lock":{"by":"pidgina000000001","name":"Gina","guest":true}}')
+	assert.equal(itemKey(optimistic), itemKey(echo), 'the optimistic state equals the echo')
+})
+
+test('job 151: lockSummary names a guest locker with guest: true (lockedBy and unlockBy); an account never; mine, unknown and several stay', () => {
+	const gina = { by: 'pidgina000000001', name: 'Gina', guest: true }
+	const sum = (locks, me = MOD) => lockSummary(locks.map((l, i) => item('i' + i, l)), me)
+	assert.deepEqual(sum([gina, gina]).lockedBy, { kind: 'name', name: 'Gina', guest: true })
+	assert.deepEqual(sum([gina]).unlockBy, { kind: 'name', name: 'Gina', guest: true }, 'a moderator over Gina\'s lock')
+	assert.deepEqual(sum([bob]).lockedBy, { kind: 'name', name: 'Bob' }, 'an account: no guest key')
+	assert.deepEqual(sum([bob]).unlockBy, { kind: 'name', name: 'Bob' })
+	assert.deepEqual(sum([gina, bob]).lockedBy, { kind: 'several' }, 'grouped by pid as before')
+	assert.deepEqual(sum([{ ...gina, name: null }]).lockedBy, { kind: 'unknown' })
+	assert.deepEqual(sum([{ by: null, name: 'Bob', guest: true }, { by: null, name: 'Bob' }]).lockedBy, { kind: 'name', name: 'Bob' }, 'by name: an account named alike gets no suffix')
+	assert.deepEqual(sum([{ ...gina, by: ME.pid }], ME).lockedBy, { kind: 'mine' }, 'the own lock stays "mine"')
 })
 
 test('lockSummary: counts; lockable = unlocked, unlockable = own or (mod) any; 0 while the session cannot write or me may not edit', () => {

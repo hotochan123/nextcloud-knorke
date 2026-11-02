@@ -62,7 +62,7 @@ Version ändert, steht in der Liste der Veränderungen (`CHANGELOG.md`).
 - Knorke ist ein unabhängiges Projekt und steht in keiner Verbindung zu anderen
   Produkten oder Firmen ähnlichen Namens.
     ]]></description>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
     <licence>AGPL-3.0-or-later</licence>
     <author homepage="https://github.com/hotochan123">hotochan123</author>
     <namespace>Knorke</namespace>

@@ -8,6 +8,7 @@
 		role="dialog"
 		:aria-label="votes.open ? t('knorke', 'Vote list') : t('knorke', 'Results')"
 		data-knorke-vote-panel
+		data-knorke-chrome
 		@keydown.esc.stop.prevent="$emit('close')">
 		<header class="knorke-votepanel__head">
 			<h3 class="knorke-votepanel__title">
@@ -26,7 +27,38 @@
 				</template>
 			</NcButton>
 		</header>
-		<ul v-if="votes.open" class="knorke-votepanel__list">
+		<p v-if="votes.open && votes.live && !votes.mod" class="knorke-votepanel__note" data-knorke-vote-live-note="panel">
+			<NcIconSvgWrapper :path="icons.eye" aria-hidden="true" />
+			{{ t('knorke', 'Moderators see live counts') }}
+		</p>
+		<div v-if="tabs"
+			class="knorke-votepanel__tabs"
+			role="tablist"
+			:aria-label="t('knorke', 'Vote list')">
+			<button v-for="x in TABS"
+				:id="tabId(x)"
+				:key="x"
+				:ref="(el) => (tabEls[x] = el)"
+				type="button"
+				role="tab"
+				class="knorke-votepanel__tab"
+				:class="{ 'knorke-votepanel__tab--active': tab === x }"
+				:aria-selected="tab === x ? 'true' : 'false'"
+				:aria-controls="panelId(x)"
+				:tabindex="tab === x ? 0 : -1"
+				:data-knorke-vote-tab="x"
+				@click="tab = x"
+				@keydown.left.prevent="step(-1)"
+				@keydown.right.prevent="step(1)">
+				{{ x === 'vote' ? t('knorke', 'Vote') : t('knorke', 'Live count') }}
+			</button>
+		</div>
+		<ul v-if="votes.open"
+			v-show="!tabs || tab === 'vote'"
+			:id="tabs ? panelId('vote') : null"
+			class="knorke-votepanel__list"
+			:role="tabs ? 'tabpanel' : null"
+			:aria-labelledby="tabs ? tabId('vote') : null">
 			<li v-if="items.length === 0" class="knorke-votepanel__empty">
 				{{ t('knorke', 'No items can get votes.') }}
 			</li>
@@ -65,7 +97,35 @@
 				</template>
 			</li>
 		</ul>
-		<template v-else>
+		<div v-if="tabs"
+			v-show="tab === 'live'"
+			:id="panelId('live')"
+			class="knorke-votepanel__live"
+			role="tabpanel"
+			:aria-labelledby="tabId('live')">
+			<ol v-if="liveRanking.length > 0" class="knorke-votepanel__results" data-knorke-vote-live>
+				<li v-for="(r, i) in liveRanking"
+					:key="r.id"
+					class="knorke-votepanel__result"
+					:class="{ 'knorke-votepanel__result--top': i < 3 }"
+					:data-knorke-vote-live-item="r.id">
+					<button type="button"
+						class="knorke-votepanel__text"
+						:disabled="!r.exists"
+						:title="t('knorke', 'Show on the board')"
+						data-knorke-action="vote-focus"
+						@click="$emit('focus', r.id)">
+						<span class="knorke-votepanel__rank">{{ i + 1 }}.</span>
+						{{ excerpt(r.text) || t('knorke', '(no text)') }}
+					</button>
+					<span class="knorke-votepanel__count">{{ r.n }}</span>
+				</li>
+			</ol>
+			<p v-else class="knorke-votepanel__empty" data-knorke-vote-live>
+				{{ t('knorke', 'No votes yet.') }}
+			</p>
+		</div>
+		<template v-if="!votes.open">
 			<ol v-if="ranking.length > 0" class="knorke-votepanel__results" data-knorke-vote-results>
 				<li v-for="(r, i) in ranking"
 					:key="r.id"
@@ -137,13 +197,29 @@
  * it once per sid when the session turns closed, and in the narrow layout
  * at the start of a session (a bottom sheet there). While it is open during
  * a session, this tab sends no presence (§6.4).
+ * (Job 149) An open session with live: everyone without the moderation
+ * right sees [data-knorke-vote-live-note=panel] "Moderators see live
+ * counts" under the head; moderators get two tabs (role tablist/tab/
+ * tabpanel, aria-selected, aria-controls, ≥ 44 px): "Vote"
+ * [data-knorke-vote-tab=vote], chosen at every opening, with the list above
+ * in its order, and "Live count" [data-knorke-vote-tab=live] with the
+ * ranking of votes.tally like the one after the close (rank, excerpt,
+ * number, top 3 marked, vote-focus; [data-knorke-vote-live], "No votes
+ * yet."), without ± and without copy, show or close. Only the chosen tab is
+ * in the tab order; ←/→ switch and activate. The tabs do not depend on the
+ * bar's "Live count".
  */
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import { n, t } from '../util/l10n.js'
 import { excerpt } from './bars.js'
 import { icons } from './icons.js'
+
+/** The tabs of a moderator in a session with live (job 149). */
+const TABS = ['vote', 'live']
+
+let seq = 0
 
 const props = defineProps({
 	/** BoardSession.votesView() */
@@ -158,10 +234,57 @@ const props = defineProps({
 
 defineEmits(['vote', 'focus', 'show', 'hide', 'clear', 'copy', 'close'])
 
-const ranking = computed(() => (props.votes.results ?? []).filter((r) => r[1] > 0).map(([id, count]) => {
-	const info = props.lookup(id)
-	return { id, n: count, text: info.text, exists: info.exists }
-}))
+/**
+ * @param {Array<[string, number]>|null|undefined} list [[id, n], …] descending
+ * @return {Array<{id: string, n: number, text: string, exists: boolean}>} rows with n > 0
+ */
+function rowsOf(list) {
+	return (list ?? []).filter((r) => r[1] > 0).map(([id, count]) => {
+		const info = props.lookup(id)
+		return { id, n: count, text: info.text, exists: info.exists }
+	})
+}
+
+const ranking = computed(() => rowsOf(props.votes.results))
+
+const uid = 'knorke-votepanel-' + (++seq)
+/** the chosen tab ("Vote" at every opening: the panel mounts anew) */
+const tab = ref('vote')
+const tabEls = {}
+/** moderators of an open session with live get the tabs */
+const tabs = computed(() => props.votes.open === true && props.votes.live === true && props.votes.mod === true)
+const liveRanking = computed(() => rowsOf(props.votes.tally))
+// a new session in a panel that stayed open starts on "Vote" too
+watch(() => props.votes.sid, () => {
+	tab.value = 'vote'
+})
+
+/**
+ * @param {string} x tab
+ * @return {string} id of its tab button
+ */
+function tabId(x) {
+	return `${uid}-tab-${x}`
+}
+
+/**
+ * @param {string} x tab
+ * @return {string} id of its tab panel
+ */
+function panelId(x) {
+	return `${uid}-panel-${x}`
+}
+
+/**
+ * ←/→ on a tab: the other tab is chosen and gets the focus.
+ *
+ * @param {number} d direction (−1 left, 1 right)
+ */
+function step(d) {
+	const i = TABS.indexOf(tab.value)
+	tab.value = TABS[(i + d + TABS.length) % TABS.length]
+	nextTick(() => tabEls[tab.value]?.focus?.())
+}
 
 /**
  * @param {{text: string, mine: number}} it item

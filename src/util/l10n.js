@@ -23,8 +23,12 @@
  * l10n/de.js, which Nextcloud loads before the bundle. Without a registered
  * bundle (English UI, Node tests, scene lab) the English source text is
  * returned with its placeholders filled in.
+ *
+ * language() (factory job 179) is Nextcloud's language (getLanguage, e.g.
+ * 'de' or 'pt_BR'), 'en' without one (Node tests, scene lab); the CSV
+ * exports pick their separator by it (model/table.js csvSeparator).
  */
-import { translate, translatePlural } from '@nextcloud/l10n'
+import { getLanguage, translate, translatePlural } from '@nextcloud/l10n'
 
 const OPTIONS = Object.freeze({ escape: false, sanitize: false })
 
@@ -48,4 +52,12 @@ export function t(app, text, vars) {
  */
 export function n(app, singular, plural, count, vars) {
 	return translatePlural(app, singular, plural, count, vars, OPTIONS)
+}
+
+/**
+ * @return {string} the Nextcloud language (getLanguage), 'en' without one
+ */
+export function language() {
+	const l = getLanguage()
+	return typeof l === 'string' && l !== '' ? l : 'en'
 }

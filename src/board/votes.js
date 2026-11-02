@@ -16,6 +16,12 @@
  *   map is {}), {sid, voters, vt} for moderators. A block whose sid is not
  *   the sid of meta.vote is dropped (R16 SRV-03): the next tick brings it
  *   again.
+ * - (Job 149) cfg.live: moderators see the live count. ack() takes the
+ *   block's tally ([[id, n], …] descending) only for the current sid, with
+ *   me.mod === true (setSession's or setMe's me) and cfg.live; a new sid, a
+ *   state other than open and me.mod !== true drop it.
+ * - (Job 175) cfg.accountsOnly: only signed-in accounts vote; the session
+ *   (BoardSession.voteBlocked) keeps guests from voting.
  *
  * Own votes are optimistic: propose() checks the budget locally and keeps
  * the proposal as PENDING until the server state that contains it arrives.
@@ -41,7 +47,9 @@
  * badges() (R16, values exactly as SceneVoteState §6.3): Map<id, {mine,
  * total}> with integers ≥ 0 and total an integer or null (never undefined):
  * while open the own votes (total null); after the close, when the results
- * are shown on the board (meta.vote.show), the totals (mine 0). votable(item)
+ * are shown on the board (meta.vote.show), the totals (mine 0); with
+ * {live: true} while open and a tally is known, the live totals beside the
+ * own votes (job 149). votable(item)
  * is a real boolean (S-13); missReason(item) says why an item cannot get
  * votes ('type' before 'scope': a tap on the scope frame itself names the
  * type, not the frame).
@@ -87,8 +95,43 @@ export function mineOf(m) {
 }
 
 /**
+ * (Job 216) Vote ops answered `stale` (another tab of the same person changed
+ * the item, PROTOKOLL §13.3): each op's change n − b is carried onto the
+ * state the votes block of the same answer brought. Ops that may have been
+ * applied before (sent without an answer) are left out: recomputing them
+ * could count a change twice. The new number stops at perItem without a
+ * word (the other tab already gave the item what this person may give it,
+ * e.g. both tabs tapped the same note at one vote per item); only the
+ * budget (per) can still refuse it, in propose.
+ *
+ * @param {Array<{op: object, maybeApplied?: boolean}>} stale the stale vote ops of one answer, in order
+ * @param {Record<string, number>} mine my votes now (server state with the pending ops on top)
+ * @param {number} [perItem] most votes of one person on one item (cfg.perItem)
+ * @return {Array<[string, number]>} [item id, new n] for every item whose number changes
+ */
+export function rebaseVotes(stale, mine, perItem = VOTE_PER_MAX) {
+	const delta = new Map()
+	for (const { op, maybeApplied } of stale) {
+		if (maybeApplied === true || !op || typeof op.id !== 'string' || !isCount(op.n) || !isCount(op.b)) {
+			continue
+		}
+		delta.set(op.id, (delta.get(op.id) ?? 0) + op.n - op.b)
+	}
+	const out = []
+	for (const [id, d] of delta) {
+		const now = mine[id] ?? 0
+		const n = Math.min(Math.max(now, perItem), Math.max(0, now + d))
+		if (n !== now) {
+			out.push([id, n])
+		}
+	}
+	return out
+}
+
+/**
  * @param {unknown} cfg meta.vote.cfg
- * @return {{per: number, perItem: number, scope: (string|null), types: string[]}} with the §4.12.1 defaults
+ * @return {{per: number, perItem: number, scope: (string|null), types: string[], live: boolean, accountsOnly: boolean}}
+ *   with the §4.12.1 defaults; live (job 149) and accountsOnly (job 175) only for a literal true
  */
 export function cfgOf(cfg) {
 	const c = isMap(cfg) ? cfg : {}
@@ -96,11 +139,11 @@ export function cfgOf(cfg) {
 	const perItem = Number.isInteger(c.perItem) && c.perItem >= 1 ? Math.min(c.perItem, per) : 1
 	const scope = typeof c.scope === 'string' && c.scope !== '' ? c.scope : null
 	const types = Array.isArray(c.types) ? c.types.filter((t) => VOTABLE_TYPES.includes(t)) : []
-	return { per, perItem, scope, types: types.length > 0 ? [...new Set(types)] : ['sticky'] }
+	return { per, perItem, scope, types: types.length > 0 ? [...new Set(types)] : ['sticky'], live: c.live === true, accountsOnly: c.accountsOnly === true }
 }
 
 /**
- * @param {unknown} r meta.vote.results
+ * @param {unknown} r meta.vote.results (or the live tally of a votes block, job 149)
  * @return {Array<[string, number]>|null} [[id, n], …] (descending as sent), null when missing
  */
 function resultsOf(r) {
@@ -118,6 +161,8 @@ function resultsOf(r) {
 
 export class VoteState {
 	constructor() {
+		/** {pid, mod} of this client (setSession, setMe) */
+		this._me = null
 		this.reset()
 	}
 
@@ -149,8 +194,28 @@ export class VoteState {
 		this._pending = new Map()
 		this._vt = 0
 		this._voters = 0
+		/** Live count of the moderators (job 149): [[id, n], …] descending, null until a block brings it. */
+		this._tally = null
 		/** {id, at} of the last proposal (double tap). */
 		this._last = null
+	}
+
+	/** @return {boolean} a live tally may be kept now: open, cfg.live and me.mod === true (job 149) */
+	liveAllowed() {
+		return this._state === 'open' && this._cfg.live && this._me?.mod === true
+	}
+
+	/**
+	 * The moderation right changed (BoardSession.applyRole): a tally is
+	 * dropped as soon as me.mod is not true (job 149).
+	 *
+	 * @param {object|null} me {pid, mod} of this client
+	 */
+	setMe(me) {
+		this._me = me && typeof me === 'object' ? me : null
+		if (!this.liveAllowed()) {
+			this._tally = null
+		}
 	}
 
 	/**
@@ -189,6 +254,10 @@ export class VoteState {
 			this._pending.clear()
 			this._serverMine = {}
 			this._serverLeft = null
+		}
+		if (!this.liveAllowed()) {
+			// job 149: closed, no live count in cfg or no moderation right: no tally
+			this._tally = null
 		}
 		const opened = this._state === 'open' && (newSid || before.state !== 'open')
 		const closed = this._state === 'closed' && !newSid && before.state === 'open'
@@ -296,6 +365,13 @@ export class VoteState {
 			if (isCount(votes.vt)) {
 				this._vt = votes.vt
 			}
+			if ('tally' in votes && this.liveAllowed()) {
+				// job 149: checked like results; only moderators of a live session keep it
+				const tally = resultsOf(votes.tally)
+				if (tally !== null) {
+					this._tally = tally
+				}
+			}
 		}
 		if (pending instanceof Map) {
 			this._pending = new Map([...pending].filter(([id, n]) => typeof id === 'string' && isCount(n)))
@@ -306,13 +382,23 @@ export class VoteState {
 	/**
 	 * Badges for the scene (SceneVoteState.badges, §6.3 R16).
 	 *
+	 * @param {{live?: boolean}} [o] live: the moderator shows the live count on
+	 *   the board (job 149): while open every item of the tally with n > 0 gets
+	 *   total = n beside its own votes
 	 * @return {Map<string, {mine: number, total: (number|null)}>}
 	 */
-	badges() {
+	badges({ live = false } = {}) {
 		const out = new Map()
 		if (this._state === 'open') {
 			for (const [id, n] of Object.entries(this.mine)) {
 				out.set(id, { mine: n, total: null })
+			}
+			if (live === true && this._tally) {
+				for (const [id, n] of this._tally) {
+					if (n > 0) {
+						out.set(id, { mine: out.get(id)?.mine ?? 0, total: n })
+					}
+				}
 			}
 		} else if (this._state === 'closed' && this._show && this._results) {
 			for (const [id, n] of this._results) {
@@ -360,9 +446,14 @@ export class VoteState {
 		return this._cfg.scope
 	}
 
-	/** @return {{per: number, perItem: number, scope: (string|null), types: string[]}} settings of the session */
+	/** @return {{per: number, perItem: number, scope: (string|null), types: string[], live: boolean, accountsOnly: boolean}} settings of the session */
 	get cfg() {
 		return { ...this._cfg, types: [...this._cfg.types] }
+	}
+
+	/** @return {Array<[string, number]>|null} live count of a moderator (job 149; copy, descending), else null */
+	get tally() {
+		return this._tally ? this._tally.map((e) => [e[0], e[1]]) : null
 	}
 
 	/** @return {number} last seen seq of the tally of the current sid (0 after a change) */

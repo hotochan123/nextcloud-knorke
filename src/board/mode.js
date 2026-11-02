@@ -20,8 +20,11 @@
  *   1. role === 'view'                    → 'view_role'
  *   2. role === 'vote' && !votingEnabled  → 'view_role'
  *   3. role === 'vote' && !sessionOpen    → 'vote_ready'
- *   4. canEdit(role) && deviceViewOnly    → votingEnabled ? 'device_vote' : 'viewonly'
+ *   4. canEdit(role) && deviceViewOnly    → votingEnabled && !voteBlocked ? 'device_vote' : 'viewonly'
  *   5. otherwise null
+ * (Job 175) voteBlocked: a guest in an open session with accountsOnly may not
+ * vote, so rule 4 says 'viewonly'; nothing else changes (no 'vote_ready'
+ * while the session runs).
  * votingEnabled is FEATURES.voting (false until stage 3). ConnectionBanner
  * shows exactly this one result next to the status banner, none while the
  * board is frozen.
@@ -82,11 +85,12 @@ export function modeFor(role, deviceViewOnly, { sessionOpen = false, preferVote 
  *
  * @param {string|null|undefined} role me.role (never 'moderate')
  * @param {boolean} deviceViewOnly the device has no fine pointer
- * @param {{sessionOpen?: boolean, votingEnabled?: boolean}} [o] an open vote
- *   session; votingEnabled defaults to FEATURES.voting
+ * @param {{sessionOpen?: boolean, votingEnabled?: boolean, voteBlocked?: boolean}} [o] an open vote
+ *   session; votingEnabled defaults to FEATURES.voting; voteBlocked: this
+ *   guest may not vote in the open session (job 175)
  * @return {'view_role'|'vote_ready'|'device_vote'|'viewonly'|null}
  */
-export function bannerFor(role, deviceViewOnly, { sessionOpen = false, votingEnabled = FEATURES.voting } = {}) {
+export function bannerFor(role, deviceViewOnly, { sessionOpen = false, votingEnabled = FEATURES.voting, voteBlocked = false } = {}) {
 	if (role === 'view') {
 		return 'view_role'
 	}
@@ -97,7 +101,7 @@ export function bannerFor(role, deviceViewOnly, { sessionOpen = false, votingEna
 		return 'vote_ready'
 	}
 	if (canEdit(role) && deviceViewOnly) {
-		return votingEnabled ? 'device_vote' : 'viewonly'
+		return votingEnabled && !voteBlocked ? 'device_vote' : 'viewonly'
 	}
 	return null
 }

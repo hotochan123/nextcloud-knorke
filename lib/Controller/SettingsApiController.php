@@ -10,6 +10,7 @@ namespace OCA\Knorke\Controller;
 use OCA\Knorke\AppInfo\Application;
 use OCA\Knorke\Exception\HttpError;
 use OCA\Knorke\Http\JsonBody;
+use OCA\Knorke\Service\AiService;
 use OCA\Knorke\Service\PrivacyNotice;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\Response;
@@ -35,6 +36,7 @@ final class SettingsApiController extends Controller {
         private IUserSession $userSession,
         private IGroupManager $groups,
         private PrivacyNotice $privacy,
+        private AiService $ai,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -54,6 +56,22 @@ final class SettingsApiController extends Controller {
             }
             $body = JsonBody::read($this->request, ['default', 'languages']);
             return $this->json(['privacy' => PrivacyNotice::wire($this->privacy->save($body))]);
+        });
+    }
+
+    /**
+     * Route 58 `PUT /api/v1/settings/ai` {enabled?, dailyLimit?, notice?} (factory
+     * job 267) → 200 {"ai": AiService::adminState()}; admins only, as route 27;
+     * notice is checked and stored like the privacy notice (AiNotice).
+     */
+    public function ai(): Response {
+        return $this->run(function (): Response {
+            $uid = $this->userSession->getUser()?->getUID();
+            if ($uid === null || !$this->groups->isAdmin($uid)) {
+                throw new HttpError(403, 'forbidden');
+            }
+            $body = JsonBody::read($this->request, ['enabled', 'dailyLimit', 'notice']);
+            return $this->json(['ai' => $this->ai->saveSettings($body)]);
         });
     }
 }

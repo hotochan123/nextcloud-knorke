@@ -146,7 +146,7 @@ export function planLocks(model, ids, { lod = 0, offsetOf = null } = {}) {
  * @param {number} h height
  * @param {number} r corner radius
  */
-function roundedRect(ctx, x, y, w, h, r) {
+export function roundedRect(ctx, x, y, w, h, r) {
 	const k = Math.max(0, Math.min(r, w / 2, h / 2))
 	ctx.beginPath()
 	ctx.moveTo(x + k, y)

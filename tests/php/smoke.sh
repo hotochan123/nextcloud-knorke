@@ -57,7 +57,7 @@
 # after the block and again in the EXIT trap.
 # P7 (SPEC-M1 §33.1, Revision 22): the templates are no direct entry point
 # (GET /custom_apps/knorke/templates/{guest,main,public}.php → 404 without
-# "Fatal error" or a server path, P7-05); occ knorke:orphans with its five
+# "Fatal error" or a server path, P7-05); occ knorke:orphans with its seven
 # lines (P7-02); the link throttle knorke-link with app config link_limit = 2
 # (the third writing call → 429 slow_down, retryMs 300000, Retry-After 300; a
 # stranger stays 404, GET shares is never throttled, P7-03); the daily byte
@@ -1140,9 +1140,9 @@ for t in guest main public; do
 done
 if OUT7="$(docker exec -u www-data "$NC" php occ knorke:orphans --dry-run 2>/dev/null)"; then CODE=0; else CODE=$?; fi
 printf '%s\n' "$OUT7" >"$BODY"
-if [ "$CODE" = 0 ] && [ "$(wc -l <"$BODY")" = 6 ] && [ "$(sed -n 's/^\([a-z-]*\): [0-9][0-9]*$/\1/p' "$BODY" | tr '\n' ' ')" = "user-shares group-shares link-members open-votes owned-boards " ] \
-    && [ "$(sed -n 6p "$BODY")" = 'Dry run: nothing was changed.' ]; then
-    pass "P7-02 occ knorke:orphans --dry-run → Exit 0, fünf Zeilen <art>: <n> und die dry-run-Zeile"
+if [ "$CODE" = 0 ] && [ "$(wc -l <"$BODY")" = 8 ] && [ "$(sed -n 's/^\([a-z-]*\): [0-9][0-9]*$/\1/p' "$BODY" | tr '\n' ' ')" = "user-shares group-shares link-members open-votes owned-boards shape-libraries template-suggestions " ] \
+    && [ "$(sed -n 8p "$BODY")" = 'Dry run: nothing was changed.' ]; then
+    pass "P7-02 occ knorke:orphans --dry-run → Exit 0, sieben Zeilen <art>: <n> und die dry-run-Zeile"
 else
     fail "P7-02 occ knorke:orphans --dry-run (Exit $CODE)"
 fi
